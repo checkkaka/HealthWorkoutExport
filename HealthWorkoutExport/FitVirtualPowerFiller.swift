@@ -2,15 +2,24 @@ import Foundation
 import FITSwiftSDK
 
 /// 对缺功率的 Activity FIT 按 Gribble + Open-Meteo 回填原生 Record.power。
+/// 应在轨迹 GCJ→WGS 转换之后调用，使风向/方位基于最终坐标。
 enum FitVirtualPowerFiller {
     private static let semicirclesPerDegree = 2_147_483_648.0 / 180.0
     /// 速度/海拔平滑半窗（秒侧索引半径）。
     private static let smoothRadius = 2
+    /// 单秒估算失败时，取前后该时间窗内功率均值回填（秒）。
+    private static let neighborAverageRadiusSeconds: TimeInterval = 5
+    /// 缺功率秒中「估算环节失败」占比达到此阈值时，整条活动放弃虚拟功率。
+    private static let activityFailRateThreshold = 0.10
 
     struct FillResult: Sendable {
         var data: Data
-        /// 新写入功率的 record 秒数。
+        /// 新写入功率的 record 秒数（含踏频 0、邻域均值回填）。
         var filledCount: Int
+        /// 估算环节失败的秒数（含已用邻域均值补上的）。
+        var failedCount: Int
+        /// 失败率 ≥10% 导致整条放弃回填。
+        var activityRejected: Bool
         /// 是否使用了 Open-Meteo（否则为退化默认大气）。
         var usedWeather: Bool
         /// 天气采样点数。
@@ -19,7 +28,8 @@ enum FitVirtualPowerFiller {
         var note: String
     }
 
-    /// 仅当存在 `power == nil` 的 record 时回填；已有功率秒不动。
+    /// 仅骑行且存在 `power == nil` 的 record 时回填；已有功率秒不动。
+    /// 单秒估算失败：用前后 5 秒功率均值回填并标 failed；失败率 ≥10% 则整条不采用。
     static func fillIfNeeded(
         _ data: Data,
         settings: VirtualPowerPhysics.Params? = nil,
@@ -27,6 +37,19 @@ enum FitVirtualPowerFiller {
         weatherProvider: ((Double, Double, Date, Date) async throws -> [WeatherSample])? = nil
     ) async throws -> FillResult {
         let messages = try FitMerger.decode(data)
+        // 调用 isCyclingActivity：非骑行不估虚拟功率，避免跑步等误填。
+        guard isCyclingActivity(messages) else {
+            return FillResult(
+                data: data,
+                filledCount: 0,
+                failedCount: 0,
+                activityRejected: false,
+                usedWeather: false,
+                weatherPointCount: 0,
+                note: "虚拟功率跳过：非骑行运动"
+            )
+        }
+
         let records = messages.recordMesgs.sorted {
             ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)
         }
@@ -35,6 +58,8 @@ enum FitVirtualPowerFiller {
             return FillResult(
                 data: data,
                 filledCount: 0,
+                failedCount: 0,
+                activityRejected: false,
                 usedWeather: false,
                 weatherPointCount: 0,
                 note: "虚拟功率跳过：文件已有功率或无记录"
@@ -68,6 +93,7 @@ enum FitVirtualPowerFiller {
             do {
                 // 沿途多锚点拉天气；同粗网格 key 只请求一次，再挂到各锚点坐标上做空间插值。
                 var seriesByKey: [String: [WeatherSample]] = [:]
+                var builtStations: [WeatherStation] = []
                 for anchor in anchors {
                     let key = OpenMeteoWeatherCache.cacheKey(
                         latitude: anchor.lat,
@@ -79,7 +105,7 @@ enum FitVirtualPowerFiller {
                         seriesByKey[key] = try await provider(anchor.lat, anchor.lon, start, end)
                     }
                     guard let samples = seriesByKey[key], !samples.isEmpty else { continue }
-                    weatherStations.append(
+                    builtStations.append(
                         WeatherStation(
                             lat: anchor.lat,
                             lon: anchor.lon,
@@ -88,6 +114,7 @@ enum FitVirtualPowerFiller {
                     )
                     weatherPointCount = max(weatherPointCount, samples.count)
                 }
+                weatherStations = builtStations
                 weatherAnchorCount = weatherStations.count
                 usedWeather = !weatherStations.isEmpty
             } catch is CancellationError {
@@ -95,35 +122,44 @@ enum FitVirtualPowerFiller {
             } catch let urlError as URLError where urlError.code == .cancelled {
                 throw CancellationError()
             } catch {
+                // 天气中途失败：清空半成品站，与 usedWeather/note 保持一致，退化为默认大气。
+                weatherStations = []
+                weatherAnchorCount = 0
+                weatherPointCount = 0
                 usedWeather = false
             }
         }
 
         let kinematics = buildKinematics(records: records)
-        var filled = 0
-        var sumPower = 0.0
-        var maxPower: UInt16 = 0
-        var powerCount = 0
-        var markedRecords: [RecordMesg] = []
+        let n = records.count
+        /// 各秒最终功率草案：已有功率 / 直接估算 / 邻域均值；nil 表示仍无功率。
+        var draftPower = [UInt16?](repeating: nil, count: n)
+        /// 该秒是否为「缺功率且估算环节失败」（计入失败率；邻域补上后仍算失败）。
+        var estimateFailed = [Bool](repeating: false, count: n)
+        /// 该秒是否为直接估算成功（含踏频 0 写 0）。
+        var estimateSuccess = [Bool](repeating: false, count: n)
 
         for (index, record) in records.enumerated() {
             if let existing = record.getPower() {
-                sumPower += Double(existing)
-                maxPower = max(maxPower, existing)
-                powerCount += 1
+                draftPower[index] = existing
                 continue
             }
+
             let kin = kinematics[index]
             let cadence = record.getCadence().map { Double($0) }
+
             // 踏频为 0：即使低速也按滑行写 0，避免停车段留下空洞。
             if let cadence, cadence <= 0 {
-                try record.setPower(0)
-                filled += 1
-                powerCount += 1
-                markedRecords.append(record)
+                draftPower[index] = 0
+                estimateSuccess[index] = true
                 continue
             }
-            guard let speed = kin.speedMps, speed > 0.1 else { continue }
+
+            // 缺有效速度：该秒估算失败，稍后用邻域均值。
+            guard let speed = kin.speedMps, speed > 0.1 else {
+                estimateFailed[index] = true
+                continue
+            }
 
             let sample = weatherAt(
                 date: kin.date,
@@ -171,26 +207,100 @@ enum FitVirtualPowerFiller {
                 cadenceRpm: cadence
             )
             let clipped = UInt16(min(max(watts.rounded(), 0), Double(UInt16.max)))
-            try record.setPower(clipped)
-            filled += 1
-            sumPower += Double(clipped)
-            maxPower = max(maxPower, clipped)
-            powerCount += 1
-            markedRecords.append(record)
+            draftPower[index] = clipped
+            estimateSuccess[index] = true
         }
 
-        guard filled > 0 else {
+        // 估算失败秒：用前后 5 秒内「直接成功/原有功率」的均值回填（不用其它失败秒）。
+        for index in 0..<n {
+            guard estimateFailed[index], draftPower[index] == nil else { continue }
+            // 调用 neighborAveragePower：取时间窗邻域均值补该秒功率。
+            if let avg = neighborAveragePower(
+                at: index,
+                draftPower: draftPower,
+                estimateFailed: estimateFailed,
+                records: records
+            ) {
+                draftPower[index] = avg
+            }
+        }
+
+        let attempted = missing.count
+        let failed = estimateFailed.filter { $0 }.count
+        let failRate = attempted > 0 ? Double(failed) / Double(attempted) : 0
+
+        // 失败率 ≥10%：整条放弃，不改写任何功率/标记。
+        if failRate >= activityFailRateThreshold {
+            let weatherNote = usedWeather
+                ? "天气锚点 \(weatherAnchorCount)、时序 \(weatherPointCount) 点"
+                : "天气退化（默认密度/无风）"
             return FillResult(
                 data: data,
                 filledCount: 0,
+                failedCount: failed,
+                activityRejected: true,
                 usedWeather: usedWeather,
                 weatherPointCount: weatherPointCount,
-                note: "虚拟功率未写入：缺速度等运动学字段"
+                note: String(
+                    format: "虚拟功率整条放弃：失败率 %.1f%%（%d/%d）≥10%%（%@）",
+                    failRate * 100,
+                    failed,
+                    attempted,
+                    weatherNote
+                )
+            )
+        }
+
+        var filled = 0
+        var sumPower = 0.0
+        var maxPower: UInt16 = 0
+        var powerCount = 0
+        var successRecords: [RecordMesg] = []
+        var failedRecords: [RecordMesg] = []
+
+        for (index, record) in records.enumerated() {
+            if record.getPower() != nil {
+                if let existing = draftPower[index] {
+                    sumPower += Double(existing)
+                    maxPower = max(maxPower, existing)
+                    powerCount += 1
+                }
+                continue
+            }
+            guard let power = draftPower[index] else {
+                // 邻域也补不上：仍不写 power，但标 failed（失败率已低于阈值）。
+                if estimateFailed[index] {
+                    failedRecords.append(record)
+                }
+                continue
+            }
+            try record.setPower(power)
+            filled += 1
+            sumPower += Double(power)
+            maxPower = max(maxPower, power)
+            powerCount += 1
+            if estimateSuccess[index] {
+                successRecords.append(record)
+            } else {
+                // 邻域均值回填：功率有值，来源仍标 failed。
+                failedRecords.append(record)
+            }
+        }
+
+        guard filled > 0 || !failedRecords.isEmpty else {
+            return FillResult(
+                data: data,
+                filledCount: 0,
+                failedCount: failed,
+                activityRejected: false,
+                usedWeather: usedWeather,
+                weatherPointCount: weatherPointCount,
+                note: "虚拟功率未写入：无可处理缺功率记录"
             )
         }
 
         // Session 用整场；Lap 按各自时间窗聚合，避免多圈共用一场均值。
-        if powerCount > 0 {
+        if filled > 0, powerCount > 0 {
             let avg = UInt16(min(max((sumPower / Double(powerCount)).rounded(), 0), Double(UInt16.max)))
             for session in messages.sessionMesgs {
                 if session.getAvgPower() == nil {
@@ -212,11 +322,22 @@ enum FitVirtualPowerFiller {
             }
         }
 
-        // 调用 VirtualPowerSourceMark：仅给本次估算写入的 Record 打 powerSource=virtual。
+        // 调用 VirtualPowerSourceMark：成功 virtual、失败 failed；developer index 避开已占用值。
         let markTimestamp = records.first?.getTimestamp() ?? DateTime()
-        let markBundle = try VirtualPowerSourceMark.makeBundle(timestamp: markTimestamp)
-        for record in markedRecords {
-            try VirtualPowerSourceMark.markRecord(record, bundle: markBundle)
+        let markBundle = try VirtualPowerSourceMark.makeBundle(timestamp: markTimestamp, messages: messages)
+        for record in successRecords {
+            try VirtualPowerSourceMark.markRecord(
+                record,
+                bundle: markBundle,
+                value: VirtualPowerSourceMark.virtualValue
+            )
+        }
+        for record in failedRecords {
+            try VirtualPowerSourceMark.markRecord(
+                record,
+                bundle: markBundle,
+                value: VirtualPowerSourceMark.failedValue
+            )
         }
 
         let encoded = try FitMessagesReencoder.encode(
@@ -231,13 +352,48 @@ enum FitVirtualPowerFiller {
         } else {
             weatherNote = "天气退化（默认密度/无风）"
         }
+        let note = "虚拟功率已回填 \(filled) 秒（估算失败 \(failed) 秒已用邻域均值或标 failed，\(weatherNote)）"
         return FillResult(
             data: encoded,
             filledCount: filled,
+            failedCount: failed,
+            activityRejected: false,
             usedWeather: usedWeather,
             weatherPointCount: weatherPointCount,
-            note: "虚拟功率已回填 \(filled) 秒并标记 powerSource=virtual（\(weatherNote)）"
+            note: note
         )
+    }
+
+    /// 取索引前后 5 秒时间窗内直接成功/原有功率的算术平均；窗内无可用功率则 nil。
+    private static func neighborAveragePower(
+        at index: Int,
+        draftPower: [UInt16?],
+        estimateFailed: [Bool],
+        records: [RecordMesg]
+    ) -> UInt16? {
+        guard let centerTs = records[index].getTimestamp()?.timestamp else { return nil }
+        let center = TimeInterval(centerTs)
+        var sum = 0.0
+        var count = 0
+        for j in draftPower.indices {
+            guard j != index, let power = draftPower[j] else { continue }
+            // 其它估算失败秒不参与均值，避免失败点互相污染。
+            if estimateFailed[j] { continue }
+            guard let ts = records[j].getTimestamp()?.timestamp else { continue }
+            if abs(TimeInterval(ts) - center) <= neighborAverageRadiusSeconds {
+                sum += Double(power)
+                count += 1
+            }
+        }
+        guard count > 0 else { return nil }
+        return UInt16(min(max((sum / Double(count)).rounded(), 0), Double(UInt16.max)))
+    }
+
+    /// Session 运动类型是否为骑行；无 session 时不估。
+    private static func isCyclingActivity(_ messages: FitMessages) -> Bool {
+        let sports = messages.sessionMesgs.compactMap { $0.getSport() }
+        guard !sports.isEmpty else { return false }
+        return sports.contains(.cycling)
     }
 
     /// 沿途天气站：一个 GPS 锚点 + 该点的逐小时时序。
@@ -312,7 +468,8 @@ enum FitVirtualPowerFiller {
                 times[i] = Date(timeIntervalSince1970: TimeInterval(ts))
             }
             speeds[i] = r.getSpeed() ?? r.getEnhancedSpeed()
-            alts[i] = r.getAltitude()
+            // 海拔优先原生 altitude，缺失时回退 enhanced_altitude。
+            alts[i] = r.getAltitude() ?? r.getEnhancedAltitude()
             if let la = r.getPositionLat(), let lo = r.getPositionLong() {
                 lats[i] = Double(la) / semicirclesPerDegree
                 lons[i] = Double(lo) / semicirclesPerDegree
@@ -320,8 +477,8 @@ enum FitVirtualPowerFiller {
             dists[i] = r.getDistance()
         }
 
-        let smoothSpeed = smooth(speeds, radius: smoothRadius)
-        let smoothAlt = smooth(alts, radius: smoothRadius)
+        let smoothSpeed = smooth(speeds, radius: smoothRadius, fillMissingCenter: false)
+        let smoothAlt = smooth(alts, radius: smoothRadius, fillMissingCenter: true)
 
         var result = [Kinematics](repeating: Kinematics(
             date: Date(), speedMps: nil, altitudeM: nil, lat: nil, lon: nil,
@@ -380,10 +537,19 @@ enum FitVirtualPowerFiller {
         return result
     }
 
-    private static func smooth(_ values: [Double?], radius: Int) -> [Double?] {
+    /// 滑动均值；`fillMissingCenter=false` 时中心点本身为 nil 则保持 nil（速度缺测不发明值）。
+    private static func smooth(
+        _ values: [Double?],
+        radius: Int,
+        fillMissingCenter: Bool
+    ) -> [Double?] {
         guard !values.isEmpty else { return values }
         var out = [Double?](repeating: nil, count: values.count)
         for i in values.indices {
+            if values[i] == nil, !fillMissingCenter {
+                out[i] = nil
+                continue
+            }
             var sum = 0.0
             var n = 0
             let lo = max(0, i - radius)

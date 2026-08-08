@@ -418,13 +418,8 @@ final class AutoSyncEngine {
                 if spikeFixed.fixedCount > 0 {
                     notes.append("已修复 \(spikeFixed.fixedCount) 处速度尖峰：\(activity.title)")
                 }
-                // 调用 applyVirtualPowerIfNeeded：缺功率时按 Gribble+天气回填原生 power。
-                uploadData = try await applyVirtualPowerIfNeeded(
-                    uploadData,
-                    activityTitle: activity.title,
-                    notes: &notes
-                )
                 // 上传成功可写入 sync_state.message，便于核对 GCJ 是否跑过。
+                // 虚拟功率放在 GCJ 之后：用最终坐标估风向/方位，避免转换前方位偏差。
                 var uploadMessage: String?
                 if StravaSettings.gcjCorrectionEnabled {
                     // 调用 FitGcjCoordinateRewriter：可选 GCJ→WGS，修国内轨迹偏移。
@@ -436,6 +431,12 @@ final class AutoSyncEngine {
                     notes.append("\(gcjMsg)：\(activity.title)")
                     uploadMessage = gcjMsg
                 }
+                // 调用 applyVirtualPowerIfNeeded：缺功率时按 Gribble+天气回填原生 power。
+                uploadData = try await applyVirtualPowerIfNeeded(
+                    uploadData,
+                    activityTitle: activity.title,
+                    notes: &notes
+                )
                 let gpsPoints = FitContentProbe.gpsPointCount(uploadData)
                 let hrPoints = FitContentProbe.heartRatePointCount(uploadData)
                 if gpsPoints < 5 {
@@ -605,13 +606,19 @@ final class AutoSyncEngine {
             notes.append("虚拟功率已开但参数无效，已跳过：\(activityTitle)")
             return data
         }
-        // 调用 FitVirtualPowerFiller：Gribble + Open-Meteo，仅填 nil power。
+        // 调用 FitVirtualPowerFiller：Gribble + Open-Meteo，仅填 nil power；失败秒标 failed。
         let result = try await FitVirtualPowerFiller.fillIfNeeded(
             data,
             settings: VirtualPowerSettings.physicsParams(),
             weatherCache: weatherCache
         )
-        if result.filledCount > 0 || result.note.contains("退化") || result.note.contains("未写入") {
+        if result.filledCount > 0
+            || result.failedCount > 0
+            || result.activityRejected
+            || result.note.contains("退化")
+            || result.note.contains("未写入")
+            || result.note.contains("跳过")
+            || result.note.contains("放弃") {
             notes.append("\(result.note)：\(activityTitle)")
         }
         return result.data
@@ -929,12 +936,7 @@ final class AutoSyncEngine {
 
                     let spikeFixed = try FitSpeedSpikeFixer.fix(fitData)
                     var uploadData = spikeFixed.data
-                    // 调用 applyVirtualPowerIfNeeded：重传路径同样只补缺功率。
-                    uploadData = try await applyVirtualPowerIfNeeded(
-                        uploadData,
-                        activityTitle: activity.title,
-                        notes: &notes
-                    )
+                    // 重传路径同样：尖峰 → GCJ → 虚拟功率（最终坐标再估风）。
                     var uploadMessage: String?
                     if StravaSettings.gcjCorrectionEnabled {
                         // 调用 FitGcjCoordinateRewriter：可选 GCJ→WGS，修国内轨迹偏移。
@@ -944,6 +946,12 @@ final class AutoSyncEngine {
                             ? "已转换 \(gcj.rewrittenCount) 个 GCJ 坐标点"
                             : "GCJ 开关已开但未转换任何坐标点"
                     }
+                    // 调用 applyVirtualPowerIfNeeded：重传路径同样只补缺功率。
+                    uploadData = try await applyVirtualPowerIfNeeded(
+                        uploadData,
+                        activityTitle: activity.title,
+                        notes: &notes
+                    )
 
                     prepared = PendingResyncUpload(
                         primarySourceId: primary.id,
