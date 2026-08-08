@@ -102,24 +102,33 @@ enum FitVirtualPowerFiller {
                 var seriesByKey: [String: [WeatherSample]] = [:]
                 var builtStations: [WeatherStation] = []
                 for anchor in anchors {
-                    let key = OpenMeteoWeatherCache.cacheKey(
-                        latitude: anchor.lat,
-                        longitude: anchor.lon,
-                        start: start,
-                        end: end
-                    )
-                    if seriesByKey[key] == nil {
-                        seriesByKey[key] = try await provider(anchor.lat, anchor.lon, start, end)
-                    }
-                    guard let samples = seriesByKey[key], !samples.isEmpty else { continue }
-                    builtStations.append(
-                        WeatherStation(
-                            lat: anchor.lat,
-                            lon: anchor.lon,
-                            series: samples.map { ($0.date, $0) }
+                    do {
+                        let key = OpenMeteoWeatherCache.cacheKey(
+                            latitude: anchor.lat,
+                            longitude: anchor.lon,
+                            start: start,
+                            end: end
                         )
-                    )
-                    weatherPointCount = max(weatherPointCount, samples.count)
+                        if seriesByKey[key] == nil {
+                            seriesByKey[key] = try await provider(anchor.lat, anchor.lon, start, end)
+                        }
+                        guard let samples = seriesByKey[key], !samples.isEmpty else { continue }
+                        builtStations.append(
+                            WeatherStation(
+                                lat: anchor.lat,
+                                lon: anchor.lon,
+                                series: samples.map { ($0.date, $0) }
+                            )
+                        )
+                        weatherPointCount = max(weatherPointCount, samples.count)
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch let urlError as URLError where urlError.code == .cancelled {
+                        throw CancellationError()
+                    } catch {
+                        // 单锚点失败：保留已建成的站，继续后续锚点。
+                        continue
+                    }
                 }
                 weatherStations = builtStations
                 weatherAnchorCount = weatherStations.count
@@ -129,7 +138,7 @@ enum FitVirtualPowerFiller {
             } catch let urlError as URLError where urlError.code == .cancelled {
                 throw CancellationError()
             } catch {
-                // 天气中途失败：清空半成品站，与 usedWeather/note 保持一致，退化为默认大气。
+                // 整段异常：清空半成品站，与 usedWeather/note 保持一致，退化为默认大气。
                 weatherStations = []
                 weatherAnchorCount = 0
                 weatherPointCount = 0
@@ -162,9 +171,15 @@ enum FitVirtualPowerFiller {
                 continue
             }
 
-            // 缺有效速度：该秒估算失败，稍后用邻域均值。
-            guard let speed = kin.speedMps, speed > 0.1 else {
+            // 速度测值缺失：该秒估算失败，稍后用邻域均值。
+            guard let speed = kin.speedMps else {
                 estimateFailed[index] = true
+                continue
+            }
+            // 有效低速/停车：物理功率本为 0，记成功滑行，不计入失败率（无踏频停驶同理）。
+            if speed <= 0.1 {
+                draftPower[index] = 0
+                estimateSuccess[index] = true
                 continue
             }
 

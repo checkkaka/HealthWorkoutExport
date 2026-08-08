@@ -395,7 +395,7 @@ final class FitVirtualPowerFillerTests: XCTestCase {
     private func makeFit(
         start: Date,
         sport: Sport = .cycling,
-        records: [(offset: Double, speed: Double?, alt: Double, power: UInt16?, cadence: UInt8)]
+        records: [(offset: Double, speed: Double?, alt: Double, power: UInt16?, cadence: UInt8?)]
     ) throws -> Data {
         let startFit = DateTime(date: start)
         let fileId = FileIdMesg()
@@ -418,7 +418,9 @@ final class FitVirtualPowerFillerTests: XCTestCase {
                 try record.setDistance(0)
             }
             try record.setAltitude(spec.alt)
-            try record.setCadence(spec.cadence)
+            if let cadence = spec.cadence {
+                try record.setCadence(cadence)
+            }
             try record.setPositionLat(Int32((31.2 * semicircles).rounded()))
             try record.setPositionLong(Int32((121.5 * semicircles).rounded()))
             if let power = spec.power {
