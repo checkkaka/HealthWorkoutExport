@@ -1,0 +1,560 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B00100000000000000000001 /* HealthWorkoutExportApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000001 /* HealthWorkoutExportApp.swift */; };
+		B00100000000000000000002 /* WorkoutBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000002 /* WorkoutBundle.swift */; };
+		B00100000000000000000003 /* HealthKitService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000003 /* HealthKitService.swift */; };
+		B00100000000000000000004 /* ExportPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000004 /* ExportPipeline.swift */; };
+		B00100000000000000000005 /* FitActivityEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000005 /* FitActivityEncoder.swift */; };
+		B00100000000000000000006 /* ExportViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000006 /* ExportViewModel.swift */; };
+		B00100000000000000000007 /* WorkoutListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000007 /* WorkoutListView.swift */; };
+		B00100000000000000000008 /* DateRangeAndExportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000008 /* DateRangeAndExportViews.swift */; };
+		B00100000000000000000009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000009 /* Assets.xcassets */; };
+		B0010000000000000000000A /* FITSwiftSDK in Frameworks */ = {isa = PBXBuildFile; productRef = P00100000000000000000001 /* FITSwiftSDK */; };
+		B0010000000000000000000B /* FitActivityEncoderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000000D /* FitActivityEncoderTests.swift */; };
+		B0010000000000000000000D /* FitMerger.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000000F /* FitMerger.swift */; };
+		B0010000000000000000000E /* FitMergeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000010 /* FitMergeView.swift */; };
+		B0010000000000000000000F /* FITSwiftSDK in Frameworks */ = {isa = PBXBuildFile; productRef = P00100000000000000000002 /* FITSwiftSDK */; };
+		B00100000000000000000011 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000011 /* KeychainStore.swift */; };
+		B00100000000000000000012 /* WorkoutDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000012 /* WorkoutDataSource.swift */; };
+		B00100000000000000000013 /* HealthKitDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000013 /* HealthKitDataSource.swift */; };
+		B00100000000000000000014 /* OnelapClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000014 /* OnelapClient.swift */; };
+		B00100000000000000000015 /* OnelapDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000015 /* OnelapDataSource.swift */; };
+		B00100000000000000000016 /* XingzheClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000016 /* XingzheClient.swift */; };
+		B00100000000000000000017 /* XingzheDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000017 /* XingzheDataSource.swift */; };
+		B00100000000000000000018 /* ActivityMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000018 /* ActivityMatcher.swift */; };
+		B00100000000000000000019 /* SyncFingerprint.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000019 /* SyncFingerprint.swift */; };
+		B0010000000000000000001A /* SyncStateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000001A /* SyncStateStore.swift */; };
+		B0010000000000000000001B /* StravaUploading.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000001B /* StravaUploading.swift */; };
+		B0010000000000000000001C /* StravaAPIUploader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000001C /* StravaAPIUploader.swift */; };
+		B0010000000000000000001D /* StravaWebUploader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000001D /* StravaWebUploader.swift */; };
+		B0010000000000000000001E /* AutoSyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000001E /* AutoSyncEngine.swift */; };
+		B0010000000000000000001F /* CommuteClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000001F /* CommuteClassifier.swift */; };
+		B00100000000000000000020 /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000020 /* RootTabView.swift */; };
+		B00100000000000000000021 /* ThirdPartySourceListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000021 /* ThirdPartySourceListView.swift */; };
+		B00100000000000000000022 /* SourceLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000022 /* SourceLoginView.swift */; };
+		B00100000000000000000024 /* StravaSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000024 /* StravaSettingsView.swift */; };
+		B00100000000000000000025 /* AutoSyncView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000025 /* AutoSyncView.swift */; };
+		B00100000000000000000026 /* ActivityMatcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000026 /* ActivityMatcherTests.swift */; };
+		B00100000000000000000027 /* SyncFingerprintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000027 /* SyncFingerprintTests.swift */; };
+		B00100000000000000000028 /* CommuteClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000028 /* CommuteClassifierTests.swift */; };
+		B00100000000000000000029 /* StravaActivityLookup.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000029 /* StravaActivityLookup.swift */; };
+		B0010000000000000000002A /* SyncHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000002A /* SyncHistoryView.swift */; };
+		B0010000000000000000002B /* StravaActivityLookupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000002B /* StravaActivityLookupTests.swift */; };
+		B0010000000000000000002C /* XingzheRateLimitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000002C /* XingzheRateLimitTests.swift */; };
+		B0010000000000000000002D /* SyncSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000002D /* SyncSession.swift */; };
+		B0010000000000000000002E /* ActivityDetailSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000002E /* ActivityDetailSheet.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		D00200000000000000000002 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D00100000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = T00100000000000000000001;
+			remoteInfo = HealthWorkoutExport;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		F00100000000000000000001 /* HealthWorkoutExportApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthWorkoutExportApp.swift; sourceTree = "<group>"; };
+		F00100000000000000000002 /* WorkoutBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutBundle.swift; sourceTree = "<group>"; };
+		F00100000000000000000003 /* HealthKitService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthKitService.swift; sourceTree = "<group>"; };
+		F00100000000000000000004 /* ExportPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportPipeline.swift; sourceTree = "<group>"; };
+		F00100000000000000000005 /* FitActivityEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitActivityEncoder.swift; sourceTree = "<group>"; };
+		F00100000000000000000006 /* ExportViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportViewModel.swift; sourceTree = "<group>"; };
+		F00100000000000000000007 /* WorkoutListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutListView.swift; sourceTree = "<group>"; };
+		F00100000000000000000008 /* DateRangeAndExportViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DateRangeAndExportViews.swift; sourceTree = "<group>"; };
+		F00100000000000000000009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F0010000000000000000000A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F0010000000000000000000B /* HealthWorkoutExport.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = HealthWorkoutExport.entitlements; sourceTree = "<group>"; };
+		F0010000000000000000000C /* HealthWorkoutExport.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HealthWorkoutExport.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F0010000000000000000000D /* FitActivityEncoderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitActivityEncoderTests.swift; sourceTree = "<group>"; };
+		F0010000000000000000000E /* HealthWorkoutExportTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HealthWorkoutExportTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F0010000000000000000000F /* FitMerger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitMerger.swift; sourceTree = "<group>"; };
+		F00100000000000000000010 /* FitMergeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitMergeView.swift; sourceTree = "<group>"; };
+		F00100000000000000000011 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		F00100000000000000000012 /* WorkoutDataSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutDataSource.swift; sourceTree = "<group>"; };
+		F00100000000000000000013 /* HealthKitDataSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthKitDataSource.swift; sourceTree = "<group>"; };
+		F00100000000000000000014 /* OnelapClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnelapClient.swift; sourceTree = "<group>"; };
+		F00100000000000000000015 /* OnelapDataSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnelapDataSource.swift; sourceTree = "<group>"; };
+		F00100000000000000000016 /* XingzheClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XingzheClient.swift; sourceTree = "<group>"; };
+		F00100000000000000000017 /* XingzheDataSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XingzheDataSource.swift; sourceTree = "<group>"; };
+		F00100000000000000000018 /* ActivityMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityMatcher.swift; sourceTree = "<group>"; };
+		F00100000000000000000019 /* SyncFingerprint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncFingerprint.swift; sourceTree = "<group>"; };
+		F0010000000000000000001A /* SyncStateStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncStateStore.swift; sourceTree = "<group>"; };
+		F0010000000000000000001B /* StravaUploading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StravaUploading.swift; sourceTree = "<group>"; };
+		F0010000000000000000001C /* StravaAPIUploader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StravaAPIUploader.swift; sourceTree = "<group>"; };
+		F0010000000000000000001D /* StravaWebUploader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StravaWebUploader.swift; sourceTree = "<group>"; };
+		F0010000000000000000001E /* AutoSyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSyncEngine.swift; sourceTree = "<group>"; };
+		F0010000000000000000001F /* CommuteClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommuteClassifier.swift; sourceTree = "<group>"; };
+		F00100000000000000000020 /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
+		F00100000000000000000021 /* ThirdPartySourceListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThirdPartySourceListView.swift; sourceTree = "<group>"; };
+		F00100000000000000000022 /* SourceLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceLoginView.swift; sourceTree = "<group>"; };
+		F00100000000000000000024 /* StravaSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StravaSettingsView.swift; sourceTree = "<group>"; };
+		F00100000000000000000025 /* AutoSyncView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSyncView.swift; sourceTree = "<group>"; };
+		F00100000000000000000026 /* ActivityMatcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityMatcherTests.swift; sourceTree = "<group>"; };
+		F00100000000000000000027 /* SyncFingerprintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncFingerprintTests.swift; sourceTree = "<group>"; };
+		F00100000000000000000028 /* CommuteClassifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommuteClassifierTests.swift; sourceTree = "<group>"; };
+		F00100000000000000000029 /* StravaActivityLookup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StravaActivityLookup.swift; sourceTree = "<group>"; };
+		F0010000000000000000002A /* SyncHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncHistoryView.swift; sourceTree = "<group>"; };
+		F0010000000000000000002B /* StravaActivityLookupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StravaActivityLookupTests.swift; sourceTree = "<group>"; };
+		F0010000000000000000002C /* XingzheRateLimitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XingzheRateLimitTests.swift; sourceTree = "<group>"; };
+		F0010000000000000000002D /* SyncSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncSession.swift; sourceTree = "<group>"; };
+		F0010000000000000000002E /* ActivityDetailSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityDetailSheet.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		E00100000000000000000003 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B0010000000000000000000A /* FITSwiftSDK in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E00100000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B0010000000000000000000F /* FITSwiftSDK in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		G00100000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				G00100000000000000000002 /* HealthWorkoutExport */,
+				G00100000000000000000004 /* HealthWorkoutExportTests */,
+				G00100000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		G00100000000000000000002 /* HealthWorkoutExport */ = {
+			isa = PBXGroup;
+			children = (
+				F00100000000000000000001 /* HealthWorkoutExportApp.swift */,
+				F00100000000000000000020 /* RootTabView.swift */,
+				F00100000000000000000002 /* WorkoutBundle.swift */,
+				F00100000000000000000003 /* HealthKitService.swift */,
+				F00100000000000000000004 /* ExportPipeline.swift */,
+				F00100000000000000000005 /* FitActivityEncoder.swift */,
+				F0010000000000000000000F /* FitMerger.swift */,
+				F00100000000000000000010 /* FitMergeView.swift */,
+				F00100000000000000000006 /* ExportViewModel.swift */,
+				F00100000000000000000007 /* WorkoutListView.swift */,
+				F00100000000000000000008 /* DateRangeAndExportViews.swift */,
+				F00100000000000000000011 /* KeychainStore.swift */,
+				F00100000000000000000012 /* WorkoutDataSource.swift */,
+				F00100000000000000000013 /* HealthKitDataSource.swift */,
+				F00100000000000000000014 /* OnelapClient.swift */,
+				F00100000000000000000015 /* OnelapDataSource.swift */,
+				F00100000000000000000016 /* XingzheClient.swift */,
+				F00100000000000000000017 /* XingzheDataSource.swift */,
+				F00100000000000000000018 /* ActivityMatcher.swift */,
+				F00100000000000000000019 /* SyncFingerprint.swift */,
+				F0010000000000000000001A /* SyncStateStore.swift */,
+				F0010000000000000000001B /* StravaUploading.swift */,
+				F0010000000000000000001C /* StravaAPIUploader.swift */,
+				F0010000000000000000001D /* StravaWebUploader.swift */,
+				F0010000000000000000001E /* AutoSyncEngine.swift */,
+				F0010000000000000000001F /* CommuteClassifier.swift */,
+				F00100000000000000000021 /* ThirdPartySourceListView.swift */,
+				F00100000000000000000022 /* SourceLoginView.swift */,
+				F00100000000000000000024 /* StravaSettingsView.swift */,
+				F00100000000000000000025 /* AutoSyncView.swift */,
+				F00100000000000000000029 /* StravaActivityLookup.swift */,
+				F0010000000000000000002A /* SyncHistoryView.swift */,
+				F0010000000000000000002D /* SyncSession.swift */,
+				F0010000000000000000002E /* ActivityDetailSheet.swift */,
+				F00100000000000000000009 /* Assets.xcassets */,
+				F0010000000000000000000A /* Info.plist */,
+				F0010000000000000000000B /* HealthWorkoutExport.entitlements */,
+			);
+			path = HealthWorkoutExport;
+			sourceTree = "<group>";
+		};
+		G00100000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F0010000000000000000000C /* HealthWorkoutExport.app */,
+				F0010000000000000000000E /* HealthWorkoutExportTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		G00100000000000000000004 /* HealthWorkoutExportTests */ = {
+			isa = PBXGroup;
+			children = (
+				F0010000000000000000000D /* FitActivityEncoderTests.swift */,
+				F00100000000000000000026 /* ActivityMatcherTests.swift */,
+				F00100000000000000000027 /* SyncFingerprintTests.swift */,
+				F00100000000000000000028 /* CommuteClassifierTests.swift */,
+				F0010000000000000000002B /* StravaActivityLookupTests.swift */,
+				F0010000000000000000002C /* XingzheRateLimitTests.swift */,
+			);
+			path = HealthWorkoutExportTests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		T00100000000000000000001 /* HealthWorkoutExport */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C00100000000000000000003 /* Build configuration list for PBXNativeTarget "HealthWorkoutExport" */;
+			buildPhases = (
+				E00100000000000000000001 /* Sources */,
+				E00100000000000000000003 /* Frameworks */,
+				E00100000000000000000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = HealthWorkoutExport;
+			packageProductDependencies = (
+				P00100000000000000000001 /* FITSwiftSDK */,
+			);
+			productName = HealthWorkoutExport;
+			productReference = F0010000000000000000000C /* HealthWorkoutExport.app */;
+			productType = "com.apple.product-type.application";
+		};
+		T00100000000000000000002 /* HealthWorkoutExportTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C00100000000000000000004 /* Build configuration list for PBXNativeTarget "HealthWorkoutExportTests" */;
+			buildPhases = (
+				E00100000000000000000004 /* Sources */,
+				E00100000000000000000005 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D00200000000000000000001 /* PBXTargetDependency */,
+			);
+			name = HealthWorkoutExportTests;
+			packageProductDependencies = (
+				P00100000000000000000002 /* FITSwiftSDK */,
+			);
+			productName = HealthWorkoutExportTests;
+			productReference = F0010000000000000000000E /* HealthWorkoutExportTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		D00100000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					T00100000000000000000001 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					T00100000000000000000002 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = T00100000000000000000001;
+					};
+				};
+			};
+			buildConfigurationList = C00100000000000000000001 /* Build configuration list for PBXProject "HealthWorkoutExport" */;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = "zh-Hans";
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				"zh-Hans",
+			);
+			mainGroup = G00100000000000000000001;
+			packageReferences = (
+				R00100000000000000000001 /* XCRemoteSwiftPackageReference "fit-swift-sdk" */,
+			);
+			productRefGroup = G00100000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				T00100000000000000000001 /* HealthWorkoutExport */,
+				T00100000000000000000002 /* HealthWorkoutExportTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		E00100000000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00100000000000000000009 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		E00100000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00100000000000000000001 /* HealthWorkoutExportApp.swift in Sources */,
+				B00100000000000000000002 /* WorkoutBundle.swift in Sources */,
+				B00100000000000000000003 /* HealthKitService.swift in Sources */,
+				B00100000000000000000004 /* ExportPipeline.swift in Sources */,
+				B00100000000000000000005 /* FitActivityEncoder.swift in Sources */,
+				B0010000000000000000000D /* FitMerger.swift in Sources */,
+				B0010000000000000000000E /* FitMergeView.swift in Sources */,
+				B00100000000000000000006 /* ExportViewModel.swift in Sources */,
+				B00100000000000000000007 /* WorkoutListView.swift in Sources */,
+				B00100000000000000000008 /* DateRangeAndExportViews.swift in Sources */,
+				B00100000000000000000011 /* KeychainStore.swift in Sources */,
+				B00100000000000000000012 /* WorkoutDataSource.swift in Sources */,
+				B00100000000000000000013 /* HealthKitDataSource.swift in Sources */,
+				B00100000000000000000014 /* OnelapClient.swift in Sources */,
+				B00100000000000000000015 /* OnelapDataSource.swift in Sources */,
+				B00100000000000000000016 /* XingzheClient.swift in Sources */,
+				B00100000000000000000017 /* XingzheDataSource.swift in Sources */,
+				B00100000000000000000018 /* ActivityMatcher.swift in Sources */,
+				B00100000000000000000019 /* SyncFingerprint.swift in Sources */,
+				B0010000000000000000001A /* SyncStateStore.swift in Sources */,
+				B0010000000000000000001B /* StravaUploading.swift in Sources */,
+				B0010000000000000000001C /* StravaAPIUploader.swift in Sources */,
+				B0010000000000000000001D /* StravaWebUploader.swift in Sources */,
+				B0010000000000000000001E /* AutoSyncEngine.swift in Sources */,
+				B0010000000000000000001F /* CommuteClassifier.swift in Sources */,
+				B00100000000000000000020 /* RootTabView.swift in Sources */,
+				B00100000000000000000021 /* ThirdPartySourceListView.swift in Sources */,
+				B00100000000000000000022 /* SourceLoginView.swift in Sources */,
+				B00100000000000000000024 /* StravaSettingsView.swift in Sources */,
+				B00100000000000000000025 /* AutoSyncView.swift in Sources */,
+				B00100000000000000000029 /* StravaActivityLookup.swift in Sources */,
+				B0010000000000000000002A /* SyncHistoryView.swift in Sources */,
+				B0010000000000000000002D /* SyncSession.swift in Sources */,
+				B0010000000000000000002E /* ActivityDetailSheet.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E00100000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B0010000000000000000000B /* FitActivityEncoderTests.swift in Sources */,
+				B00100000000000000000026 /* ActivityMatcherTests.swift in Sources */,
+				B00100000000000000000027 /* SyncFingerprintTests.swift in Sources */,
+				B00100000000000000000028 /* CommuteClassifierTests.swift in Sources */,
+				B0010000000000000000002B /* StravaActivityLookupTests.swift in Sources */,
+				B0010000000000000000002C /* XingzheRateLimitTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		D00200000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = T00100000000000000000001 /* HealthWorkoutExport */;
+			targetProxy = D00200000000000000000002 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		S00100000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		S00100000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		S00100000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = HealthWorkoutExport/HealthWorkoutExport.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = HealthWorkoutExport/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bang.HealthWorkoutExport;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		S00100000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = HealthWorkoutExport/HealthWorkoutExport.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = HealthWorkoutExport/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bang.HealthWorkoutExport;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		S00100000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bang.HealthWorkoutExportTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HealthWorkoutExport.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/HealthWorkoutExport";
+			};
+			name = Debug;
+		};
+		S00100000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bang.HealthWorkoutExportTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HealthWorkoutExport.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/HealthWorkoutExport";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		C00100000000000000000001 /* Build configuration list for PBXProject "HealthWorkoutExport" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				S00100000000000000000001 /* Debug */,
+				S00100000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C00100000000000000000003 /* Build configuration list for PBXNativeTarget "HealthWorkoutExport" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				S00100000000000000000003 /* Debug */,
+				S00100000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C00100000000000000000004 /* Build configuration list for PBXNativeTarget "HealthWorkoutExportTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				S00100000000000000000005 /* Debug */,
+				S00100000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		R00100000000000000000001 /* XCRemoteSwiftPackageReference "fit-swift-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/garmin/fit-swift-sdk.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 21.171.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		P00100000000000000000001 /* FITSwiftSDK */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = R00100000000000000000001 /* XCRemoteSwiftPackageReference "fit-swift-sdk" */;
+			productName = FITSwiftSDK;
+		};
+		P00100000000000000000002 /* FITSwiftSDK */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = R00100000000000000000001 /* XCRemoteSwiftPackageReference "fit-swift-sdk" */;
+			productName = FITSwiftSDK;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = D00100000000000000000001 /* Project object */;
+}
