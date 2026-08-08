@@ -7,8 +7,10 @@ enum FitVirtualPowerFiller {
     private static let semicirclesPerDegree = 2_147_483_648.0 / 180.0
     /// 速度/海拔平滑半窗（秒侧索引半径）。
     private static let smoothRadius = 2
-    /// 单秒估算失败时，取前后该时间窗内功率均值回填（秒）。
+    /// 单秒估算失败时，邻域均值起始半径（秒）；不够再逐步扩大。
     private static let neighborAverageRadiusSeconds: TimeInterval = 5
+    /// 邻域半径每次扩大的步长（秒）。
+    private static let neighborAverageExpandStepSeconds: TimeInterval = 5
     /// 参与估算的秒中「估算环节失败」占比达到此阈值时，整条活动放弃虚拟功率。
     private static let activityFailRateThreshold = 0.10
 
@@ -31,7 +33,8 @@ enum FitVirtualPowerFiller {
     }
 
     /// 骑行活动一律估算并覆盖已有 `power`（含功率计数据）。
-    /// 单秒估算失败：用前后 5 秒功率均值回填并标 failed；失败率 ≥10% 则整条不采用。
+    /// 单秒估算失败：先用前后 5 秒功率均值回填并标 failed；不够则继续扩大区间。
+    /// 失败率 ≥10% 则整条不采用（总兜底）。
     static func fillIfNeeded(
         _ data: Data,
         settings: VirtualPowerPhysics.Params? = nil,
@@ -230,10 +233,10 @@ enum FitVirtualPowerFiller {
             estimateSuccess[index] = true
         }
 
-        // 估算失败秒：用前后 5 秒内「直接成功」的均值回填（不用其它失败秒）。
+        // 估算失败秒：先 ±5s 邻域均值，不够则逐步扩大，仍只用「直接成功」秒。
         for index in 0..<n {
             guard estimateFailed[index], draftPower[index] == nil else { continue }
-            // 调用 neighborAveragePower：取时间窗邻域均值补该秒功率。
+            // 调用 neighborAveragePower：从 5s 起扩大区间补该秒功率。
             if let avg = neighborAveragePower(
                 at: index,
                 draftPower: draftPower,
@@ -281,7 +284,7 @@ enum FitVirtualPowerFiller {
 
         for (index, record) in records.enumerated() {
             guard let power = draftPower[index] else {
-                // 邻域也补不上：清除残留功率计值并标 failed，避免 failed 秒仍留旧瓦数。
+                // 扩大到整场仍无可用邻域（极少见）：清除残留功率计值并标 failed。
                 if estimateFailed[index] {
                     // 调用 removeField：去掉该秒原生 power，不保留功率计旧值。
                     record.removeField(fieldNum: RecordMesg.powerFieldNum)
@@ -368,7 +371,7 @@ enum FitVirtualPowerFiller {
         } else {
             weatherNote = "天气退化（默认密度/无风）"
         }
-        let note = "虚拟功率已覆盖写入 \(filled) 秒（估算失败 \(failed) 秒已用邻域均值或标 failed，\(weatherNote)）"
+        let note = "虚拟功率已覆盖写入 \(filled) 秒（估算失败 \(failed) 秒已用扩大邻域均值或标 failed，\(weatherNote)）"
         return FillResult(
             data: encoded,
             filledCount: filled,
@@ -381,7 +384,8 @@ enum FitVirtualPowerFiller {
         )
     }
 
-    /// 取索引前后 5 秒时间窗内直接估算成功功率的算术平均；窗内无可用功率则 nil。
+    /// 从 ±5s 起按步长扩大时间窗，取窗内直接估算成功功率的算术平均；
+    /// 扩大到覆盖整场仍无可用功率则 nil。失败率 ≥10% 是总兜底，故此处优先尽量补上。
     private static func neighborAveragePower(
         at index: Int,
         draftPower: [UInt16?],
@@ -390,20 +394,37 @@ enum FitVirtualPowerFiller {
     ) -> UInt16? {
         guard let centerTs = records[index].getTimestamp()?.timestamp else { return nil }
         let center = TimeInterval(centerTs)
-        var sum = 0.0
-        var count = 0
-        for j in draftPower.indices {
-            guard j != index, let power = draftPower[j] else { continue }
-            // 其它估算失败秒不参与均值，避免失败点互相污染。
-            if estimateFailed[j] { continue }
-            guard let ts = records[j].getTimestamp()?.timestamp else { continue }
-            if abs(TimeInterval(ts) - center) <= neighborAverageRadiusSeconds {
-                sum += Double(power)
-                count += 1
+        // 整场时间跨度：扩大上限，避免无限循环。
+        let maxRadius: TimeInterval = {
+            let times = records.compactMap { $0.getTimestamp()?.timestamp }.map { TimeInterval($0) }
+            guard let lo = times.min(), let hi = times.max() else {
+                return neighborAverageRadiusSeconds
             }
+            return max(neighborAverageRadiusSeconds, hi - lo)
+        }()
+
+        var radius = neighborAverageRadiusSeconds
+        while radius <= maxRadius + 0.001 {
+            var sum = 0.0
+            var count = 0
+            for j in draftPower.indices {
+                guard j != index, let power = draftPower[j] else { continue }
+                // 其它估算失败秒不参与均值，避免失败点互相污染。
+                if estimateFailed[j] { continue }
+                guard let ts = records[j].getTimestamp()?.timestamp else { continue }
+                if abs(TimeInterval(ts) - center) <= radius {
+                    sum += Double(power)
+                    count += 1
+                }
+            }
+            if count > 0 {
+                return UInt16(min(max((sum / Double(count)).rounded(), 0), Double(UInt16.max)))
+            }
+            // 当前半径无点：再扩大一步。
+            if radius >= maxRadius { break }
+            radius = min(maxRadius, radius + neighborAverageExpandStepSeconds)
         }
-        guard count > 0 else { return nil }
-        return UInt16(min(max((sum / Double(count)).rounded(), 0), Double(UInt16.max)))
+        return nil
     }
 
     /// Session 运动类型是否为骑行；无 session 时不估。

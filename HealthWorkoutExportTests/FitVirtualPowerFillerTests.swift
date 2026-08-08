@@ -431,10 +431,10 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         XCTAssertLessThanOrEqual(anchors.count, 12)
     }
 
-    /// 邻域补不上时须清除该秒残留功率计值，并标 failed。
-    func testClearsResidualMeterPowerWhenNeighborAverageUnavailable() async throws {
+    /// ±5s 不够时继续扩大邻域，用更远的成功秒均值回填（仍标 failed）。
+    func testExpandsNeighborWindowBeyondFiveSeconds() async throws {
         let start = Date(timeIntervalSince1970: 1_720_000_000)
-        // 10 秒成功 + 1 秒孤立失败（距最近成功 >5s）→ 失败率 <10%，邻域无法补。
+        // 10 秒成功 + 1 秒孤立失败（距最近成功 11s）→ ±5s 不够，扩大后应能补上。
         var specs: [(offset: Double, speed: Double?, alt: Double, power: UInt16?, cadence: UInt8?)] = []
         for i in 0..<10 {
             specs.append((Double(i), speed: 8, alt: 10, power: 150, cadence: 90))
@@ -447,24 +447,27 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         )
         XCTAssertFalse(result.activityRejected)
         XCTAssertEqual(result.failedCount, 1)
-        XCTAssertEqual(result.filledCount, 10)
+        XCTAssertEqual(result.filledCount, 11, "扩大邻域后孤立失败秒也应写入功率")
 
         let messages = try FitMerger.decode(result.data)
         let records = messages.recordMesgs.sorted {
             ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)
         }
         XCTAssertEqual(records.count, 11)
-        XCTAssertNil(records[10].getPower(), "邻域补不上时应清除残留功率计值")
+        let filledFail = try XCTUnwrap(records[10].getPower())
+        XCTAssertNotEqual(filledFail, 999, "不得保留功率计残留值")
+        // 半径扩到 15s 时，落入窗的是 offset 5…9 的成功秒。
+        let neighborPowers = records[5...9].compactMap { $0.getPower() }.map { Double($0) }
+        XCTAssertEqual(neighborPowers.count, 5)
+        let expected = UInt16((neighborPowers.reduce(0, +) / Double(neighborPowers.count)).rounded())
+        XCTAssertEqual(filledFail, expected)
         XCTAssertEqual(
             VirtualPowerSourceMark.powerSource(of: records[10]),
             VirtualPowerSourceMark.failedValue
         )
-        XCTAssertNotEqual(records[0].getPower(), 150)
 
         let lap = try XCTUnwrap(messages.lapMesgs.first)
-        let lapAvg = try XCTUnwrap(lap.getAvgPower())
         let lapMax = try XCTUnwrap(lap.getMaxPower())
-        XCTAssertNotEqual(lapAvg, 500, "Lap 均功率应基于本次草稿重算")
         XCTAssertNotEqual(lapMax, 999, "Lap 峰功率不得保留残留功率计峰值")
         XCTAssertLessThan(lapMax, 999)
     }

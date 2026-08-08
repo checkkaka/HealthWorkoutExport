@@ -7,7 +7,7 @@ enum VirtualPowerSourceMark {
     static let fieldName = "powerSource"
     /// 估算成功写入功率。
     static let virtualValue = "virtual"
-    /// 该秒估算环节失败（仍可能已用前后 5 秒均值写入功率）。
+    /// 该秒估算环节失败（仍可能已用扩大邻域均值写入功率）。
     static let failedValue = "failed"
     /// 本 App 稳定 Application Id（16 字节）。
     private static let applicationId: [UInt8] = [
