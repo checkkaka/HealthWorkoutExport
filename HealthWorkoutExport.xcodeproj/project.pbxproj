@@ -131,6 +131,7 @@
 		F00100000000000000000037 /* VirtualPowerSourceMark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualPowerSourceMark.swift; sourceTree = "<group>"; };
 		F00100000000000000000038 /* VirtualPowerSocialCopy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualPowerSocialCopy.swift; sourceTree = "<group>"; };
 		F00100000000000000000039 /* VirtualPowerSocialCopyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualPowerSocialCopyTests.swift; sourceTree = "<group>"; };
+		F0010000000000000000003A /* OpenMeteoWeatherClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenMeteoWeatherClientTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -235,6 +236,7 @@
 				F00100000000000000000034 /* FitVirtualPowerFillerTests.swift */,
 				F00100000000000000000036 /* OpenMeteoWeatherCacheTests.swift */,
 				F00100000000000000000039 /* VirtualPowerSocialCopyTests.swift */,
+				F0010000000000000000003A /* OpenMeteoWeatherClientTests.swift */,
 			);
 			path = HealthWorkoutExportTests;
 			sourceTree = "<group>";
@@ -398,6 +400,7 @@
 				B00100000000000000000034 /* FitVirtualPowerFillerTests.swift in Sources */,
 				B00100000000000000000036 /* OpenMeteoWeatherCacheTests.swift in Sources */,
 				B00100000000000000000039 /* VirtualPowerSocialCopyTests.swift in Sources */,
+				B0010000000000000000003A /* OpenMeteoWeatherClientTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
