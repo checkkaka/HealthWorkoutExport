@@ -50,6 +50,8 @@ final class AutoSyncEngine {
     private let apiUploader: StravaAPIUploader
     private let webUploader: StravaWebUploader
     private let recoveryStore: ResyncRecoveryStore
+    /// 本批同步共用的天气缓存（按日+粗网格），避免同城多活动重复打 Open-Meteo。
+    private var weatherCache: OpenMeteoWeatherCache?
 
     init(
         registry: DataSourceRegistry? = nil,
@@ -97,6 +99,11 @@ final class AutoSyncEngine {
 
         let uploader = uploader()
         guard await uploader.isReady() else { throw StravaUploadError.notConfigured }
+
+        // 本批新建天气缓存；结束时清空引用，避免跨批次串数据。
+        let batchWeatherCache = OpenMeteoWeatherCache()
+        weatherCache = batchWeatherCache
+        defer { weatherCache = nil }
 
         // 调用 listActivities：拉取主源时间窗内活动。
         let primaries = try await primary.listActivities(from: range.start, to: range.end)
@@ -313,6 +320,7 @@ final class AutoSyncEngine {
                             fitData: nil,
                             filename: nil,
                             commute: false,
+                            activityDescription: nil,
                             distanceMeters: activity.distanceMeters,
                             durationSeconds: activity.duration,
                             activityStart: activity.startDate,
@@ -340,6 +348,7 @@ final class AutoSyncEngine {
                         fitData: nil,
                         filename: nil,
                         commute: false,
+                        activityDescription: nil,
                         distanceMeters: activity.distanceMeters,
                         durationSeconds: activity.duration,
                         activityStart: activity.startDate,
@@ -412,6 +421,7 @@ final class AutoSyncEngine {
                     notes.append("已修复 \(spikeFixed.fixedCount) 处速度尖峰：\(activity.title)")
                 }
                 // 上传成功可写入 sync_state.message，便于核对 GCJ 是否跑过。
+                // 虚拟功率放在 GCJ 之后：用最终坐标估风向/方位，避免转换前方位偏差。
                 var uploadMessage: String?
                 if StravaSettings.gcjCorrectionEnabled {
                     // 调用 FitGcjCoordinateRewriter：可选 GCJ→WGS，修国内轨迹偏移。
@@ -423,6 +433,14 @@ final class AutoSyncEngine {
                     notes.append("\(gcjMsg)：\(activity.title)")
                     uploadMessage = gcjMsg
                 }
+                // 调用 applyVirtualPowerIfNeeded：开启后估算并覆盖已有原生 power。
+                let virtualPower = try await applyVirtualPowerIfNeeded(
+                    uploadData,
+                    activityTitle: activity.title,
+                    notes: &notes
+                )
+                uploadData = virtualPower.data
+                let activityDescription = virtualPower.activityDescription
                 let gpsPoints = FitContentProbe.gpsPointCount(uploadData)
                 let hrPoints = FitContentProbe.heartRatePointCount(uploadData)
                 if gpsPoints < 5 {
@@ -443,7 +461,8 @@ final class AutoSyncEngine {
                     uploadData,
                     externalId: useOverwriteExternalId ? overwriteExternalId(fingerprint) : fingerprint,
                     filename: filename,
-                    commute: commute
+                    commute: commute,
+                    description: activityDescription
                 )
 
                 if result.isDuplicate {
@@ -457,6 +476,7 @@ final class AutoSyncEngine {
                         fitData: uploadData,
                         filename: filename,
                         commute: commute,
+                        activityDescription: activityDescription,
                         distanceMeters: activity.distanceMeters,
                         durationSeconds: activity.duration,
                         activityStart: activity.startDate,
@@ -581,6 +601,45 @@ final class AutoSyncEngine {
         )
     }
 
+    /// 开关开启且参数合法时，对骑行 FIT 估算虚拟功率并覆盖已有原生 power。
+    /// 返回值：写入后的数据，以及是否应附带虚拟功率社交描述。
+    private func applyVirtualPowerIfNeeded(
+        _ data: Data,
+        activityTitle: String,
+        notes: inout [String]
+    ) async throws -> (data: Data, activityDescription: String?) {
+        guard VirtualPowerSettings.enabled else { return (data, nil) }
+        guard VirtualPowerSettings.isConfigured else {
+            notes.append("虚拟功率已开但参数无效，已跳过：\(activityTitle)")
+            return (data, nil)
+        }
+        // 调用 FitVirtualPowerFiller：Gribble + Open-Meteo，覆盖已有 power；失败秒标 failed。
+        let result = try await FitVirtualPowerFiller.fillIfNeeded(
+            data,
+            settings: VirtualPowerSettings.physicsParams(),
+            weatherCache: weatherCache
+        )
+        if result.filledCount > 0
+            || result.failedCount > 0
+            || result.activityRejected
+            || result.note.contains("退化")
+            || result.note.contains("未写入")
+            || result.note.contains("跳过")
+            || result.note.contains("放弃") {
+            notes.append("\(result.note)：\(activityTitle)")
+        }
+        // 仅当编码结果里确有 powerSource=virtual 时才附社交描述（仅 filled/failed 不够）。
+        guard !result.activityRejected, result.virtualMarkedCount > 0 else {
+            return (result.data, nil)
+        }
+        guard let messages = try? FitMerger.decode(result.data),
+              // 调用 containsVirtualMarkedRecord：按 developer 字段确认是虚拟功率。
+              VirtualPowerSourceMark.containsVirtualMarkedRecord(in: messages) else {
+            return (result.data, nil)
+        }
+        return (result.data, VirtualPowerSocialCopy.activityDescription)
+    }
+
     /// 本批预检列表追加刚上传的活动，避免同批后条再传一遍。
     /// 网页上传 / API 后台补 ID 前常无 activity_id：用 fingerprint 占位，避免同秒开骑互相覆盖。
     private func rememberRemote(
@@ -622,6 +681,7 @@ final class AutoSyncEngine {
         fitData: Data?,
         filename: String?,
         commute: Bool,
+        activityDescription: String?,
         distanceMeters: Double?,
         durationSeconds: TimeInterval?,
         activityStart: Date,
@@ -641,7 +701,8 @@ final class AutoSyncEngine {
                 fitData,
                 externalId: overwriteExternalId(fingerprint),
                 filename: filename,
-                commute: commute
+                commute: commute,
+                description: activityDescription
             )
             if !result.isDuplicate {
                 await stateStore.markUploaded(
@@ -728,7 +789,8 @@ final class AutoSyncEngine {
                 fitData,
                 externalId: overwriteExternalId(fingerprint),
                 filename: filename,
-                commute: commute
+                commute: commute,
+                description: activityDescription
             )
             if result.isDuplicate {
                 let hit = result.remoteId.map { "（撞上远端 \($0)）" } ?? ""
@@ -774,6 +836,11 @@ final class AutoSyncEngine {
     ) async throws -> AutoSyncResult {
         let uploader = uploader()
         guard await uploader.isReady() else { throw StravaUploadError.notConfigured }
+
+        // 重传批次同样共用天气缓存。
+        let batchWeatherCache = OpenMeteoWeatherCache()
+        weatherCache = batchWeatherCache
+        defer { weatherCache = nil }
 
         var progress = AutoSyncProgress.zero
         progress.total = fingerprints.count
@@ -888,6 +955,7 @@ final class AutoSyncEngine {
 
                     let spikeFixed = try FitSpeedSpikeFixer.fix(fitData)
                     var uploadData = spikeFixed.data
+                    // 重传路径同样：尖峰 → GCJ → 虚拟功率（最终坐标再估风）。
                     var uploadMessage: String?
                     if StravaSettings.gcjCorrectionEnabled {
                         // 调用 FitGcjCoordinateRewriter：可选 GCJ→WGS，修国内轨迹偏移。
@@ -897,6 +965,13 @@ final class AutoSyncEngine {
                             ? "已转换 \(gcj.rewrittenCount) 个 GCJ 坐标点"
                             : "GCJ 开关已开但未转换任何坐标点"
                     }
+                    // 调用 applyVirtualPowerIfNeeded：重传路径同样估算并覆盖已有功率。
+                    let virtualPower = try await applyVirtualPowerIfNeeded(
+                        uploadData,
+                        activityTitle: activity.title,
+                        notes: &notes
+                    )
+                    uploadData = virtualPower.data
 
                     prepared = PendingResyncUpload(
                         primarySourceId: primary.id,
@@ -913,7 +988,8 @@ final class AutoSyncEngine {
                         commute: CommuteClassifier.isCommute(
                             distanceMeters: activity.distanceMeters,
                             durationSeconds: activity.duration
-                        )
+                        ),
+                        activityDescription: virtualPower.activityDescription
                     )
                 }
 
@@ -943,7 +1019,8 @@ final class AutoSyncEngine {
                     prepared.uploadData,
                     externalId: overwriteExternalId(fingerprint),
                     filename: prepared.filename,
-                    commute: prepared.commute
+                    commute: prepared.commute,
+                    description: prepared.activityDescription
                 )
 
                 if result.isDuplicate {
@@ -957,6 +1034,7 @@ final class AutoSyncEngine {
                         fitData: prepared.uploadData,
                         filename: prepared.filename,
                         commute: prepared.commute,
+                        activityDescription: prepared.activityDescription,
                         distanceMeters: prepared.distanceMeters,
                         durationSeconds: prepared.durationSeconds,
                         activityStart: prepared.startDate,
