@@ -17,6 +17,7 @@ struct ThirdPartySourceListView: View {
     @State private var showSyncHistory = false
     @State private var loadGeneration = 0
     @State private var uploadedKeys: Set<String> = []
+    @State private var localRemoteIds: [String: String] = [:]
     @State private var detailActivity: SourceActivity?
 
     private var source: (any WorkoutDataSource)? {
@@ -90,7 +91,9 @@ struct ThirdPartySourceListView: View {
             .sheet(isPresented: $showStravaSettings) {
                 NavigationStack { StravaSettingsView() }
             }
-            .sheet(isPresented: $showSyncHistory) {
+            .sheet(isPresented: $showSyncHistory, onDismiss: {
+                Task { await refreshSyncState() }
+            }) {
                 NavigationStack { SyncHistoryView(primarySourceId: sourceId) }
             }
             .sheet(item: $detailActivity) { activity in
@@ -141,35 +144,47 @@ struct ThirdPartySourceListView: View {
                         let synced = uploadedKeys.contains(
                             SyncStateStore.primaryKey(sourceId: activity.sourceId, activityId: activity.id)
                         )
-                        Button {
-                            detailActivity = activity
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 6) {
-                                    Text(activity.title).font(.body.weight(.semibold))
-                                    if synced {
-                                        Image(systemName: "checkmark.seal.fill")
-                                            .font(.caption)
-                                            .foregroundStyle(.green)
+                        let remoteId = localRemoteIds[
+                            SyncStateStore.primaryKey(sourceId: activity.sourceId, activityId: activity.id)
+                        ]
+                        VStack(alignment: .leading, spacing: 5) {
+                            Button {
+                                detailActivity = activity
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack(spacing: 6) {
+                                        Text(activity.title).font(.body.weight(.semibold))
+                                        if synced {
+                                            Image(systemName: "checkmark.seal.fill")
+                                                .font(.caption)
+                                                .foregroundStyle(.green)
+                                        }
+                                        if remoteId != nil {
+                                            Image(systemName: "bicycle.circle.fill")
+                                                .font(.caption)
+                                                .foregroundStyle(.orange)
+                                        }
                                     }
-                                }
-                                Text(activity.startDate.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.subheadline)
+                                    Text(activity.startDate.formatted(date: .abbreviated, time: .shortened))
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                    HStack {
+                                        Text(durationText(activity.duration))
+                                        if let meters = activity.distanceMeters, meters > 0 {
+                                            Text(String(format: "%.2f 公里", meters / 1000))
+                                        }
+                                    }
+                                    .font(.footnote.monospacedDigit())
                                     .foregroundStyle(.secondary)
-                                HStack {
-                                    Text(durationText(activity.duration))
-                                    if let meters = activity.distanceMeters, meters > 0 {
-                                        Text(String(format: "%.2f 公里", meters / 1000))
-                                    }
                                 }
-                                .font(.footnote.monospacedDigit())
-                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
                             }
-                            .padding(.vertical, 2)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
+
+                            StravaRemoteIDLine(remoteId: remoteId)
                         }
-                        .buttonStyle(.plain)
+                        .padding(.vertical, 2)
                     }
                 }
             }
@@ -199,8 +214,7 @@ struct ThirdPartySourceListView: View {
             let list = try await source.listActivities(from: range.start, to: range.end)
             guard generation == loadGeneration else { return }
             activities = list
-            // 调用 uploadedPrimaryKeys：刷新已同步徽标。
-            uploadedKeys = await SyncStateStore.shared.uploadedPrimaryKeys()
+            await refreshSyncState()
         } catch is CancellationError {
             return
         } catch {
@@ -208,6 +222,12 @@ struct ThirdPartySourceListView: View {
             errorMessage = error.localizedDescription
             activities = []
         }
+    }
+
+    private func refreshSyncState() async {
+        // 从本地同步记录同时刷新已同步徽标与 Strava 远端 ID。
+        uploadedKeys = await SyncStateStore.shared.uploadedPrimaryKeys()
+        localRemoteIds = await SyncStateStore.shared.localRemoteIdsByPrimaryKey()
     }
 
     private func durationText(_ duration: TimeInterval) -> String {

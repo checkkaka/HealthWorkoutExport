@@ -149,6 +149,9 @@ struct AutoSyncView: View {
                         Button("继续上次同步") {
                             session.resume()
                         }
+                        Button("整批重试") {
+                            session.retryBatch()
+                        }
                     }
                     Button("开始同步") {
                         startSync()

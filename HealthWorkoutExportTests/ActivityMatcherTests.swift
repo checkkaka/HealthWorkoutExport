@@ -2,6 +2,12 @@ import XCTest
 @testable import HealthWorkoutExport
 
 final class ActivityMatcherTests: XCTestCase {
+    func testOnelapCredentialsOnlyUseTrustedHTTPSHosts() {
+        XCTAssertTrue(OnelapClient.isTrustedAuthenticatedURL(URL(string: "https://otm.onelap.cn/api")!))
+        XCTAssertFalse(OnelapClient.isTrustedAuthenticatedURL(URL(string: "http://otm.onelap.cn/api")!))
+        XCTAssertFalse(OnelapClient.isTrustedAuthenticatedURL(URL(string: "https://onelap.cn.example.com/api")!))
+    }
+
     func testOverlapMatch() {
         let primary = SourceActivity(
             id: "p1", sourceId: "healthkit", title: "主",
