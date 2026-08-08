@@ -42,18 +42,20 @@ enum FitVirtualPowerFiller {
         }
 
         let baseParams = settings ?? VirtualPowerSettings.physicsParams()
-        var weatherByTime: [(Date, WeatherSample)] = []
+        var weatherStations: [WeatherStation] = []
         var usedWeather = false
         var weatherPointCount = 0
+        var weatherAnchorCount = 0
 
-        if let anchor = weatherAnchor(from: records),
+        let anchors = weatherAnchors(from: records)
+        if !anchors.isEmpty,
            let firstTs = records.first?.getTimestamp()?.timestamp,
            let lastTs = records.last?.getTimestamp()?.timestamp {
             let start = Date(timeIntervalSince1970: TimeInterval(firstTs))
             let end = Date(timeIntervalSince1970: TimeInterval(lastTs))
             let provider = weatherProvider ?? { lat, lon, start, end in
                 if let weatherCache {
-                    // 调用 OpenMeteoWeatherCache：同批按日+粗网格复用天气。
+                    // 调用 OpenMeteoWeatherCache：同批按日+粗网格去重请求。
                     return try await weatherCache.hourly(
                         latitude: lat,
                         longitude: lon,
@@ -64,11 +66,30 @@ enum FitVirtualPowerFiller {
                 return try await defaultWeatherProvider(lat: lat, lon: lon, start: start, end: end)
             }
             do {
-                // 调用天气 provider：按轨迹锚点拉历史逐小时天气。
-                let samples = try await provider(anchor.lat, anchor.lon, start, end)
-                weatherByTime = samples.map { ($0.date, $0) }
-                usedWeather = !samples.isEmpty
-                weatherPointCount = samples.count
+                // 沿途多锚点拉天气；同粗网格 key 只请求一次，再挂到各锚点坐标上做空间插值。
+                var seriesByKey: [String: [WeatherSample]] = [:]
+                for anchor in anchors {
+                    let key = OpenMeteoWeatherCache.cacheKey(
+                        latitude: anchor.lat,
+                        longitude: anchor.lon,
+                        start: start,
+                        end: end
+                    )
+                    if seriesByKey[key] == nil {
+                        seriesByKey[key] = try await provider(anchor.lat, anchor.lon, start, end)
+                    }
+                    guard let samples = seriesByKey[key], !samples.isEmpty else { continue }
+                    weatherStations.append(
+                        WeatherStation(
+                            lat: anchor.lat,
+                            lon: anchor.lon,
+                            series: samples.map { ($0.date, $0) }
+                        )
+                    )
+                    weatherPointCount = max(weatherPointCount, samples.count)
+                }
+                weatherAnchorCount = weatherStations.count
+                usedWeather = !weatherStations.isEmpty
             } catch is CancellationError {
                 throw CancellationError()
             } catch let urlError as URLError where urlError.code == .cancelled {
@@ -102,7 +123,12 @@ enum FitVirtualPowerFiller {
             }
             guard let speed = kin.speedMps, speed > 0.1 else { continue }
 
-            let sample = interpolateWeather(at: kin.date, samples: weatherByTime)
+            let sample = weatherAt(
+                date: kin.date,
+                lat: kin.lat,
+                lon: kin.lon,
+                stations: weatherStations
+            )
             let rho: Double
             let headwind: Double
             if let sample {
@@ -184,9 +210,12 @@ enum FitVirtualPowerFiller {
         }
 
         let encoded = try FitMessagesReencoder.encode(messages)
-        let weatherNote = usedWeather
-            ? "天气 \(weatherPointCount) 点"
-            : "天气退化（默认密度/无风）"
+        let weatherNote: String
+        if usedWeather {
+            weatherNote = "天气锚点 \(weatherAnchorCount)、时序 \(weatherPointCount) 点"
+        } else {
+            weatherNote = "天气退化（默认密度/无风）"
+        }
         return FillResult(
             data: encoded,
             filledCount: filled,
@@ -194,6 +223,13 @@ enum FitVirtualPowerFiller {
             weatherPointCount: weatherPointCount,
             note: "虚拟功率已回填 \(filled) 秒（\(weatherNote)）"
         )
+    }
+
+    /// 沿途天气站：一个 GPS 锚点 + 该点的逐小时时序。
+    private struct WeatherStation {
+        var lat: Double
+        var lon: Double
+        var series: [(Date, WeatherSample)]
     }
 
     private static func defaultWeatherProvider(
@@ -239,6 +275,8 @@ enum FitVirtualPowerFiller {
         var date: Date
         var speedMps: Double?
         var altitudeM: Double?
+        var lat: Double?
+        var lon: Double?
         var gradePercent: Double
         var accelerationMps2: Double
         var bearingDegrees: Double?
@@ -271,7 +309,7 @@ enum FitVirtualPowerFiller {
         let smoothAlt = smooth(alts, radius: smoothRadius)
 
         var result = [Kinematics](repeating: Kinematics(
-            date: Date(), speedMps: nil, altitudeM: nil,
+            date: Date(), speedMps: nil, altitudeM: nil, lat: nil, lon: nil,
             gradePercent: 0, accelerationMps2: 0, bearingDegrees: nil
         ), count: n)
 
@@ -317,6 +355,8 @@ enum FitVirtualPowerFiller {
                 date: date,
                 speedMps: smoothSpeed[i] ?? speeds[i],
                 altitudeM: smoothAlt[i] ?? alts[i],
+                lat: lats[i],
+                lon: lons[i],
                 gradePercent: grade,
                 accelerationMps2: accel,
                 bearingDegrees: bearing
@@ -344,14 +384,121 @@ enum FitVirtualPowerFiller {
         return out
     }
 
-    private static func weatherAnchor(from records: [RecordMesg]) -> (lat: Double, lon: Double)? {
-        // 取第一条有 GPS 的点作为天气查询锚点（格点尺度下足够）。
-        for record in records {
-            if let la = record.getPositionLat(), let lo = record.getPositionLong() {
-                return (Double(la) / semicirclesPerDegree, Double(lo) / semicirclesPerDegree)
+    /// 沿轨迹抽天气锚点：约每 5 km 或 10 分钟一点，最多 12 个，首尾必含。
+    /// 粗网格缓存仍去重同城请求；多锚点用于跨区域/长距离时的空间插值。
+    private static let weatherAnchorMinGapMeters = 5_000.0
+    private static let weatherAnchorMinGapSeconds: TimeInterval = 600
+    private static let weatherAnchorMaxCount = 12
+
+    /// 返回沿途天气查询坐标（测试也可直接调用）。
+    static func weatherAnchorCoordinates(from records: [RecordMesg]) -> [(lat: Double, lon: Double)] {
+        var anchors: [(lat: Double, lon: Double)] = []
+        var lastLat: Double?
+        var lastLon: Double?
+        var lastTime: Date?
+        var traveled = 0.0
+
+        func append(_ lat: Double, _ lon: Double) {
+            if let prev = anchors.last {
+                let d = haversineMeters(lat1: prev.lat, lon1: prev.lon, lat2: lat, lon2: lon)
+                if d < 50 { return }
             }
+            anchors.append((lat, lon))
         }
-        return nil
+
+        for record in records {
+            guard let la = record.getPositionLat(), let lo = record.getPositionLong() else { continue }
+            let lat = Double(la) / semicirclesPerDegree
+            let lon = Double(lo) / semicirclesPerDegree
+            let time = record.getTimestamp().map { Date(timeIntervalSince1970: TimeInterval($0.timestamp)) }
+
+            if anchors.isEmpty {
+                append(lat, lon)
+                lastLat = lat
+                lastLon = lon
+                lastTime = time
+                continue
+            }
+            if let la0 = lastLat, let lo0 = lastLon {
+                traveled += haversineMeters(lat1: la0, lon1: lo0, lat2: lat, lon2: lon)
+            }
+            let timeGap: TimeInterval = {
+                guard let t0 = lastTime, let t1 = time else { return 0 }
+                return t1.timeIntervalSince(t0)
+            }()
+            if traveled >= weatherAnchorMinGapMeters || timeGap >= weatherAnchorMinGapSeconds {
+                append(lat, lon)
+                traveled = 0
+                lastTime = time
+            }
+            lastLat = lat
+            lastLon = lon
+        }
+
+        if let la = records.last?.getPositionLat(), let lo = records.last?.getPositionLong() {
+            append(Double(la) / semicirclesPerDegree, Double(lo) / semicirclesPerDegree)
+        }
+
+        if anchors.count <= weatherAnchorMaxCount {
+            return anchors
+        }
+        // 超上限时均匀抽稀，保留首尾。
+        var thinned: [(lat: Double, lon: Double)] = [anchors[0]]
+        let inner = weatherAnchorMaxCount - 2
+        for i in 1...inner {
+            let idx = Int((Double(i) / Double(inner + 1)) * Double(anchors.count - 1))
+            thinned.append(anchors[idx])
+        }
+        thinned.append(anchors[anchors.count - 1])
+        return thinned
+    }
+
+    private static func weatherAnchors(from records: [RecordMesg]) -> [(lat: Double, lon: Double)] {
+        weatherAnchorCoordinates(from: records)
+    }
+
+    /// 按位置选最近天气站，再按时间插值；无 GPS 时退回第一站。
+    private static func weatherAt(
+        date: Date,
+        lat: Double?,
+        lon: Double?,
+        stations: [WeatherStation]
+    ) -> WeatherSample? {
+        guard !stations.isEmpty else { return nil }
+        guard let lat, let lon else {
+            return interpolateWeather(at: date, samples: stations[0].series)
+        }
+        if stations.count == 1 {
+            return interpolateWeather(at: date, samples: stations[0].series)
+        }
+
+        let ranked = stations
+            .map { station -> (WeatherStation, Double) in
+                let d = haversineMeters(lat1: lat, lon1: lon, lat2: station.lat, lon2: station.lon)
+                return (station, d)
+            }
+            .sorted { $0.1 < $1.1 }
+
+        let nearest = ranked[0]
+        let second = ranked[1]
+        guard let s0 = interpolateWeather(at: date, samples: nearest.0.series) else {
+            return interpolateWeather(at: date, samples: second.0.series)
+        }
+        // 第二站过远或重合：直接用最近站。
+        guard nearest.1 + second.1 > 1,
+              let s1 = interpolateWeather(at: date, samples: second.0.series),
+              second.1 < 25_000 else {
+            return s0
+        }
+        let w = nearest.1 / (nearest.1 + second.1)
+        return WeatherSample(
+            date: date,
+            temperatureC: lerp(s0.temperatureC, s1.temperatureC, w),
+            relativeHumidityPercent: lerp(s0.relativeHumidityPercent, s1.relativeHumidityPercent, w),
+            pressureMslHpa: lerp(s0.pressureMslHpa, s1.pressureMslHpa, w),
+            windSpeedMps: lerp(s0.windSpeedMps, s1.windSpeedMps, w),
+            windFromDegrees: lerpAngle(s0.windFromDegrees, s1.windFromDegrees, w)
+        )
     }
 
     private static func interpolateWeather(

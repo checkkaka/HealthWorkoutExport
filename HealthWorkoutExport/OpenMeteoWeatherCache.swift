@@ -1,6 +1,7 @@
 import Foundation
 
-/// 同批次 Open-Meteo 天气缓存：按 UTC 日期范围 + 粗网格坐标复用，减少重复请求与限流。
+/// 同批次 Open-Meteo 天气缓存：按 UTC 日期范围 + 粗网格坐标去重 HTTP。
+/// 粗网格只影响「少打几次 API」，不替代沿途多锚点；空气密度仍按每秒海拔订正。
 actor OpenMeteoWeatherCache {
     /// 粗网格边长（度），约 11 km，同城多条活动可命中同一格。
     private static let gridDegrees = 0.1

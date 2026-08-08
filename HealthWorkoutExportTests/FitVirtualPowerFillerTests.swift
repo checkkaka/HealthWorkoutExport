@@ -95,6 +95,36 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         XCTAssertEqual(records.first?.getPower(), 0)
     }
 
+    /// 长轨迹应按距离抽出多个天气锚点（而不只是起点）。
+    func testWeatherAnchorsSampleAlongRoute() throws {
+        let start = Date(timeIntervalSince1970: 1_720_000_000)
+        let semicircles = 2_147_483_648.0 / 180.0
+        // 约每秒向北移动 ~0.001° ≈ 111 m，200 秒约 22 km → 应有多个锚点。
+        let fileId = FileIdMesg()
+        try fileId.setType(File.activity)
+        try fileId.setManufacturer(Manufacturer.development)
+        try fileId.setProduct(1)
+        try fileId.setTimeCreated(DateTime(date: start))
+        try fileId.setSerialNumber(1)
+        let encoder = Encoder()
+        encoder.write(mesg: fileId)
+        var records: [RecordMesg] = []
+        for i in 0..<200 {
+            let record = RecordMesg()
+            try record.setTimestamp(DateTime(date: start.addingTimeInterval(Double(i))))
+            let lat = 31.0 + Double(i) * 0.001
+            try record.setPositionLat(Int32((lat * semicircles).rounded()))
+            try record.setPositionLong(Int32((121.5 * semicircles).rounded()))
+            try record.setSpeed(10)
+            encoder.write(mesg: record)
+            records.append(record)
+        }
+        _ = encoder.close()
+        let anchors = FitVirtualPowerFiller.weatherAnchorCoordinates(from: records)
+        XCTAssertGreaterThanOrEqual(anchors.count, 3)
+        XCTAssertLessThanOrEqual(anchors.count, 12)
+    }
+
     private func makeFit(
         start: Date,
         records: [(offset: Double, speed: Double, alt: Double, power: UInt16?, cadence: UInt8)]
