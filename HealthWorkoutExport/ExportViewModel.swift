@@ -160,3 +160,99 @@ final class ExportViewModel {
         UIApplication.shared.open(url)
     }
 }
+
+/// 行者/顽鹿列表导出：勾选活动后导出 FIT（或摘要 JSON）。
+@MainActor
+@Observable
+final class SourceExportViewModel {
+    /// 复用导出流水线（HealthKit 实例仅占位，第三方导出走 fetchFitData）。
+    @ObservationIgnored private let pipeline = ExportPipeline(
+        healthKit: DataSourceRegistry.shared.healthKit.underlyingHealthKit
+    )
+
+    var selectedIDs: Set<String> = []
+    var isExporting = false
+    /// 第三方默认 FIT（源文件即 FIT）。
+    var exportFormat: ExportFormat = .fit
+    var exportTimeZone: TimeZone = .current
+    let timeZoneOptions = ExportTimeZone.options()
+    var errorMessage: String?
+    var exportProgress = ExportProgress(completed: 0, total: 0)
+    var shareURL: URL?
+    var showExportSheet = false
+
+    func selectedActivities(from activities: [SourceActivity]) -> [SourceActivity] {
+        activities.filter { selectedIDs.contains($0.id) }
+    }
+
+    func toggleSelection(_ id: String) {
+        if selectedIDs.contains(id) {
+            selectedIDs.remove(id)
+        } else {
+            selectedIDs.insert(id)
+        }
+    }
+
+    func selectAll(from activities: [SourceActivity]) {
+        selectedIDs = Set(activities.map(\.id))
+    }
+
+    func deselectAll() {
+        selectedIDs.removeAll()
+    }
+
+    /// 列表刷新后清空勾选，与健康页一致。
+    func clearSelection() {
+        selectedIDs.removeAll()
+    }
+
+    func prepareExport(from activities: [SourceActivity]) {
+        let selected = selectedActivities(from: activities)
+        guard !selected.isEmpty else {
+            errorMessage = ExportPipelineError.nothingSelected.localizedDescription
+            return
+        }
+        shareURL = nil
+        exportProgress = ExportProgress(completed: 0, total: selected.count)
+        showExportSheet = true
+    }
+
+    func runExport(source: any WorkoutDataSource, activities: [SourceActivity]) async {
+        guard !isExporting else { return }
+        let selected = selectedActivities(from: activities)
+        guard !selected.isEmpty else {
+            errorMessage = ExportPipelineError.nothingSelected.localizedDescription
+            return
+        }
+        isExporting = true
+        errorMessage = nil
+        defer { isExporting = false }
+        do {
+            // 调用 pipeline.export：按源拉取 FIT 或写摘要 JSON。
+            let url = try await pipeline.export(
+                activities: selected,
+                source: source,
+                format: exportFormat,
+                timeZone: exportTimeZone
+            ) { [weak self] progress in
+                self?.exportProgress = progress
+            }
+            shareURL = url
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func deleteExportedFile(selectedCount: Int) {
+        guard let shareURL else { return }
+        let fm = FileManager.default
+        let parent = shareURL.deletingLastPathComponent()
+        if parent.lastPathComponent.hasPrefix("HealthWorkoutExport-") {
+            try? fm.removeItem(at: parent)
+        } else {
+            try? fm.removeItem(at: shareURL)
+        }
+        self.shareURL = nil
+        exportProgress = ExportProgress(completed: 0, total: selectedCount)
+    }
+}

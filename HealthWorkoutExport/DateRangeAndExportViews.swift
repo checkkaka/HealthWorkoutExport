@@ -115,56 +115,119 @@ struct ExportSheetView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
+        ExportFormSheet(
+            exportFormat: $viewModel.exportFormat,
+            exportTimeZone: $viewModel.exportTimeZone,
+            timeZoneOptions: viewModel.timeZoneOptions,
+            selectedCount: viewModel.selectedWorkouts.count,
+            isExporting: viewModel.isExporting,
+            exportProgress: viewModel.exportProgress,
+            shareURL: viewModel.shareURL,
+            errorMessage: viewModel.errorMessage,
+            formatFootnote: "选择 JSON 或 FIT 其一导出。时区影响文件名、JSON 日期与 FIT 本地时间。",
+            onExport: { await viewModel.runExport() },
+            onDelete: { viewModel.deleteExportedFile() },
+            onDismiss: { dismiss() }
+        )
+    }
+}
+
+/// 第三方源导出面板（与健康导出同一套表单）。
+struct SourceExportSheetView: View {
+    @Bindable var viewModel: SourceExportViewModel
+    let source: any WorkoutDataSource
+    let activities: [SourceActivity]
+    @Environment(\.dismiss) private var dismiss
+
+    private var selectedCount: Int {
+        viewModel.selectedActivities(from: activities).count
+    }
+
+    var body: some View {
+        ExportFormSheet(
+            exportFormat: $viewModel.exportFormat,
+            exportTimeZone: $viewModel.exportTimeZone,
+            timeZoneOptions: viewModel.timeZoneOptions,
+            selectedCount: selectedCount,
+            isExporting: viewModel.isExporting,
+            exportProgress: viewModel.exportProgress,
+            shareURL: viewModel.shareURL,
+            errorMessage: viewModel.errorMessage,
+            formatFootnote: "FIT 为源文件原样下载；JSON 仅为活动摘要（无健康明细序列）。时区影响文件名与 JSON 日期。",
+            onExport: {
+                await viewModel.runExport(source: source, activities: activities)
+            },
+            onDelete: { viewModel.deleteExportedFile(selectedCount: selectedCount) },
+            onDismiss: { dismiss() }
+        )
+    }
+}
+
+/// 导出表单：格式 / 时区 / 进度 / 分享。
+private struct ExportFormSheet: View {
+    @Binding var exportFormat: ExportFormat
+    @Binding var exportTimeZone: TimeZone
+    let timeZoneOptions: [TimeZone]
+    let selectedCount: Int
+    let isExporting: Bool
+    let exportProgress: ExportProgress
+    let shareURL: URL?
+    let errorMessage: String?
+    let formatFootnote: String
+    let onExport: () async -> Void
+    let onDelete: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    Picker("格式", selection: $viewModel.exportFormat) {
+                    Picker("格式", selection: $exportFormat) {
                         ForEach(ExportFormat.allCases) { format in
                             Text(format.title).tag(format)
                         }
                     }
                     .pickerStyle(.segmented)
-                    Picker("时区", selection: $viewModel.exportTimeZone) {
-                        ForEach(viewModel.timeZoneOptions, id: \.identifier) { zone in
+                    Picker("时区", selection: $exportTimeZone) {
+                        ForEach(timeZoneOptions, id: \.identifier) { zone in
                             Text(ExportTimeZone.displayName(for: zone)).tag(zone)
                         }
                     }
                     .pickerStyle(.menu)
-                    Text("选择 JSON 或 FIT 其一导出。时区影响文件名、JSON 日期与 FIT 本地时间。")
+                    Text(formatFootnote)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
 
                 Section("进度") {
-                    if viewModel.isExporting {
-                        ProgressView(value: viewModel.exportProgress.fraction) {
-                            Text("正在导出 \(viewModel.exportProgress.completed)/\(viewModel.exportProgress.total)")
+                    if isExporting {
+                        ProgressView(value: exportProgress.fraction) {
+                            Text("正在导出 \(exportProgress.completed)/\(exportProgress.total)")
                         }
-                    } else if viewModel.shareURL != nil {
+                    } else if shareURL != nil {
                         Label("导出完成", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
                     } else {
-                        Text("将导出 \(viewModel.selectedWorkouts.count) 条训练")
+                        Text("将导出 \(selectedCount) 条训练")
                             .foregroundStyle(.secondary)
                     }
                 }
 
-                if let shareURL = viewModel.shareURL {
+                if let shareURL {
                     Section {
                         ShareLink(item: shareURL) {
                             Label("分享文件", systemImage: "square.and.arrow.up")
                         }
                         Button(role: .destructive) {
-                            // 调用 deleteExportedFile：删掉临时导出文件。
-                            viewModel.deleteExportedFile()
+                            onDelete()
                         } label: {
                             Label("删除文件", systemImage: "trash")
                         }
-                        .disabled(viewModel.isExporting)
+                        .disabled(isExporting)
                     }
                 }
 
-                if let errorMessage = viewModel.errorMessage {
+                if let errorMessage {
                     Section {
                         Text(errorMessage)
                             .foregroundStyle(.red)
@@ -176,21 +239,18 @@ struct ExportSheetView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭") { dismiss() }
-                        .disabled(viewModel.isExporting)
+                    Button("关闭") { onDismiss() }
+                        .disabled(isExporting)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(viewModel.shareURL == nil ? "开始" : "再导出") {
-                        Task {
-                            // 调用 runExport：执行批量导出并更新进度。
-                            await viewModel.runExport()
-                        }
+                    Button(shareURL == nil ? "开始" : "再导出") {
+                        Task { await onExport() }
                     }
-                    .disabled(viewModel.isExporting || viewModel.selectedWorkouts.isEmpty)
+                    .disabled(isExporting || selectedCount == 0)
                 }
             }
         }
         .presentationDetents([.medium, .large])
-        .interactiveDismissDisabled(viewModel.isExporting)
+        .interactiveDismissDisabled(isExporting)
     }
 }
