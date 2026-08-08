@@ -49,17 +49,20 @@ final class AutoSyncEngine {
     private let stateStore: SyncStateStore
     private let apiUploader: StravaAPIUploader
     private let webUploader: StravaWebUploader
+    private let recoveryStore: ResyncRecoveryStore
 
     init(
         registry: DataSourceRegistry? = nil,
         stateStore: SyncStateStore = .shared,
         apiUploader: StravaAPIUploader? = nil,
-        webUploader: StravaWebUploader? = nil
+        webUploader: StravaWebUploader? = nil,
+        recoveryStore: ResyncRecoveryStore = ResyncRecoveryStore()
     ) {
         self.registry = registry ?? .shared
         self.stateStore = stateStore
         self.apiUploader = apiUploader ?? StravaAPIUploader()
         self.webUploader = webUploader ?? StravaWebUploader()
+        self.recoveryStore = recoveryStore
     }
 
     private func uploader() -> any StravaUploading {
@@ -786,7 +789,7 @@ final class AutoSyncEngine {
         }
     }
 
-    /// 勾选重传：有数字远端 ID 先网页删除；默认覆盖不弹窗；通道跟当前设置。
+    /// 勾选重传：删除前保存最终 FIT；失败时下次优先恢复；默认覆盖不弹窗，通道跟当前设置。
     func resyncFingerprints(
         _ fingerprints: [String],
         onProgress: @MainActor @escaping (AutoSyncProgress) -> Void
@@ -835,80 +838,109 @@ final class AutoSyncEngine {
                     throw StravaUploadError.uploadFailed("覆盖需要网页 Cookie：请先完成网页登录")
                 }
 
-                let anchor = record.startDate ?? Date()
-                let windowStart = anchor.addingTimeInterval(-36 * 3600)
-                let windowEnd = anchor.addingTimeInterval(36 * 3600)
-                // 调用 listActivities：在时间窗内找回源活动。
-                let listed = try await primary.listActivities(from: windowStart, to: windowEnd)
-                guard let activity = listed.first(where: { $0.id == record.primaryActivityId }) else {
-                    throw WorkoutDataSourceError.fetchFailed("源站找不到活动 \(record.primaryActivityId)")
+                let recoveredUpload: PendingResyncUpload?
+                do {
+                    recoveredUpload = try recoveryStore.load(fingerprint: fingerprint)
+                } catch {
+                    recoveryStore.remove(fingerprint: fingerprint)
+                    recoveredUpload = nil
+                    notes.append("恢复文件损坏，已重新生成：\(title)")
                 }
 
-                let supplementIds = record.supplementSourceIds ?? []
-                let supplements = supplementIds
-                    .filter { $0 != primary.id }
-                    .compactMap { registry.source(id: $0) }
-                var supplementLists: [String: [SourceActivity]] = [:]
-                for source in supplements {
-                    // 调用 listActivities：预取补源同窗活动。
-                    supplementLists[source.id] = (try? await source.listActivities(from: windowStart, to: windowEnd)) ?? []
-                }
-
-                // 调用 fetchFitData：拉主源 FIT。
-                let primaryFit = try await primary.fetchFitData(for: activity)
-                var others: [(data: Data, name: String)] = []
-                for source in supplements {
-                    let candidates = supplementLists[source.id] ?? []
-                    guard let match = ActivityMatcher.bestMatch(primary: activity, candidates: candidates) else {
-                        continue
-                    }
-                    do {
-                        let data = try await source.fetchFitData(for: match)
-                        others.append((data, "\(source.id)-\(match.id).fit"))
-                    } catch {
-                        notes.append("补源 \(source.displayName) 拉取失败，已跳过：\(error.localizedDescription)")
-                    }
-                }
-
-                let fitData: Data
-                if others.isEmpty {
-                    fitData = primaryFit
-                } else if let merged = try? FitMerger.merge(
-                    primary: primaryFit,
-                    primaryName: "\(primary.id).fit",
-                    others: others,
-                    timeAlign: .automatic,
-                    supplementMode: .sensorsOnly
-                ) {
-                    fitData = merged
-                } else if let startAligned = try? mergeByStartOffset(
-                    primaryFit: primaryFit,
-                    primaryName: "\(primary.id).fit",
-                    others: others
-                ) {
-                    fitData = startAligned
+                let prepared: PendingResyncUpload
+                if let recoveredUpload {
+                    prepared = recoveredUpload
+                    notes.append("使用上次保留的重传文件：\(title)")
                 } else {
-                    fitData = primaryFit
+                    let anchor = record.startDate ?? Date()
+                    let windowStart = anchor.addingTimeInterval(-36 * 3600)
+                    let windowEnd = anchor.addingTimeInterval(36 * 3600)
+                    // 调用 listActivities：在时间窗内找回源活动。
+                    let listed = try await primary.listActivities(from: windowStart, to: windowEnd)
+                    guard let activity = listed.first(where: { $0.id == record.primaryActivityId }) else {
+                        throw WorkoutDataSourceError.fetchFailed("源站找不到活动 \(record.primaryActivityId)")
+                    }
+
+                    let supplementIds = record.supplementSourceIds ?? []
+                    let supplements = supplementIds
+                        .filter { $0 != primary.id }
+                        .compactMap { registry.source(id: $0) }
+                    var supplementLists: [String: [SourceActivity]] = [:]
+                    for source in supplements {
+                        // 调用 listActivities：预取补源同窗活动。
+                        supplementLists[source.id] = (try? await source.listActivities(from: windowStart, to: windowEnd)) ?? []
+                    }
+
+                    // 调用 fetchFitData：拉主源 FIT。
+                    let primaryFit = try await primary.fetchFitData(for: activity)
+                    var others: [(data: Data, name: String)] = []
+                    for source in supplements {
+                        let candidates = supplementLists[source.id] ?? []
+                        guard let match = ActivityMatcher.bestMatch(primary: activity, candidates: candidates) else {
+                            continue
+                        }
+                        do {
+                            let data = try await source.fetchFitData(for: match)
+                            others.append((data, "\(source.id)-\(match.id).fit"))
+                        } catch {
+                            notes.append("补源 \(source.displayName) 拉取失败，已跳过：\(error.localizedDescription)")
+                        }
+                    }
+
+                    let fitData: Data
+                    if others.isEmpty {
+                        fitData = primaryFit
+                    } else if let merged = try? FitMerger.merge(
+                        primary: primaryFit,
+                        primaryName: "\(primary.id).fit",
+                        others: others,
+                        timeAlign: .automatic,
+                        supplementMode: .sensorsOnly
+                    ) {
+                        fitData = merged
+                    } else if let startAligned = try? mergeByStartOffset(
+                        primaryFit: primaryFit,
+                        primaryName: "\(primary.id).fit",
+                        others: others
+                    ) {
+                        fitData = startAligned
+                    } else {
+                        fitData = primaryFit
+                    }
+
+                    let spikeFixed = try FitSpeedSpikeFixer.fix(fitData)
+                    var uploadData = spikeFixed.data
+                    var uploadMessage: String?
+                    if StravaSettings.gcjCorrectionEnabled {
+                        // 调用 FitGcjCoordinateRewriter：可选 GCJ→WGS，修国内轨迹偏移。
+                        let gcj = try FitGcjCoordinateRewriter.rewrite(uploadData)
+                        uploadData = gcj.data
+                        uploadMessage = gcj.rewrittenCount > 0
+                            ? "已转换 \(gcj.rewrittenCount) 个 GCJ 坐标点"
+                            : "GCJ 开关已开但未转换任何坐标点"
+                    }
+
+                    prepared = PendingResyncUpload(
+                        primarySourceId: primary.id,
+                        primaryActivityId: activity.id,
+                        title: activity.title,
+                        startDate: activity.startDate,
+                        endDate: activity.endDate,
+                        supplementSourceIds: supplementIds,
+                        distanceMeters: activity.distanceMeters,
+                        durationSeconds: activity.duration,
+                        uploadData: uploadData,
+                        uploadMessage: uploadMessage,
+                        filename: "\(primary.id)-\(activity.id).fit",
+                        commute: CommuteClassifier.isCommute(
+                            distanceMeters: activity.distanceMeters,
+                            durationSeconds: activity.duration
+                        )
+                    )
                 }
 
-                let spikeFixed = try FitSpeedSpikeFixer.fix(fitData)
-                var uploadData = spikeFixed.data
-                var uploadMessage: String?
-                if StravaSettings.gcjCorrectionEnabled {
-                    // 调用 FitGcjCoordinateRewriter：可选 GCJ→WGS，修国内轨迹偏移。
-                    let gcj = try FitGcjCoordinateRewriter.rewrite(uploadData)
-                    uploadData = gcj.data
-                    uploadMessage = gcj.rewrittenCount > 0
-                        ? "已转换 \(gcj.rewrittenCount) 个 GCJ 坐标点"
-                        : "GCJ 开关已开但未转换任何坐标点"
-                }
-
-                let filename = "\(primary.id)-\(activity.id).fit"
-                let commute = CommuteClassifier.isCommute(
-                    distanceMeters: activity.distanceMeters,
-                    durationSeconds: activity.duration
-                )
-
+                // 上传前统一原子保存最终字节：覆盖任一路径删远端后失败，都能再次勾选恢复。
+                try recoveryStore.save(prepared, fingerprint: fingerprint)
                 // 替换文件准备完成后才删除远端；准备失败时保留原活动和远端 ID。
                 if let remoteIdToReplace {
                     // 调用 deleteActivity：勾选重传默认覆盖远端。
@@ -919,38 +951,38 @@ final class AutoSyncEngine {
                 // 远端删除成功（或无需删除）后再重置本地幂等行。
                 await stateStore.markPending(
                     fingerprint: fingerprint,
-                    primarySourceId: primary.id,
-                    primaryActivityId: activity.id,
-                    title: activity.title,
-                    startDate: activity.startDate,
-                    supplementSourceIds: supplementIds,
-                    distanceMeters: activity.distanceMeters,
-                    durationSeconds: activity.duration,
+                    primarySourceId: prepared.primarySourceId,
+                    primaryActivityId: prepared.primaryActivityId,
+                    title: prepared.title,
+                    startDate: prepared.startDate,
+                    supplementSourceIds: prepared.supplementSourceIds,
+                    distanceMeters: prepared.distanceMeters,
+                    durationSeconds: prepared.durationSeconds,
                     batchAt: batchAt
                 )
                 // 调用 uploadFit：按当前设置通道上传（重传一律换 external_id）。
                 let result = try await uploader.uploadFit(
-                    uploadData,
+                    prepared.uploadData,
                     externalId: overwriteExternalId(fingerprint),
-                    filename: filename,
-                    commute: commute
+                    filename: prepared.filename,
+                    commute: prepared.commute
                 )
 
                 if result.isDuplicate {
                     _ = try await handleDuplicate(
                         fingerprint: fingerprint,
-                        title: activity.title,
+                        title: prepared.title,
                         remoteId: result.remoteId ?? "unknown",
                         reason: "Strava 判定 duplicate",
                         skipRest: &skipRestDuplicates,
                         overwriteRest: &overwriteRestDuplicates,
-                        fitData: uploadData,
-                        filename: filename,
-                        commute: commute,
-                        distanceMeters: activity.distanceMeters,
-                        durationSeconds: activity.duration,
-                        activityStart: activity.startDate,
-                        activityEnd: activity.endDate,
+                        fitData: prepared.uploadData,
+                        filename: prepared.filename,
+                        commute: prepared.commute,
+                        distanceMeters: prepared.distanceMeters,
+                        durationSeconds: prepared.durationSeconds,
+                        activityStart: prepared.startDate,
+                        activityEnd: prepared.endDate,
                         uploader: uploader,
                         onDuplicate: { _ in .overwriteRestOfBatch },
                         progress: &progress,
@@ -962,27 +994,33 @@ final class AutoSyncEngine {
                         fingerprint: fingerprint,
                         remoteId: result.remoteId,
                         isDuplicate: false,
-                        distanceMeters: activity.distanceMeters,
-                        durationSeconds: activity.duration,
-                        message: uploadMessage,
+                        distanceMeters: prepared.distanceMeters,
+                        durationSeconds: prepared.durationSeconds,
+                        message: prepared.uploadMessage,
                         uploadChannel: uploader.mode
                     )
                     rememberRemote(
                         &remoteActivities,
                         remoteId: result.remoteId,
                         fingerprint: fingerprint,
-                        startDate: activity.startDate,
-                        endDate: activity.endDate,
-                        distanceMeters: activity.distanceMeters
+                        startDate: prepared.startDate,
+                        endDate: prepared.endDate,
+                        distanceMeters: prepared.distanceMeters
                     )
                     // 调用 scheduleRemoteIdBackfill：勾选重传后后台补远端 ID。
                     scheduleRemoteIdBackfill(fingerprint: fingerprint, from: result)
                     progress.uploaded += 1
                 }
+                // 成功或已完成 duplicate 处理后，恢复文件不再需要。
+                recoveryStore.remove(fingerprint: fingerprint)
             } catch {
                 progress.failed += 1
-                await stateStore.markFailed(fingerprint: fingerprint, message: error.localizedDescription)
-                notes.append("失败 \(title)：\(error.localizedDescription)")
+                let retained = (try? recoveryStore.load(fingerprint: fingerprint)) != nil
+                let message = retained
+                    ? "\(error.localizedDescription)；已保留重传文件，可再次勾选重试"
+                    : error.localizedDescription
+                await stateStore.markFailed(fingerprint: fingerprint, message: message)
+                notes.append("失败 \(title)：\(message)")
             }
 
             progress.processed += 1

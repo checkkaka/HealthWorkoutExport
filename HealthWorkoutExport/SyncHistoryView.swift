@@ -138,7 +138,7 @@ struct SyncHistoryView: View {
                 }
                 .disabled(isScanning)
             } footer: {
-                Text("补全：开始时间差小于 2 分钟对上即写回 ID。勾选重传：有数字 ID 先网页删除再按当前通道上传，默认覆盖不弹窗。异常扫描规则：\(Self.anomalyRuleLabel) km/h。")
+                Text("补全：开始时间差小于 2 分钟对上即写回 ID。勾选重传：按当前通道覆盖上传；失败会保留本地重传文件，可再次勾选恢复。异常扫描规则：\(Self.anomalyRuleLabel) km/h。")
             }
 
             if isSelecting {
@@ -654,12 +654,17 @@ struct SyncHistoryView: View {
 
     private func remove(_ fingerprint: String) async {
         await SyncStateStore.shared.remove(fingerprint: fingerprint)
+        ResyncRecoveryStore().remove(fingerprint: fingerprint)
         selectedFingerprints.remove(fingerprint)
         await reload()
     }
 
     private func clearAll() async {
+        let fingerprints = records.map(\.fingerprint)
         await SyncStateStore.shared.removeAll(primarySourceId: primarySourceId)
+        for fingerprint in fingerprints {
+            ResyncRecoveryStore().remove(fingerprint: fingerprint)
+        }
         selectedFingerprints = []
         isSelecting = false
         await reload()

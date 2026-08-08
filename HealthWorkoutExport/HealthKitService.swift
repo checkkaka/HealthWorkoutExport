@@ -178,18 +178,19 @@ final class HealthKitService: @unchecked Sendable {
             end: workout.endDate,
             options: .strictStartDate
         )
-        // 时间窗可能存在重叠训练；同时限定关联 workout，避免混入其它活动样本。
-        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+        // 优先取明确关联到 workout 的样本，避免重叠训练互相污染。
+        let associatedPredicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
             datePredicate,
             HKQuery.predicateForObjects(from: workout)
         ])
         let unit = preferredUnit(for: type)
 
+        let associated: [TimedSample]
         do {
-            return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[TimedSample], Error>) in
+            associated = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[TimedSample], Error>) in
                 var collected: [TimedSample] = []
                 var finished = false
-                let query = HKQuantitySeriesSampleQuery(quantityType: type, predicate: predicate) {
+                let query = HKQuantitySeriesSampleQuery(quantityType: type, predicate: associatedPredicate) {
                     _, quantity, dateInterval, _, done, error in
                     if finished { return }
                     if let error {
@@ -214,8 +215,25 @@ final class HealthKitService: @unchecked Sendable {
                 store.execute(query)
             }
         } catch {
-            return try await fetchQuantitySamplesFallback(type: type, predicate: predicate, unit: unit)
+            associated = try await fetchQuantitySamplesFallback(
+                type: type,
+                predicate: associatedPredicate,
+                unit: unit
+            )
         }
+        if !associated.isEmpty { return associated }
+
+        // 部分第三方训练只写入同源时间序列，没有把样本显式加入 workout。
+        // 关联查询为空时限定到训练写入源回退，兼顾完整性并避免混入其它来源。
+        let sourceScopedPredicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            datePredicate,
+            HKQuery.predicateForObjects(from: workout.sourceRevision.source)
+        ])
+        return try await fetchQuantitySamplesFallback(
+            type: type,
+            predicate: sourceScopedPredicate,
+            unit: unit
+        )
     }
 
     private func fetchQuantitySamplesFallback(
