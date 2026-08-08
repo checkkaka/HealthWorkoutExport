@@ -170,11 +170,11 @@ final class StravaActivityLookupTests: XCTestCase {
 
     func testUploadPollImmediateFirstAttempt() {
         XCTAssertEqual(StravaUploadPoll.delaySeconds(beforeAttempt: 0), 0)
-        XCTAssertEqual(StravaUploadPoll.delaySeconds(beforeAttempt: 1), 0.4, accuracy: 0.001)
-        XCTAssertEqual(StravaUploadPoll.delaySeconds(beforeAttempt: 2), 0.8, accuracy: 0.001)
-        XCTAssertEqual(StravaUploadPoll.delaySeconds(beforeAttempt: 3), 1.2, accuracy: 0.001)
-        XCTAssertEqual(StravaUploadPoll.delaySeconds(beforeAttempt: 4), 1.5, accuracy: 0.001)
-        XCTAssertEqual(StravaUploadPoll.delaySeconds(beforeAttempt: 40), 1.5, accuracy: 0.001)
+        XCTAssertEqual(StravaUploadPoll.delaySeconds(beforeAttempt: 1), 1, accuracy: 0.001)
+        XCTAssertEqual(StravaUploadPoll.delaySeconds(beforeAttempt: 2), 2, accuracy: 0.001)
+        XCTAssertEqual(StravaUploadPoll.delaySeconds(beforeAttempt: 3), 4, accuracy: 0.001)
+        XCTAssertEqual(StravaUploadPoll.delaySeconds(beforeAttempt: 6), 32, accuracy: 0.001)
+        XCTAssertEqual(StravaUploadPoll.delaySeconds(beforeAttempt: 40), 32, accuracy: 0.001)
     }
 
     func testUploadPollBudgetUnderAbout70Seconds() {
@@ -184,6 +184,57 @@ final class StravaActivityLookupTests: XCTestCase {
         }
         XCTAssertLessThan(total, 70)
         XCTAssertGreaterThan(total, 50)
+    }
+
+    func testUploadErrorMessageRemovesHtml() {
+        let raw = #"The file is empty, <a href="https://support.strava.com/empty">More Information</a>."#
+        XCTAssertEqual(StravaUploadError.cleanedMessage(raw), "上传文件为空，Strava 无法处理")
+        XCTAssertEqual(
+            StravaUploadError.cleanedMessage("Malformed <strong>FIT</strong> file"),
+            "Malformed FIT file"
+        )
+    }
+
+    func testParsesStravaRateLimitHeaders() throws {
+        let response = try XCTUnwrap(HTTPURLResponse(
+            url: URL(string: "https://www.strava.com/api/v3/athlete")!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: [
+                "X-RateLimit-Limit": "200,2000",
+                "X-RateLimit-Usage": "7,81",
+                "X-ReadRateLimit-Limit": "100,1000",
+                "X-ReadRateLimit-Usage": "5,60"
+            ]
+        ))
+        let usage = try XCTUnwrap(StravaAPIUploader.parseRateLimitUsage(from: response))
+        XCTAssertEqual(usage.overall, .init(
+            fifteenMinutesUsed: 7,
+            fifteenMinutesLimit: 200,
+            dailyUsed: 81,
+            dailyLimit: 2000
+        ))
+        XCTAssertEqual(usage.read, .init(
+            fifteenMinutesUsed: 5,
+            fifteenMinutesLimit: 100,
+            dailyUsed: 60,
+            dailyLimit: 1000
+        ))
+    }
+
+    func testParsesStravaRateLimitHeadersOn429Response() throws {
+        let response = try XCTUnwrap(HTTPURLResponse(
+            url: URL(string: "https://www.strava.com/api/v3/athlete")!,
+            statusCode: 429,
+            httpVersion: nil,
+            headerFields: [
+                "X-RateLimit-Limit": "200,2000",
+                "X-RateLimit-Usage": "200,801"
+            ]
+        ))
+        let usage = try XCTUnwrap(StravaAPIUploader.parseRateLimitUsage(from: response))
+        XCTAssertEqual(usage.overall.fifteenMinutesUsed, usage.overall.fifteenMinutesLimit)
+        XCTAssertNil(usage.read)
     }
 
     /// local- 占位必须以 fingerprint 区分同秒开骑；匹配仍靠 hasPrefix("local-")。

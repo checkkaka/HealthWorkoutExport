@@ -2,7 +2,7 @@ import Foundation
 import Observation
 import UIKit
 
-/// 一次自动同步的可恢复配置（中断后「继续」用同一套参数再跑）。
+/// 一次自动同步的可恢复配置（中断后「继续」或「整批重试」复用原数据源与范围）。
 struct SyncJobConfig: Equatable, Sendable {
     var primarySourceId: String
     var supplementSourceIds: [String]
@@ -14,7 +14,7 @@ struct SyncJobConfig: Equatable, Sendable {
     var skipIfHistoryExists: Bool
 }
 
-/// App 级同步会话：进度跨页面可见，支持取消与继续。
+/// App 级同步会话：进度跨页面可见，支持取消、继续与整批重试。
 @MainActor
 @Observable
 final class SyncSession {
@@ -124,8 +124,17 @@ final class SyncSession {
         }
     }
 
+    /// 继续中断任务：复用原配置，并跳过已经同步完成的活动。
     func resume() {
-        guard let lastJob, !isRunning else { return }
+        guard var lastJob, !isRunning else { return }
+        lastJob.skipIfHistoryExists = true
+        start(lastJob)
+    }
+
+    /// 整批重试：复用原配置，但不按本地同步记录跳过。
+    func retryBatch() {
+        guard var lastJob, !isRunning else { return }
+        lastJob.skipIfHistoryExists = false
         start(lastJob)
     }
 

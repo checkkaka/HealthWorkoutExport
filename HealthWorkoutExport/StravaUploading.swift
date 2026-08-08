@@ -16,24 +16,16 @@ enum StravaUploadMode: String, CaseIterable, Identifiable, Codable {
 struct StravaUploadResult: Sendable {
     var remoteId: String?
     var isDuplicate: Bool
-    /// API POST 成功后待轮询的 upload id；引擎后台补 remoteId，不阻塞下一条。
-    var pendingUploadId: String? = nil
 }
 
-/// API 上传处理轮询节奏：先立刻查，再短退避，总墙钟约 60s。
+/// API 上传处理轮询节奏：先立刻查，再指数退避；单次间隔不少于 Strava 建议的 1 秒。
 enum StravaUploadPoll {
-    /// 最多查询次数（含第 0 次立即查）。
-    static let maxAttempts = 45
+    private static let delays: [TimeInterval] = [0, 1, 2, 4, 8, 16, 32]
+    static let maxAttempts = delays.count
 
     /// 第 attempt 次查询前应等待的秒数（0-based）；0 = 立即。
     static func delaySeconds(beforeAttempt attempt: Int) -> TimeInterval {
-        switch attempt {
-        case ...0: return 0
-        case 1: return 0.4
-        case 2: return 0.8
-        case 3: return 1.2
-        default: return 1.5
-        }
+        delays[min(max(attempt, 0), delays.count - 1)]
     }
 }
 
@@ -50,6 +42,17 @@ enum StravaUploadError: LocalizedError {
         case .uploadFailed(let message): return message
         case .rateLimited: return "Strava 限速，请稍后重试"
         }
+    }
+
+    /// Strava 的处理错误可能含 HTML；同步记录只保存可读纯文本。
+    static func cleanedMessage(_ raw: String) -> String {
+        if raw.localizedCaseInsensitiveContains("The file is empty") {
+            return "上传文件为空，Strava 无法处理"
+        }
+        return raw
+            .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

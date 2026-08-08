@@ -8,6 +8,7 @@ struct WorkoutListView: View {
     @State private var showStravaSettings = false
     @State private var showSyncHistory = false
     @State private var uploadedKeys: Set<String> = []
+    @State private var localRemoteIds: [String: String] = [:]
     @State private var detailWorkout: WorkoutSummary?
 
     var body: some View {
@@ -34,7 +35,9 @@ struct WorkoutListView: View {
             .sheet(isPresented: $showStravaSettings) {
                 NavigationStack { StravaSettingsView() }
             }
-            .sheet(isPresented: $showSyncHistory) {
+            .sheet(isPresented: $showSyncHistory, onDismiss: {
+                Task { await refreshSyncState() }
+            }) {
                 NavigationStack { SyncHistoryView(primarySourceId: HealthKitDataSource.sourceId) }
             }
             .sheet(item: $detailWorkout) { workout in
@@ -58,18 +61,18 @@ struct WorkoutListView: View {
             .task {
                 // 调用 bootstrap：首次进入申请权限并加载列表。
                 await viewModel.bootstrap()
-                await refreshUploadedKeys()
+                await refreshSyncState()
             }
             .onChange(of: viewModel.preset) { _, _ in
-                Task { await viewModel.reload(); await refreshUploadedKeys() }
+                Task { await viewModel.reload(); await refreshSyncState() }
             }
             .onChange(of: viewModel.customStart) { _, _ in
                 guard viewModel.preset == .custom else { return }
-                Task { await viewModel.reload(); await refreshUploadedKeys() }
+                Task { await viewModel.reload(); await refreshSyncState() }
             }
             .onChange(of: viewModel.customEnd) { _, _ in
                 guard viewModel.preset == .custom else { return }
-                Task { await viewModel.reload(); await refreshUploadedKeys() }
+                Task { await viewModel.reload(); await refreshSyncState() }
             }
         }
     }
@@ -105,10 +108,17 @@ struct WorkoutListView: View {
                                 activityId: workout.id.uuidString
                             )
                         )
+                        let remoteId = localRemoteIds[
+                            SyncStateStore.primaryKey(
+                                sourceId: HealthKitDataSource.sourceId,
+                                activityId: workout.id.uuidString
+                            )
+                        ]
                         WorkoutRowView(
                             workout: workout,
                             isSelected: viewModel.selectedIDs.contains(workout.id),
                             isSynced: synced,
+                            remoteId: remoteId,
                             onToggle: { viewModel.toggleSelection(workout.id) },
                             onOpenDetail: { detailWorkout = workout }
                         )
@@ -129,7 +139,7 @@ struct WorkoutListView: View {
         .listStyle(.insetGrouped)
         .refreshable {
             await viewModel.reload()
-            await refreshUploadedKeys()
+            await refreshSyncState()
         }
     }
 
@@ -191,9 +201,10 @@ struct WorkoutListView: View {
         }
     }
 
-    private func refreshUploadedKeys() async {
-        // 调用 uploadedPrimaryKeys：刷新已同步徽标。
+    private func refreshSyncState() async {
+        // 从本地同步记录同时刷新已同步徽标与 Strava 远端 ID。
         uploadedKeys = await SyncStateStore.shared.uploadedPrimaryKeys()
+        localRemoteIds = await SyncStateStore.shared.localRemoteIdsByPrimaryKey()
     }
 }
 
@@ -201,11 +212,12 @@ struct WorkoutRowView: View {
     let workout: WorkoutSummary
     let isSelected: Bool
     let isSynced: Bool
+    let remoteId: String?
     let onToggle: () -> Void
     let onOpenDetail: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             Button(action: onToggle) {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(isSelected ? Color.accentColor : .secondary)
@@ -213,44 +225,53 @@ struct WorkoutRowView: View {
             }
             .buttonStyle(.plain)
 
-            Button(action: onOpenDetail) {
-                HStack(spacing: 12) {
-                    Image(systemName: workout.activityType.systemImageName)
-                        .frame(width: 28)
-                        .foregroundStyle(.primary)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text(workout.activityName)
-                                .font(.body.weight(.semibold))
-                                .foregroundStyle(.primary)
-                            if isSynced {
-                                Image(systemName: "checkmark.seal.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.green)
-                            }
-                        }
-                        Text(Self.dateText(workout.startDate))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer(minLength: 8)
-
-                    VStack(alignment: .trailing, spacing: 4) {
-                        Text(Self.durationText(workout.duration))
-                            .font(.subheadline.monospacedDigit())
+            VStack(alignment: .leading, spacing: 5) {
+                Button(action: onOpenDetail) {
+                    HStack(spacing: 12) {
+                        Image(systemName: workout.activityType.systemImageName)
+                            .frame(width: 28)
                             .foregroundStyle(.primary)
-                        if let meters = workout.totalDistanceMeters, meters > 0 {
-                            Text(Self.distanceText(meters))
-                                .font(.footnote.monospacedDigit())
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 6) {
+                                Text(workout.activityName)
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                if isSynced {
+                                    Image(systemName: "checkmark.seal.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.green)
+                                }
+                                if remoteId != nil {
+                                    Image(systemName: "bicycle.circle.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.orange)
+                                }
+                            }
+                            Text(Self.dateText(workout.startDate))
+                                .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
+
+                        Spacer(minLength: 8)
+
+                        VStack(alignment: .trailing, spacing: 4) {
+                            Text(Self.durationText(workout.duration))
+                                .font(.subheadline.monospacedDigit())
+                                .foregroundStyle(.primary)
+                            if let meters = workout.totalDistanceMeters, meters > 0 {
+                                Text(Self.distanceText(meters))
+                                    .font(.footnote.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+
+                StravaRemoteIDLine(remoteId: remoteId)
             }
-            .buttonStyle(.plain)
         }
     }
 
@@ -271,5 +292,25 @@ struct WorkoutRowView: View {
             return String(format: "%.2f 公里", meters / 1000)
         }
         return String(format: "%.0f 米", meters)
+    }
+}
+
+/// 活动列表统一的本地 Strava ID 行；有数字 ID 时点击打开远端活动。
+struct StravaRemoteIDLine: View {
+    let remoteId: String?
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text("Strava 远端 ID：")
+            if let remoteId,
+               let url = URL(string: "https://www.strava.com/activities/\(remoteId)") {
+                Link(destination: url) {
+                    Label(remoteId, systemImage: "bicycle.circle.fill")
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(.secondary)
     }
 }

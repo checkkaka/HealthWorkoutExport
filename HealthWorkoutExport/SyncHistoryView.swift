@@ -23,6 +23,7 @@ struct SyncHistoryView: View {
     @State private var scanSkipped = 0
     @State private var isSelecting = false
     @State private var selectedFingerprints: Set<String> = []
+    @State private var showResyncStravaSettings = false
     @State private var activeFilters: Set<HistoryFilter> = []
     @State private var isBackfilling = false
     /// 预计算批次，避免滚动时反复 Dictionary.grouping / Date.formatted。
@@ -141,6 +142,13 @@ struct SyncHistoryView: View {
                 Text("补全：开始时间差小于 2 分钟对上即写回 ID。勾选重传：按当前通道覆盖上传；失败会保留本地重传文件，可再次勾选恢复。异常扫描规则：\(Self.anomalyRuleLabel) km/h。")
             }
 
+            if let errorMessage {
+                Section { Text(errorMessage).foregroundStyle(.red).font(.footnote) }
+            }
+            if let toast {
+                Section { Text(toast).font(.footnote) }
+            }
+
             if isSelecting {
                 Section {
                     Text("已选 \(selectedFingerprints.count)/\(filteredRecords.count) 条")
@@ -150,7 +158,7 @@ struct SyncHistoryView: View {
                     }
                     .disabled(filteredRecords.isEmpty || session.isRunning)
                     Button("同步勾选") {
-                        startSelectedResync()
+                        showResyncStravaSettings = true
                     }
                     .disabled(selectedFingerprints.isEmpty || session.isRunning)
                     Button("取消选择", role: .cancel) {
@@ -251,12 +259,6 @@ struct SyncHistoryView: View {
                 }
             }
 
-            if let errorMessage {
-                Section { Text(errorMessage).foregroundStyle(.red).font(.footnote) }
-            }
-            if let toast {
-                Section { Text(toast).font(.footnote) }
-            }
             if let result = session.lastResultText, !session.isRunning {
                 Section("上次结果") {
                     Text(result).font(.footnote)
@@ -299,6 +301,20 @@ struct SyncHistoryView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("只清本主源记录，不会删除 Strava 上的活动，也不影响其他主源。")
+        }
+        .navigationDestination(isPresented: $showResyncStravaSettings) {
+            StravaSettingsView()
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("取消") { showResyncStravaSettings = false }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("开始同步") {
+                            showResyncStravaSettings = false
+                            startSelectedResync()
+                        }
+                    }
+                }
         }
         .task {
             await reload()
@@ -411,28 +427,46 @@ struct SyncHistoryView: View {
         isBackfilling = true
         defer { isBackfilling = false }
         errorMessage = nil
-        toast = nil
+        toast = "正在读取 Strava 活动并匹配本地记录…"
+
+        let missingRecords = records.filter { !$0.hasOpenableRemoteId && $0.startDate != nil }
+        guard let earliest = missingRecords.compactMap(\.startDate).min(),
+              let latest = missingRecords.compactMap(\.startDate).max() else {
+            toast = "没有可补全的本地记录"
+            return
+        }
 
         let web = StravaWebUploader()
         let api = StravaAPIUploader()
         let useApi = await api.isReady()
         let useWeb = await web.isReady()
         guard useApi || useWeb else {
+            toast = nil
             errorMessage = "请先完成 Strava API 授权或网页登录"
             return
         }
 
         do {
-            let listed: [StravaActivitySpeedInfo]
+            // 只查询本地缺 ID 记录覆盖的时间范围，避免按钮全量翻阅 Strava 历史。
+            let after = earliest.addingTimeInterval(-SyncRemoteIdBackfill.maxStartDelta)
+            let before = latest.addingTimeInterval(SyncRemoteIdBackfill.maxStartDelta)
+            let listed: [StravaActivityLookup.RemoteActivity]
             if useApi {
-                listed = try await api.fetchAllListedActivitySpeeds()
+                do {
+                    listed = try await api.fetchActivities(after: after, before: before)
+                } catch {
+                    // 任务取消时不得继续发起网页请求；其它 API 错误才回退。
+                    try Task.checkCancellation()
+                    guard useWeb else { throw error }
+                    toast = "API 查询失败，正在改用网页登录补全…"
+                    listed = try await web.fetchActivities(after: after, before: before)
+                }
             } else {
-                listed = try await web.fetchAllListedActivitySpeeds()
+                listed = try await web.fetchActivities(after: after, before: before)
             }
-            let remotes: [SyncRemoteIdBackfill.RemoteCandidate] = listed.compactMap { info in
-                guard let start = info.startDate,
-                      StravaSpeedAnomaly.isOpenableRemoteId(info.id) else { return nil }
-                return .init(id: info.id, startDate: start)
+            let remotes: [SyncRemoteIdBackfill.RemoteCandidate] = listed.compactMap { activity in
+                guard StravaSpeedAnomaly.isOpenableRemoteId(activity.id) else { return nil }
+                return .init(id: activity.id, startDate: activity.startDate)
             }
             let missingBefore = records.filter { !$0.hasOpenableRemoteId }.count
             // 调用 backfillRemoteIds：按开始&lt;2分钟写回缺失远端 ID。
@@ -444,6 +478,7 @@ struct SyncHistoryView: View {
             let missingAfter = records.filter { !$0.hasOpenableRemoteId }.count
             toast = "补全 \(filled) 条 · 仍缺 \(missingAfter)（补前缺 \(missingBefore)）"
         } catch {
+            toast = nil
             errorMessage = error.localizedDescription
         }
     }

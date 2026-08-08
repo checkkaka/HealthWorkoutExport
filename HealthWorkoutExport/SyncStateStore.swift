@@ -178,6 +178,19 @@ actor SyncStateStore {
         return keys
     }
 
+    /// 每个本地主活动最近写入的数字远端 ID；不限制状态，列表以本地记录为准展示。
+    func localRemoteIdsByPrimaryKey() -> [String: String] {
+        var result: [String: String] = [:]
+        for record in records.values.sorted(by: { $0.updatedAt > $1.updatedAt }) {
+            let key = Self.primaryKey(sourceId: record.primarySourceId, activityId: record.primaryActivityId)
+            guard result[key] == nil,
+                  let remoteId = record.remoteId,
+                  StravaSpeedAnomaly.isOpenableRemoteId(remoteId) else { continue }
+            result[key] = remoteId
+        }
+        return result
+    }
+
     func hasUploadedHistory(primarySourceId: String, primaryActivityId: String) -> Bool {
         let key = Self.primaryKey(sourceId: primarySourceId, activityId: primaryActivityId)
         return uploadedPrimaryKeys().contains(key)
