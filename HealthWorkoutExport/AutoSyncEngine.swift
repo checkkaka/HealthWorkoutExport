@@ -433,7 +433,7 @@ final class AutoSyncEngine {
                     notes.append("\(gcjMsg)：\(activity.title)")
                     uploadMessage = gcjMsg
                 }
-                // 调用 applyVirtualPowerIfNeeded：缺功率时按 Gribble+天气回填原生 power。
+                // 调用 applyVirtualPowerIfNeeded：开启后估算并覆盖已有原生 power。
                 let virtualPower = try await applyVirtualPowerIfNeeded(
                     uploadData,
                     activityTitle: activity.title,
@@ -601,8 +601,8 @@ final class AutoSyncEngine {
         )
     }
 
-    /// 开关开启且参数合法时，对 FIT 中缺失的原生 power 做虚拟功率回填。
-    /// 返回值：回填后的数据，以及是否应附带虚拟功率社交描述。
+    /// 开关开启且参数合法时，对骑行 FIT 估算虚拟功率并覆盖已有原生 power。
+    /// 返回值：写入后的数据，以及是否应附带虚拟功率社交描述。
     private func applyVirtualPowerIfNeeded(
         _ data: Data,
         activityTitle: String,
@@ -613,7 +613,7 @@ final class AutoSyncEngine {
             notes.append("虚拟功率已开但参数无效，已跳过：\(activityTitle)")
             return (data, nil)
         }
-        // 调用 FitVirtualPowerFiller：Gribble + Open-Meteo，仅填 nil power；失败秒标 failed。
+        // 调用 FitVirtualPowerFiller：Gribble + Open-Meteo，覆盖已有 power；失败秒标 failed。
         let result = try await FitVirtualPowerFiller.fillIfNeeded(
             data,
             settings: VirtualPowerSettings.physicsParams(),
@@ -965,7 +965,7 @@ final class AutoSyncEngine {
                             ? "已转换 \(gcj.rewrittenCount) 个 GCJ 坐标点"
                             : "GCJ 开关已开但未转换任何坐标点"
                     }
-                    // 调用 applyVirtualPowerIfNeeded：重传路径同样只补缺功率。
+                    // 调用 applyVirtualPowerIfNeeded：重传路径同样估算并覆盖已有功率。
                     let virtualPower = try await applyVirtualPowerIfNeeded(
                         uploadData,
                         activityTitle: activity.title,

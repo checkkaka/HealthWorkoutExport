@@ -2,7 +2,7 @@ import Foundation
 
 /// 自动同步虚拟功率开关与骑手/车辆参数（UserDefaults）。
 enum VirtualPowerSettings {
-    /// 是否在自动同步时对缺功率 FIT 回填虚拟功率。
+    /// 是否在自动同步时对骑行 FIT 估算虚拟功率并覆盖已有功率。
     private static let enabledKey = "virtualPower.enabled"
     /// 骑手质量（kg），含头盔衣物。
     private static let riderMassKey = "virtualPower.riderMassKg"

@@ -1,26 +1,26 @@
 import Foundation
 import FITSwiftSDK
 
-/// 对缺功率的 Activity FIT 按 Gribble + Open-Meteo 回填原生 Record.power。
-/// 应在轨迹 GCJ→WGS 转换之后调用，使风向/方位基于最终坐标。
+/// 对骑行 Activity FIT 按 Gribble + Open-Meteo 估算虚拟功率并写入原生 Record.power。
+/// 开启后一律覆盖已有功率计/补源功率；应在轨迹 GCJ→WGS 转换之后调用。
 enum FitVirtualPowerFiller {
     private static let semicirclesPerDegree = 2_147_483_648.0 / 180.0
     /// 速度/海拔平滑半窗（秒侧索引半径）。
     private static let smoothRadius = 2
     /// 单秒估算失败时，取前后该时间窗内功率均值回填（秒）。
     private static let neighborAverageRadiusSeconds: TimeInterval = 5
-    /// 缺功率秒中「估算环节失败」占比达到此阈值时，整条活动放弃虚拟功率。
+    /// 参与估算的秒中「估算环节失败」占比达到此阈值时，整条活动放弃虚拟功率。
     private static let activityFailRateThreshold = 0.10
 
     struct FillResult: Sendable {
         var data: Data
-        /// 新写入功率的 record 秒数（含踏频 0、邻域均值回填）。
+        /// 写入/覆盖功率的 record 秒数（含踏频 0、邻域均值回填）。
         var filledCount: Int
         /// 估算环节失败的秒数（含已用邻域均值补上的）。
         var failedCount: Int
         /// 写入 `powerSource=virtual` 的秒数（直接估算成功，不含 failed）。
         var virtualMarkedCount: Int
-        /// 失败率 ≥10% 导致整条放弃回填。
+        /// 失败率 ≥10% 导致整条放弃写入。
         var activityRejected: Bool
         /// 是否使用了 Open-Meteo（否则为退化默认大气）。
         var usedWeather: Bool
@@ -30,7 +30,7 @@ enum FitVirtualPowerFiller {
         var note: String
     }
 
-    /// 仅骑行且存在 `power == nil` 的 record 时回填；已有功率秒不动。
+    /// 骑行活动一律估算并覆盖已有 `power`（含功率计数据）。
     /// 单秒估算失败：用前后 5 秒功率均值回填并标 failed；失败率 ≥10% 则整条不采用。
     static func fillIfNeeded(
         _ data: Data,
@@ -57,8 +57,8 @@ enum FitVirtualPowerFiller {
         let records = messages.recordMesgs.sorted {
             ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)
         }
-        let missing = records.filter { $0.getPower() == nil }
-        guard !missing.isEmpty else {
+        // 无 record 时无法估算；有功率的秒也会被覆盖，不再因「已有功率」跳过。
+        guard !records.isEmpty else {
             return FillResult(
                 data: data,
                 filledCount: 0,
@@ -67,7 +67,7 @@ enum FitVirtualPowerFiller {
                 activityRejected: false,
                 usedWeather: false,
                 weatherPointCount: 0,
-                note: "虚拟功率跳过：文件已有功率或无记录"
+                note: "虚拟功率跳过：无记录"
             )
         }
 
@@ -148,19 +148,14 @@ enum FitVirtualPowerFiller {
 
         let kinematics = buildKinematics(records: records)
         let n = records.count
-        /// 各秒最终功率草案：已有功率 / 直接估算 / 邻域均值；nil 表示仍无功率。
+        /// 各秒最终功率草案：直接估算 / 邻域均值；nil 表示仍无功率。
         var draftPower = [UInt16?](repeating: nil, count: n)
-        /// 该秒是否为「缺功率且估算环节失败」（计入失败率；邻域补上后仍算失败）。
+        /// 该秒是否为「估算环节失败」（计入失败率；邻域补上后仍算失败）。
         var estimateFailed = [Bool](repeating: false, count: n)
         /// 该秒是否为直接估算成功（含踏频 0 写 0）。
         var estimateSuccess = [Bool](repeating: false, count: n)
 
         for (index, record) in records.enumerated() {
-            if let existing = record.getPower() {
-                draftPower[index] = existing
-                continue
-            }
-
             let kin = kinematics[index]
             let cadence = record.getCadence().map { Double($0) }
 
@@ -235,7 +230,7 @@ enum FitVirtualPowerFiller {
             estimateSuccess[index] = true
         }
 
-        // 估算失败秒：用前后 5 秒内「直接成功/原有功率」的均值回填（不用其它失败秒）。
+        // 估算失败秒：用前后 5 秒内「直接成功」的均值回填（不用其它失败秒）。
         for index in 0..<n {
             guard estimateFailed[index], draftPower[index] == nil else { continue }
             // 调用 neighborAveragePower：取时间窗邻域均值补该秒功率。
@@ -249,7 +244,8 @@ enum FitVirtualPowerFiller {
             }
         }
 
-        let attempted = missing.count
+        // 失败率分母：本场参与估算的全部 record 秒。
+        let attempted = n
         let failed = estimateFailed.filter { $0 }.count
         let failRate = attempted > 0 ? Double(failed) / Double(attempted) : 0
 
@@ -284,14 +280,6 @@ enum FitVirtualPowerFiller {
         var failedRecords: [RecordMesg] = []
 
         for (index, record) in records.enumerated() {
-            if record.getPower() != nil {
-                if let existing = draftPower[index] {
-                    sumPower += Double(existing)
-                    maxPower = max(maxPower, existing)
-                    powerCount += 1
-                }
-                continue
-            }
             guard let power = draftPower[index] else {
                 // 邻域也补不上：仍不写 power，但标 failed（失败率已低于阈值）。
                 if estimateFailed[index] {
@@ -299,6 +287,7 @@ enum FitVirtualPowerFiller {
                 }
                 continue
             }
+            // 调用 setPower：覆盖该秒已有功率计/补源功率。
             try record.setPower(power)
             filled += 1
             sumPower += Double(power)
@@ -321,30 +310,24 @@ enum FitVirtualPowerFiller {
                 activityRejected: false,
                 usedWeather: usedWeather,
                 weatherPointCount: weatherPointCount,
-                note: "虚拟功率未写入：无可处理缺功率记录"
+                note: "虚拟功率未写入：无可处理记录"
             )
         }
 
-        // Session 用整场；Lap 按各自时间窗聚合，避免多圈共用一场均值。
+        // Session 用整场；Lap 按各自时间窗聚合。覆盖场景下同步改写 avg/max。
         if filled > 0, powerCount > 0 {
             let avg = UInt16(min(max((sumPower / Double(powerCount)).rounded(), 0), Double(UInt16.max)))
             for session in messages.sessionMesgs {
-                if session.getAvgPower() == nil {
-                    try session.setAvgPower(avg)
-                }
-                if session.getMaxPower() == nil {
-                    try session.setMaxPower(maxPower)
-                }
+                // 调用 setAvgPower/setMaxPower：覆盖会话原有功率统计。
+                try session.setAvgPower(avg)
+                try session.setMaxPower(maxPower)
             }
             for lap in messages.lapMesgs {
                 // 调用 lapPowerStats：按该圈起止过滤 record 算 avg/max。
                 guard let stats = lapPowerStats(lap: lap, records: records) else { continue }
-                if lap.getAvgPower() == nil {
-                    try lap.setAvgPower(stats.avg)
-                }
-                if lap.getMaxPower() == nil {
-                    try lap.setMaxPower(stats.max)
-                }
+                // 调用 setAvgPower/setMaxPower：覆盖该圈原有功率统计。
+                try lap.setAvgPower(stats.avg)
+                try lap.setMaxPower(stats.max)
             }
         }
 
@@ -378,7 +361,7 @@ enum FitVirtualPowerFiller {
         } else {
             weatherNote = "天气退化（默认密度/无风）"
         }
-        let note = "虚拟功率已回填 \(filled) 秒（估算失败 \(failed) 秒已用邻域均值或标 failed，\(weatherNote)）"
+        let note = "虚拟功率已覆盖写入 \(filled) 秒（估算失败 \(failed) 秒已用邻域均值或标 failed，\(weatherNote)）"
         return FillResult(
             data: encoded,
             filledCount: filled,
@@ -391,7 +374,7 @@ enum FitVirtualPowerFiller {
         )
     }
 
-    /// 取索引前后 5 秒时间窗内直接成功/原有功率的算术平均；窗内无可用功率则 nil。
+    /// 取索引前后 5 秒时间窗内直接估算成功功率的算术平均；窗内无可用功率则 nil。
     private static func neighborAveragePower(
         at index: Int,
         draftPower: [UInt16?],

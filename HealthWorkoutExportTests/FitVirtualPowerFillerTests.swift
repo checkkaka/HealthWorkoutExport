@@ -3,8 +3,8 @@ import FITSwiftSDK
 @testable import HealthWorkoutExport
 
 final class FitVirtualPowerFillerTests: XCTestCase {
-    /// 已有功率的秒不得被覆盖；缺功率秒应写入原生 power。
-    func testFillsOnlyNilPowerRecords() async throws {
+    /// 已有功率的秒也应被虚拟功率覆盖；踏频 0 仍写 0。
+    func testOverwritesExistingPowerRecords() async throws {
         let start = Date(timeIntervalSince1970: 1_720_000_000)
         let fit = try makeFit(
             start: start,
@@ -21,25 +21,26 @@ final class FitVirtualPowerFillerTests: XCTestCase {
             drivetrainLossPercent: 2,
             airDensity: 1.226
         )
-        // 调用 FitVirtualPowerFiller：注入空天气，验证只补缺。
+        // 调用 FitVirtualPowerFiller：注入空天气，验证已有功率也被覆盖。
         let result = try await FitVirtualPowerFiller.fillIfNeeded(
             fit,
             settings: params,
             weatherProvider: { _, _, _, _ in [] }
         )
-        XCTAssertEqual(result.filledCount, 2)
+        XCTAssertEqual(result.filledCount, 3)
         let messages = try FitMerger.decode(result.data)
         let records = messages.recordMesgs.sorted {
             ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)
         }
-        XCTAssertEqual(records[0].getPower(), 180, "已有功率不得覆盖")
+        XCTAssertNotNil(records[0].getPower())
+        XCTAssertNotEqual(records[0].getPower(), 180, "已有功率应被覆盖")
         XCTAssertNotNil(records[1].getPower())
         XCTAssertNotEqual(records[1].getPower(), 180)
         XCTAssertEqual(records[2].getPower(), 0, "踏频 0 应填 0")
     }
 
-    /// 文件全部已有功率时跳过重写。
-    func testSkipsWhenAllPowerPresent() async throws {
+    /// 文件全部已有功率时仍估算并覆盖写入。
+    func testOverwritesWhenAllPowerPresent() async throws {
         let start = Date(timeIntervalSince1970: 1_720_000_000)
         let fit = try makeFit(
             start: start,
@@ -50,13 +51,23 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         )
         let result = try await FitVirtualPowerFiller.fillIfNeeded(
             fit,
-            weatherProvider: { _, _, _, _ in
-                XCTFail("不应请求天气")
-                return []
-            }
+            weatherProvider: { _, _, _, _ in [] }
         )
-        XCTAssertEqual(result.filledCount, 0)
-        XCTAssertEqual(result.data, fit)
+        XCTAssertEqual(result.filledCount, 2)
+        XCTAssertFalse(result.activityRejected)
+        let records = try FitMerger.decode(result.data).recordMesgs.sorted {
+            ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)
+        }
+        XCTAssertNotEqual(records[0].getPower(), 200)
+        XCTAssertNotEqual(records[1].getPower(), 210)
+        XCTAssertEqual(
+            VirtualPowerSourceMark.powerSource(of: records[0]),
+            VirtualPowerSourceMark.virtualValue
+        )
+        XCTAssertEqual(
+            VirtualPowerSourceMark.powerSource(of: records[1]),
+            VirtualPowerSourceMark.virtualValue
+        )
     }
 
     /// 天气 provider 抛取消时应向上抛出，不得吞掉。
@@ -95,7 +106,7 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         XCTAssertEqual(records.first?.getPower(), 0)
     }
 
-    /// 估算写入的秒应带 developer 字段 powerSource=virtual；原有功率秒不打标。
+    /// 估算写入的秒应带 developer 字段 powerSource=virtual；原有功率秒同样覆盖并打标。
     func testMarksFilledRecordsWithPowerSourceVirtual() async throws {
         let start = Date(timeIntervalSince1970: 1_720_000_000)
         let fit = try makeFit(
@@ -109,7 +120,7 @@ final class FitVirtualPowerFillerTests: XCTestCase {
             fit,
             weatherProvider: { _, _, _, _ in [] }
         )
-        XCTAssertEqual(result.filledCount, 1)
+        XCTAssertEqual(result.filledCount, 2)
         XCTAssertFalse(result.activityRejected)
 
         let messages = try FitMerger.decode(result.data)
@@ -126,18 +137,16 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         let records = messages.recordMesgs.sorted {
             ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)
         }
-        let existingPowerSource = records[0].developerFields.first {
-            $0.getName() == VirtualPowerSourceMark.fieldName
-        }
-        XCTAssertNil(existingPowerSource, "已有功率秒不应标记 virtual")
-
-        let filledPowerSource = records[1].developerFields.first {
-            $0.getName() == VirtualPowerSourceMark.fieldName
-        }
-        XCTAssertNotNil(filledPowerSource)
-        let value = filledPowerSource?.getValue(index: 0) as? String
-        XCTAssertEqual(value, VirtualPowerSourceMark.virtualValue)
-        XCTAssertEqual(result.virtualMarkedCount, 1)
+        XCTAssertNotEqual(records[0].getPower(), 180, "原有功率应被覆盖")
+        XCTAssertEqual(
+            VirtualPowerSourceMark.powerSource(of: records[0]),
+            VirtualPowerSourceMark.virtualValue
+        )
+        XCTAssertEqual(
+            VirtualPowerSourceMark.powerSource(of: records[1]),
+            VirtualPowerSourceMark.virtualValue
+        )
+        XCTAssertEqual(result.virtualMarkedCount, 2)
         XCTAssertTrue(VirtualPowerSourceMark.containsVirtualMarkedRecord(in: messages))
     }
 
@@ -180,7 +189,7 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         )
     }
 
-    /// 缺功率秒失败率 ≥10% 时整条放弃，不写任何功率。
+    /// 参与估算秒失败率 ≥10% 时整条放弃，不写任何功率。
     func testRejectsActivityWhenFailRateAtLeastTenPercent() async throws {
         let start = Date(timeIntervalSince1970: 1_720_000_000)
         // 10 秒缺功率，其中 1 秒无速度 → 失败率 10%，应整条放弃。
