@@ -61,11 +61,13 @@ protocol StravaUploading: AnyObject {
     var mode: StravaUploadMode { get }
     func isReady() async -> Bool
     /// commute：对应 Strava Uploads API 的 commute 表单字段（API 模式生效）。
+    /// description：活动描述（API 写入；网页同请求不支持则忽略）。
     func uploadFit(
         _ data: Data,
         externalId: String,
         filename: String,
-        commute: Bool
+        commute: Bool,
+        description: String?
     ) async throws -> StravaUploadResult
 }
 

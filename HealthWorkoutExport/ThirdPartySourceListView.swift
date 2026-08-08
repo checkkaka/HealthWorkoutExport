@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 行者/顽鹿活动列表 Tab：未登录引导账号密码登录，已登录按时间范围列活动。
+/// 行者/顽鹿活动列表 Tab：未登录引导账号密码登录，已登录按时间范围列活动并可导出。
 struct ThirdPartySourceListView: View {
     let sourceId: String
 
@@ -19,6 +19,7 @@ struct ThirdPartySourceListView: View {
     @State private var uploadedKeys: Set<String> = []
     @State private var localRemoteIds: [String: String] = [:]
     @State private var detailActivity: SourceActivity?
+    @State private var exportViewModel = SourceExportViewModel()
 
     private var source: (any WorkoutDataSource)? {
         DataSourceRegistry.shared.source(id: sourceId)
@@ -35,7 +36,7 @@ struct ThirdPartySourceListView: View {
                     ContentUnavailableView {
                         Label("未登录\(displayName)", systemImage: "person.crop.circle.badge.exclamationmark")
                     } description: {
-                        Text("使用账号密码登录后可查看活动并参与自动同步。凭证仅保存在本机。")
+                        Text("使用账号密码登录后可查看活动、导出并参与自动同步。凭证仅保存在本机。")
                     } actions: {
                         Button("登录\(displayName)") { showLogin = true }
                             .buttonStyle(.borderedProminent)
@@ -45,37 +46,7 @@ struct ThirdPartySourceListView: View {
                 }
             }
             .navigationTitle(displayName)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        Button("自动同步") { showAutoSync = true }
-                        Button("同步记录") { showSyncHistory = true }
-                        Button("Strava 设置") { showStravaSettings = true }
-                        if isAuthenticated {
-                            Divider()
-                            Button("退出登录", role: .destructive) {
-                                Task {
-                                    await source?.logout()
-                                    isAuthenticated = false
-                                    activities = []
-                                }
-                            }
-                        } else {
-                            Button("登录\(displayName)") { showLogin = true }
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        Task { await reload() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .disabled(!isAuthenticated || isLoading)
-                }
-            }
+            .toolbar { toolbarContent }
             .sheet(isPresented: $showLogin) {
                 NavigationStack {
                     SourceLoginView(sourceName: displayName) { creds in
@@ -96,6 +67,15 @@ struct ThirdPartySourceListView: View {
             }) {
                 NavigationStack { SyncHistoryView(primarySourceId: sourceId) }
             }
+            .sheet(isPresented: $exportViewModel.showExportSheet) {
+                if let source {
+                    SourceExportSheetView(
+                        viewModel: exportViewModel,
+                        source: source,
+                        activities: activities
+                    )
+                }
+            }
             .sheet(item: $detailActivity) { activity in
                 ActivityDetailSheet(
                     title: activity.title,
@@ -115,6 +95,53 @@ struct ThirdPartySourceListView: View {
             .onChange(of: preset) { _, _ in
                 Task { await reload() }
             }
+            .onChange(of: customStart) { _, _ in
+                guard preset == .custom else { return }
+                Task { await reload() }
+            }
+            .onChange(of: customEnd) { _, _ in
+                guard preset == .custom else { return }
+                Task { await reload() }
+            }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            Menu {
+                if isAuthenticated {
+                    Button("全选") { exportViewModel.selectAll(from: activities) }
+                    Button("取消全选") { exportViewModel.deselectAll() }
+                    Divider()
+                }
+                Button("自动同步") { showAutoSync = true }
+                Button("同步记录") { showSyncHistory = true }
+                Button("Strava 设置") { showStravaSettings = true }
+                if isAuthenticated {
+                    Divider()
+                    Button("退出登录", role: .destructive) {
+                        Task {
+                            await source?.logout()
+                            isAuthenticated = false
+                            activities = []
+                            exportViewModel.clearSelection()
+                        }
+                    }
+                } else {
+                    Button("登录\(displayName)") { showLogin = true }
+                }
+            } label: {
+                Text("选择")
+            }
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            Button {
+                exportViewModel.prepareExport(from: activities)
+            } label: {
+                Label("导出", systemImage: "square.and.arrow.up")
+            }
+            .disabled(!isAuthenticated || exportViewModel.selectedIDs.isEmpty || isLoading)
         }
     }
 
@@ -139,7 +166,7 @@ struct ThirdPartySourceListView: View {
                     ContentUnavailableView("这段时间没有活动", systemImage: "tray")
                 }
             } else {
-                Section("\(activities.count) 条活动") {
+                Section {
                     ForEach(activities) { activity in
                         let synced = uploadedKeys.contains(
                             SyncStateStore.primaryKey(sourceId: activity.sourceId, activityId: activity.id)
@@ -147,48 +174,29 @@ struct ThirdPartySourceListView: View {
                         let remoteId = localRemoteIds[
                             SyncStateStore.primaryKey(sourceId: activity.sourceId, activityId: activity.id)
                         ]
-                        VStack(alignment: .leading, spacing: 5) {
-                            Button {
-                                detailActivity = activity
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack(spacing: 6) {
-                                        Text(activity.title).font(.body.weight(.semibold))
-                                        if synced {
-                                            Image(systemName: "checkmark.seal.fill")
-                                                .font(.caption)
-                                                .foregroundStyle(.green)
-                                        }
-                                        if remoteId != nil {
-                                            Image(systemName: "bicycle.circle.fill")
-                                                .font(.caption)
-                                                .foregroundStyle(.orange)
-                                        }
-                                    }
-                                    Text(activity.startDate.formatted(date: .abbreviated, time: .shortened))
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                    HStack {
-                                        Text(durationText(activity.duration))
-                                        if let meters = activity.distanceMeters, meters > 0 {
-                                            Text(String(format: "%.2f 公里", meters / 1000))
-                                        }
-                                    }
-                                    .font(.footnote.monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-
-                            StravaRemoteIDLine(remoteId: remoteId)
-                        }
-                        .padding(.vertical, 2)
+                        SourceActivityRowView(
+                            activity: activity,
+                            isSelected: exportViewModel.selectedIDs.contains(activity.id),
+                            isSynced: synced,
+                            remoteId: remoteId,
+                            onToggle: { exportViewModel.toggleSelection(activity.id) },
+                            onOpenDetail: { detailActivity = activity }
+                        )
                     }
+                } header: {
+                    Text("\(exportViewModel.selectedIDs.count)/\(activities.count) 已选")
+                }
+            }
+
+            if let exportError = exportViewModel.errorMessage, !exportViewModel.showExportSheet {
+                Section {
+                    Text(exportError)
+                        .foregroundStyle(.red)
+                        .font(.footnote)
                 }
             }
         }
+        .listStyle(.insetGrouped)
         .refreshable { await reload() }
     }
 
@@ -214,6 +222,8 @@ struct ThirdPartySourceListView: View {
             let list = try await source.listActivities(from: range.start, to: range.end)
             guard generation == loadGeneration else { return }
             activities = list
+            // 调用 clearSelection：列表刷新后清空勾选，与健康页一致。
+            exportViewModel.clearSelection()
             await refreshSyncState()
         } catch is CancellationError {
             return
@@ -221,6 +231,7 @@ struct ThirdPartySourceListView: View {
             guard generation == loadGeneration else { return }
             errorMessage = error.localizedDescription
             activities = []
+            exportViewModel.clearSelection()
         }
     }
 
@@ -228,6 +239,64 @@ struct ThirdPartySourceListView: View {
         // 从本地同步记录同时刷新已同步徽标与 Strava 远端 ID。
         uploadedKeys = await SyncStateStore.shared.uploadedPrimaryKeys()
         localRemoteIds = await SyncStateStore.shared.localRemoteIdsByPrimaryKey()
+    }
+}
+
+/// 第三方活动行：勾选 + 详情 + 同步徽标。
+private struct SourceActivityRowView: View {
+    let activity: SourceActivity
+    let isSelected: Bool
+    let isSynced: Bool
+    let remoteId: String?
+    let onToggle: () -> Void
+    let onOpenDetail: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Button(action: onToggle) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    .imageScale(.large)
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Button(action: onOpenDetail) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(activity.title).font(.body.weight(.semibold))
+                            if isSynced {
+                                Image(systemName: "checkmark.seal.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.green)
+                            }
+                            if remoteId != nil {
+                                Image(systemName: "bicycle.circle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                        Text(activity.startDate.formatted(date: .abbreviated, time: .shortened))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        HStack {
+                            Text(durationText(activity.duration))
+                            if let meters = activity.distanceMeters, meters > 0 {
+                                Text(String(format: "%.2f 公里", meters / 1000))
+                            }
+                        }
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                StravaRemoteIDLine(remoteId: remoteId)
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     private func durationText(_ duration: TimeInterval) -> String {

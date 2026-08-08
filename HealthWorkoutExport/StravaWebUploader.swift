@@ -140,11 +140,13 @@ final class StravaWebUploader: NSObject, StravaUploading, @unchecked Sendable {
         _ data: Data,
         externalId: String,
         filename: String,
-        commute: Bool
+        commute: Bool,
+        description: String?
     ) async throws -> StravaUploadResult {
-        // 网页上传入口不支持同请求设置 commute；保留参数以统一协议。
+        // 网页上传入口不支持同请求设置 commute/description；保留参数以统一协议。
         _ = externalId
         _ = commute
+        _ = description
         let cookieHeader = normalizedCookieHeader()
         guard !cookieHeader.isEmpty else { throw StravaUploadError.notConfigured }
 

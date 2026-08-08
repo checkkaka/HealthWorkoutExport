@@ -94,7 +94,72 @@ final class ExportPipeline: Sendable {
             }
         }
 
-        // 展开目录内本次格式的产物。
+        // 调用 collectExportURL：单文件直接分享，多文件打 zip。
+        return try Self.collectExportURL(workDir: workDir, format: format)
+    }
+
+    /// 导出行者/顽鹿等源活动：FIT 拉原始文件；JSON 写活动摘要（无 Health 明细序列）。
+    func export(
+        activities: [SourceActivity],
+        source: any WorkoutDataSource,
+        format: ExportFormat,
+        timeZone: TimeZone,
+        progress: @MainActor @escaping (ExportProgress) -> Void
+    ) async throws -> URL {
+        guard !activities.isEmpty else { throw ExportPipelineError.nothingSelected }
+
+        // 调用 cleanupOldExports：清理历史临时导出目录。
+        Self.cleanupOldExports()
+
+        let workDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(Self.tempDirPrefix + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
+
+        let total = activities.count
+        var completed = 0
+        await progress(ExportProgress(completed: 0, total: total))
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            var iterator = activities.makeIterator()
+            let limit = HealthKitService.detailConcurrencyLimit
+
+            func enqueueNext() {
+                guard let activity = iterator.next() else { return }
+                group.addTask {
+                    switch format {
+                    case .fit:
+                        // 调用 fetchFitData：下载源侧原始 FIT。
+                        let data = try await source.fetchFitData(for: activity)
+                        let name = Self.fileBaseName(activity: activity, timeZone: timeZone) + ".fit"
+                        try data.write(
+                            to: workDir.appendingPathComponent(name),
+                            options: .atomic
+                        )
+                    case .json:
+                        // 第三方源无 Health 明细，JSON 仅导出活动摘要。
+                        try Self.writeSourceActivityJSON(
+                            activity,
+                            to: workDir,
+                            timeZone: timeZone
+                        )
+                    }
+                }
+            }
+
+            for _ in 0..<min(limit, activities.count) {
+                enqueueNext()
+            }
+            for try await _ in group {
+                completed += 1
+                await progress(ExportProgress(completed: completed, total: total))
+                enqueueNext()
+            }
+        }
+
+        return try Self.collectExportURL(workDir: workDir, format: format)
+    }
+
+    private static func collectExportURL(workDir: URL, format: ExportFormat) throws -> URL {
         let allFiles = try FileManager.default.contentsOfDirectory(
             at: workDir,
             includingPropertiesForKeys: nil
@@ -108,6 +173,43 @@ final class ExportPipeline: Sendable {
         // 调用 zipFiles：多文件打成 zip 便于系统分享。
         try ZipWriter.zip(files: allFiles, to: zipURL)
         return zipURL
+    }
+
+    private static func fileBaseName(activity: SourceActivity, timeZone: TimeZone) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyyMMdd_HHmm"
+        let stamp = formatter.string(from: activity.startDate)
+        let typeToken = activity.title
+            .replacingOccurrences(of: " ", with: "_")
+            .replacingOccurrences(of: "/", with: "_")
+        let idToken = String(activity.id.prefix(8))
+        return "\(stamp)_\(typeToken)_\(idToken)"
+    }
+
+    private static func writeSourceActivityJSON(
+        _ activity: SourceActivity,
+        to directory: URL,
+        timeZone: TimeZone
+    ) throws {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        iso.timeZone = timeZone
+        let object: [String: Any] = [
+            "id": activity.id,
+            "sourceId": activity.sourceId,
+            "title": activity.title,
+            "startDate": iso.string(from: activity.startDate),
+            "endDate": iso.string(from: activity.endDate),
+            "durationSeconds": activity.duration,
+            "totalDistanceMeters": activity.distanceMeters as Any,
+            "metadata": activity.metadata,
+            "note": "第三方源 JSON 仅为活动摘要；完整轨迹请导出 FIT。"
+        ]
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+        let url = directory.appendingPathComponent(fileBaseName(activity: activity, timeZone: timeZone) + ".json")
+        try data.write(to: url, options: .atomic)
     }
 
     private static func writeBundle(_ bundle: WorkoutBundle, to directory: URL, format: ExportFormat, timeZone: TimeZone) throws {

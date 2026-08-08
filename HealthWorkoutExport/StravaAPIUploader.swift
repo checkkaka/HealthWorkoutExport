@@ -144,7 +144,8 @@ final class StravaAPIUploader: NSObject, StravaUploading {
         _ data: Data,
         externalId: String,
         filename: String,
-        commute: Bool
+        commute: Bool,
+        description: String?
     ) async throws -> StravaUploadResult {
         try await ensureValidAccessToken()
         let boundary = "Boundary-\(UUID().uuidString)"
@@ -158,6 +159,10 @@ final class StravaAPIUploader: NSObject, StravaUploading {
         appendField("external_id", externalId)
         // Strava Uploads API：commute 为表单字段，标记结果活动为通勤。
         if commute { appendField("commute", "1") }
+        // 调用 appendField(description)：虚拟功率社交文案写入活动描述。
+        if let description, !description.isEmpty {
+            appendField("description", description)
+        }
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
         body.append("Content-Type: application/octet-stream\r\n\r\n".data(using: .utf8)!)

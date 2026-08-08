@@ -92,6 +92,8 @@ struct PendingResyncUpload: Codable, Equatable {
     var uploadMessage: String?
     var filename: String
     var commute: Bool
+    /// Strava 活动描述（虚拟功率社交文案）；网页模式同请求可能无法写入。
+    var activityDescription: String? = nil
 }
 
 /// 勾选覆盖的本地恢复文件；一条指纹一个受文件保护的原子 JSON 文件。
