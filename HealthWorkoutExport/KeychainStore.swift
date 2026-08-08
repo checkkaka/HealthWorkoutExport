@@ -3,7 +3,7 @@ import Security
 
 /// 本机 Keychain 读写：第三方账号与 Strava 凭证仅存设备本地。
 enum KeychainStore {
-    private static let service = "com.bang.HealthWorkoutExport"
+    private static let service = "com.checkkaka.HealthWorkoutExport"
 
     static func set(_ value: String, account: String) {
         let data = Data(value.utf8)
