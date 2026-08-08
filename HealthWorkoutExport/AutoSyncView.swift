@@ -156,7 +156,7 @@ struct AutoSyncView: View {
                 } header: {
                     Text("虚拟功率")
                 } footer: {
-                    Text("仅当 FIT 某秒缺少原生 power 时，用 Gribble 公式 + Open-Meteo 历史天气估算并写入。已有功率计/补源功率不会覆盖。心率不参与计算；踏频为 0 时按滑行记 0 W。Crr 固定 0.005，传动损失固定 2%。关闭「计入惯性」后均功率通常略低、更稳，尖峰也会明显下降。Strava 上传无法声明「这是虚拟功率」，有原生 power 时一般会按设备功率显示。")
+                    Text("仅当 FIT 某秒缺少原生 power 时，用 Gribble 公式 + Open-Meteo 历史天气估算并写入。已有功率计/补源功率不会覆盖。心率不参与计算；踏频为 0 时按滑行记 0 W。Crr 固定 0.005，传动损失固定 2%。关闭「计入惯性」后均功率通常略低、更稳，尖峰也会明显下降。成功回填后，API 上传会写入活动描述：没钱买功率计……（出自HealthWorkoutExport）；网页上传同请求无法写描述。")
                 }
 
                 if primarySourceId == XingzheDataSource.sourceId
