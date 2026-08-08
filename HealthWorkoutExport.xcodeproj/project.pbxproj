@@ -50,6 +50,12 @@
 		B0010000000000000000002C /* XingzheRateLimitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000002C /* XingzheRateLimitTests.swift */; };
 		B0010000000000000000002D /* SyncSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000002D /* SyncSession.swift */; };
 		B0010000000000000000002E /* ActivityDetailSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000002E /* ActivityDetailSheet.swift */; };
+		B0010000000000000000002F /* VirtualPowerPhysics.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000002F /* VirtualPowerPhysics.swift */; };
+		B00100000000000000000030 /* VirtualPowerSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000030 /* VirtualPowerSettings.swift */; };
+		B00100000000000000000031 /* OpenMeteoWeatherClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000031 /* OpenMeteoWeatherClient.swift */; };
+		B00100000000000000000032 /* FitVirtualPowerFiller.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000032 /* FitVirtualPowerFiller.swift */; };
+		B00100000000000000000033 /* VirtualPowerPhysicsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000033 /* VirtualPowerPhysicsTests.swift */; };
+		B00100000000000000000034 /* FitVirtualPowerFillerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000034 /* FitVirtualPowerFillerTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -108,6 +114,12 @@
 		F0010000000000000000002C /* XingzheRateLimitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XingzheRateLimitTests.swift; sourceTree = "<group>"; };
 		F0010000000000000000002D /* SyncSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncSession.swift; sourceTree = "<group>"; };
 		F0010000000000000000002E /* ActivityDetailSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityDetailSheet.swift; sourceTree = "<group>"; };
+		F0010000000000000000002F /* VirtualPowerPhysics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualPowerPhysics.swift; sourceTree = "<group>"; };
+		F00100000000000000000030 /* VirtualPowerSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualPowerSettings.swift; sourceTree = "<group>"; };
+		F00100000000000000000031 /* OpenMeteoWeatherClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenMeteoWeatherClient.swift; sourceTree = "<group>"; };
+		F00100000000000000000032 /* FitVirtualPowerFiller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitVirtualPowerFiller.swift; sourceTree = "<group>"; };
+		F00100000000000000000033 /* VirtualPowerPhysicsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualPowerPhysicsTests.swift; sourceTree = "<group>"; };
+		F00100000000000000000034 /* FitVirtualPowerFillerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitVirtualPowerFillerTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -176,6 +188,10 @@
 				F0010000000000000000002A /* SyncHistoryView.swift */,
 				F0010000000000000000002D /* SyncSession.swift */,
 				F0010000000000000000002E /* ActivityDetailSheet.swift */,
+				F0010000000000000000002F /* VirtualPowerPhysics.swift */,
+				F00100000000000000000030 /* VirtualPowerSettings.swift */,
+				F00100000000000000000031 /* OpenMeteoWeatherClient.swift */,
+				F00100000000000000000032 /* FitVirtualPowerFiller.swift */,
 				F00100000000000000000009 /* Assets.xcassets */,
 				F0010000000000000000000A /* Info.plist */,
 				F0010000000000000000000B /* HealthWorkoutExport.entitlements */,
@@ -201,6 +217,8 @@
 				F00100000000000000000028 /* CommuteClassifierTests.swift */,
 				F0010000000000000000002B /* StravaActivityLookupTests.swift */,
 				F0010000000000000000002C /* XingzheRateLimitTests.swift */,
+				F00100000000000000000033 /* VirtualPowerPhysicsTests.swift */,
+				F00100000000000000000034 /* FitVirtualPowerFillerTests.swift */,
 			);
 			path = HealthWorkoutExportTests;
 			sourceTree = "<group>";
@@ -340,6 +358,10 @@
 				B0010000000000000000002A /* SyncHistoryView.swift in Sources */,
 				B0010000000000000000002D /* SyncSession.swift in Sources */,
 				B0010000000000000000002E /* ActivityDetailSheet.swift in Sources */,
+				B0010000000000000000002F /* VirtualPowerPhysics.swift in Sources */,
+				B00100000000000000000030 /* VirtualPowerSettings.swift in Sources */,
+				B00100000000000000000031 /* OpenMeteoWeatherClient.swift in Sources */,
+				B00100000000000000000032 /* FitVirtualPowerFiller.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -353,6 +375,8 @@
 				B00100000000000000000028 /* CommuteClassifierTests.swift in Sources */,
 				B0010000000000000000002B /* StravaActivityLookupTests.swift in Sources */,
 				B0010000000000000000002C /* XingzheRateLimitTests.swift in Sources */,
+				B00100000000000000000033 /* VirtualPowerPhysicsTests.swift in Sources */,
+				B00100000000000000000034 /* FitVirtualPowerFillerTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -18,6 +18,12 @@ struct AutoSyncView: View {
     @State private var authFlags: [String: Bool] = [:]
     @State private var showStravaSettings = false
     @State private var showSyncHistory = false
+    @State private var virtualPowerEnabled = VirtualPowerSettings.enabled
+    @State private var riderMassKg = VirtualPowerSettings.riderMassKg
+    @State private var bikeMassKg = VirtualPowerSettings.bikeMassKg
+    @State private var cda = VirtualPowerSettings.cda
+    @State private var crr = VirtualPowerSettings.crr
+    @State private var drivetrainLossPercent = VirtualPowerSettings.drivetrainLossPercent
 
     private var sources: [any WorkoutDataSource] { DataSourceRegistry.shared.all }
 
@@ -120,6 +126,52 @@ struct AutoSyncView: View {
                     Button("同步记录") { showSyncHistory = true }
                 }
 
+                Section {
+                    Toggle("虚拟功率（缺功率时回填）", isOn: $virtualPowerEnabled)
+                        .disabled(session.isRunning)
+                    if virtualPowerEnabled {
+                        HStack {
+                            Text("骑手重量 kg")
+                            TextField("70", value: $riderMassKg, format: .number.precision(.fractionLength(1)))
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                        }
+                        .disabled(session.isRunning)
+                        HStack {
+                            Text("车重 kg")
+                            TextField("8.5", value: $bikeMassKg, format: .number.precision(.fractionLength(1)))
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                        }
+                        .disabled(session.isRunning)
+                        HStack {
+                            Text("CdA m²")
+                            TextField("0.32", value: $cda, format: .number.precision(.fractionLength(3)))
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                        }
+                        .disabled(session.isRunning)
+                        HStack {
+                            Text("Crr")
+                            TextField("0.004", value: $crr, format: .number.precision(.fractionLength(4)))
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                        }
+                        .disabled(session.isRunning)
+                        HStack {
+                            Text("传动损失 %")
+                            TextField("2", value: $drivetrainLossPercent, format: .number.precision(.fractionLength(1)))
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                        }
+                        .disabled(session.isRunning)
+                    }
+                } header: {
+                    Text("虚拟功率")
+                } footer: {
+                    Text("仅当 FIT 某秒缺少原生 power 时，用 Gribble 公式 + Open-Meteo 历史天气估算并写入。已有功率计/补源功率不会覆盖。心率不参与计算；踏频为 0 时按滑行记 0 W。")
+                }
+
                 if primarySourceId == XingzheDataSource.sourceId
                     || primarySourceId == HealthKitDataSource.sourceId {
                     Section {
@@ -176,6 +228,12 @@ struct AutoSyncView: View {
                 primarySourceId = entrySourceId
                 applySupplementLinkage()
             }
+            .onChange(of: virtualPowerEnabled) { _, _ in persistVirtualPowerSettings() }
+            .onChange(of: riderMassKg) { _, _ in persistVirtualPowerSettings() }
+            .onChange(of: bikeMassKg) { _, _ in persistVirtualPowerSettings() }
+            .onChange(of: cda) { _, _ in persistVirtualPowerSettings() }
+            .onChange(of: crr) { _, _ in persistVirtualPowerSettings() }
+            .onChange(of: drivetrainLossPercent) { _, _ in persistVirtualPowerSettings() }
         }
     }
 
@@ -212,6 +270,8 @@ struct AutoSyncView: View {
     }
 
     private func startSync() {
+        // 调用 persistVirtualPowerSettings：同步前落盘虚拟功率参数。
+        persistVirtualPowerSettings()
         let job = SyncJobConfig(
             primarySourceId: primarySourceId,
             supplementSourceIds: Array(supplementIds),
@@ -223,5 +283,15 @@ struct AutoSyncView: View {
         )
         // 调用 SyncSession.start：App 级会话执行同步。
         session.start(job)
+    }
+
+    /// 把表单中的虚拟功率开关与 CdA/Crr 等写入 UserDefaults。
+    private func persistVirtualPowerSettings() {
+        VirtualPowerSettings.enabled = virtualPowerEnabled
+        VirtualPowerSettings.riderMassKg = riderMassKg
+        VirtualPowerSettings.bikeMassKg = bikeMassKg
+        VirtualPowerSettings.cda = cda
+        VirtualPowerSettings.crr = crr
+        VirtualPowerSettings.drivetrainLossPercent = drivetrainLossPercent
     }
 }

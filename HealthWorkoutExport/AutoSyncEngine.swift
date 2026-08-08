@@ -411,6 +411,12 @@ final class AutoSyncEngine {
                 if spikeFixed.fixedCount > 0 {
                     notes.append("已修复 \(spikeFixed.fixedCount) 处速度尖峰：\(activity.title)")
                 }
+                // 调用 applyVirtualPowerIfNeeded：缺功率时按 Gribble+天气回填原生 power。
+                uploadData = try await applyVirtualPowerIfNeeded(
+                    uploadData,
+                    activityTitle: activity.title,
+                    notes: &notes
+                )
                 // 上传成功可写入 sync_state.message，便于核对 GCJ 是否跑过。
                 var uploadMessage: String?
                 if StravaSettings.gcjCorrectionEnabled {
@@ -579,6 +585,26 @@ final class AutoSyncEngine {
             timeAlign: .perFile(offsets: offsets),
             supplementMode: .sensorsOnly
         )
+    }
+
+    /// 开关开启且参数合法时，对 FIT 中缺失的原生 power 做虚拟功率回填。
+    private func applyVirtualPowerIfNeeded(
+        _ data: Data,
+        activityTitle: String,
+        notes: inout [String]
+    ) async throws -> Data {
+        guard VirtualPowerSettings.enabled else { return data }
+        guard VirtualPowerSettings.isConfigured else {
+            notes.append("虚拟功率已开但参数无效，已跳过：\(activityTitle)")
+            return data
+        }
+        // 调用 FitVirtualPowerFiller：Gribble + Open-Meteo，仅填 nil power。
+        let result = try await FitVirtualPowerFiller.fillIfNeeded(
+            data,
+            settings: VirtualPowerSettings.physicsParams()
+        )
+        notes.append("\(result.note)：\(activityTitle)")
+        return result.data
     }
 
     /// 本批预检列表追加刚上传的活动，避免同批后条再传一遍。
@@ -888,6 +914,12 @@ final class AutoSyncEngine {
 
                     let spikeFixed = try FitSpeedSpikeFixer.fix(fitData)
                     var uploadData = spikeFixed.data
+                    // 调用 applyVirtualPowerIfNeeded：重传路径同样只补缺功率。
+                    uploadData = try await applyVirtualPowerIfNeeded(
+                        uploadData,
+                        activityTitle: activity.title,
+                        notes: &notes
+                    )
                     var uploadMessage: String?
                     if StravaSettings.gcjCorrectionEnabled {
                         // 调用 FitGcjCoordinateRewriter：可选 GCJ→WGS，修国内轨迹偏移。
