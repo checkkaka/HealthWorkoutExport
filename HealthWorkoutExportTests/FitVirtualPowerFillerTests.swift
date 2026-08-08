@@ -431,10 +431,66 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         XCTAssertLessThanOrEqual(anchors.count, 12)
     }
 
+    /// 邻域补不上时须清除该秒残留功率计值，并标 failed。
+    func testClearsResidualMeterPowerWhenNeighborAverageUnavailable() async throws {
+        let start = Date(timeIntervalSince1970: 1_720_000_000)
+        // 10 秒成功 + 1 秒孤立失败（距最近成功 >5s）→ 失败率 <10%，邻域无法补。
+        var specs: [(offset: Double, speed: Double?, alt: Double, power: UInt16?, cadence: UInt8?)] = []
+        for i in 0..<10 {
+            specs.append((Double(i), speed: 8, alt: 10, power: 150, cadence: 90))
+        }
+        specs.append((20, speed: nil, alt: 10, power: 999, cadence: 90))
+        let fit = try makeFit(start: start, records: specs, lapAvgPower: 500, lapMaxPower: 999)
+        let result = try await FitVirtualPowerFiller.fillIfNeeded(
+            fit,
+            weatherProvider: { _, _, _, _ in [] }
+        )
+        XCTAssertFalse(result.activityRejected)
+        XCTAssertEqual(result.failedCount, 1)
+        XCTAssertEqual(result.filledCount, 10)
+
+        let messages = try FitMerger.decode(result.data)
+        let records = messages.recordMesgs.sorted {
+            ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)
+        }
+        XCTAssertEqual(records.count, 11)
+        XCTAssertNil(records[10].getPower(), "邻域补不上时应清除残留功率计值")
+        XCTAssertEqual(
+            VirtualPowerSourceMark.powerSource(of: records[10]),
+            VirtualPowerSourceMark.failedValue
+        )
+        XCTAssertNotEqual(records[0].getPower(), 150)
+
+        let lap = try XCTUnwrap(messages.lapMesgs.first)
+        let lapAvg = try XCTUnwrap(lap.getAvgPower())
+        let lapMax = try XCTUnwrap(lap.getMaxPower())
+        XCTAssertNotEqual(lapAvg, 500, "Lap 均功率应基于本次草稿重算")
+        XCTAssertNotEqual(lapMax, 999, "Lap 峰功率不得保留残留功率计峰值")
+        XCTAssertLessThan(lapMax, 999)
+    }
+
+    /// 任一 session 为骑行时整文件处理（含跑步+骑行多运动）。
+    func testProcessesWhenAnySessionIsCycling() async throws {
+        let start = Date(timeIntervalSince1970: 1_720_000_000)
+        let fit = try makeMultiSportFit(
+            start: start,
+            sports: [.running, .cycling],
+            records: [(0, speed: 8, alt: 10, power: nil, cadence: 80)]
+        )
+        let result = try await FitVirtualPowerFiller.fillIfNeeded(
+            fit,
+            weatherProvider: { _, _, _, _ in [] }
+        )
+        XCTAssertEqual(result.filledCount, 1)
+        XCTAssertFalse(result.note.contains("非骑行"))
+    }
+
     private func makeFit(
         start: Date,
         sport: Sport = .cycling,
-        records: [(offset: Double, speed: Double?, alt: Double, power: UInt16?, cadence: UInt8?)]
+        records: [(offset: Double, speed: Double?, alt: Double, power: UInt16?, cadence: UInt8?)],
+        lapAvgPower: UInt16? = nil,
+        lapMaxPower: UInt16? = nil
     ) throws -> Data {
         let startFit = DateTime(date: start)
         let fileId = FileIdMesg()
@@ -447,6 +503,7 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         let encoder = Encoder()
         encoder.write(mesg: fileId)
         let semicircles = 2_147_483_648.0 / 180.0
+        let endOffset = records.last?.offset ?? 0
         for spec in records {
             let record = RecordMesg()
             try record.setTimestamp(DateTime(date: start.addingTimeInterval(spec.offset)))
@@ -467,13 +524,75 @@ final class FitVirtualPowerFillerTests: XCTestCase {
             }
             encoder.write(mesg: record)
         }
+        let lap = LapMesg()
+        try lap.setStartTime(startFit)
+        try lap.setTimestamp(DateTime(date: start.addingTimeInterval(endOffset)))
+        try lap.setTotalElapsedTime(endOffset)
+        try lap.setTotalTimerTime(endOffset)
+        if let lapAvgPower {
+            try lap.setAvgPower(lapAvgPower)
+        }
+        if let lapMaxPower {
+            try lap.setMaxPower(lapMaxPower)
+        }
+        encoder.write(mesg: lap)
         let session = SessionMesg()
-        try session.setTimestamp(DateTime(date: start.addingTimeInterval(records.last?.offset ?? 0)))
+        try session.setTimestamp(DateTime(date: start.addingTimeInterval(endOffset)))
         try session.setStartTime(startFit)
-        try session.setTotalElapsedTime(records.last?.offset ?? 1)
-        try session.setTotalTimerTime(records.last?.offset ?? 1)
+        try session.setTotalElapsedTime(endOffset)
+        try session.setTotalTimerTime(endOffset)
         try session.setSport(sport)
         encoder.write(mesg: session)
+        return encoder.close()
+    }
+
+    /// 写入多个 session（不同运动），用于多运动门禁回归。
+    private func makeMultiSportFit(
+        start: Date,
+        sports: [Sport],
+        records: [(offset: Double, speed: Double?, alt: Double, power: UInt16?, cadence: UInt8?)]
+    ) throws -> Data {
+        let startFit = DateTime(date: start)
+        let fileId = FileIdMesg()
+        try fileId.setType(File.activity)
+        try fileId.setManufacturer(Manufacturer.development)
+        try fileId.setProduct(1)
+        try fileId.setTimeCreated(startFit)
+        try fileId.setSerialNumber(1)
+
+        let encoder = Encoder()
+        encoder.write(mesg: fileId)
+        let semicircles = 2_147_483_648.0 / 180.0
+        let endOffset = records.last?.offset ?? 0
+        for spec in records {
+            let record = RecordMesg()
+            try record.setTimestamp(DateTime(date: start.addingTimeInterval(spec.offset)))
+            if let speed = spec.speed {
+                try record.setSpeed(speed)
+                try record.setDistance(speed * spec.offset)
+            } else {
+                try record.setDistance(0)
+            }
+            try record.setAltitude(spec.alt)
+            if let cadence = spec.cadence {
+                try record.setCadence(cadence)
+            }
+            try record.setPositionLat(Int32((31.2 * semicircles).rounded()))
+            try record.setPositionLong(Int32((121.5 * semicircles).rounded()))
+            if let power = spec.power {
+                try record.setPower(power)
+            }
+            encoder.write(mesg: record)
+        }
+        for (index, sport) in sports.enumerated() {
+            let session = SessionMesg()
+            try session.setTimestamp(DateTime(date: start.addingTimeInterval(endOffset + Double(index))))
+            try session.setStartTime(startFit)
+            try session.setTotalElapsedTime(endOffset)
+            try session.setTotalTimerTime(endOffset)
+            try session.setSport(sport)
+            encoder.write(mesg: session)
+        }
         return encoder.close()
     }
 }

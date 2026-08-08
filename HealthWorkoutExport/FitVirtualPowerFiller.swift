@@ -281,8 +281,10 @@ enum FitVirtualPowerFiller {
 
         for (index, record) in records.enumerated() {
             guard let power = draftPower[index] else {
-                // 邻域也补不上：仍不写 power，但标 failed（失败率已低于阈值）。
+                // 邻域也补不上：清除残留功率计值并标 failed，避免 failed 秒仍留旧瓦数。
                 if estimateFailed[index] {
+                    // 调用 removeField：去掉该秒原生 power，不保留功率计旧值。
+                    record.removeField(fieldNum: RecordMesg.powerFieldNum)
                     failedRecords.append(record)
                 }
                 continue
@@ -314,7 +316,7 @@ enum FitVirtualPowerFiller {
             )
         }
 
-        // Session 用整场；Lap 按各自时间窗聚合。覆盖场景下同步改写 avg/max。
+        // Session 用整场；Lap 只按本次草稿功率聚合，不读残留 getPower。
         if filled > 0, powerCount > 0 {
             let avg = UInt16(min(max((sumPower / Double(powerCount)).rounded(), 0), Double(UInt16.max)))
             for session in messages.sessionMesgs {
@@ -323,11 +325,16 @@ enum FitVirtualPowerFiller {
                 try session.setMaxPower(maxPower)
             }
             for lap in messages.lapMesgs {
-                // 调用 lapPowerStats：按该圈起止过滤 record 算 avg/max。
-                guard let stats = lapPowerStats(lap: lap, records: records) else { continue }
-                // 调用 setAvgPower/setMaxPower：覆盖该圈原有功率统计。
-                try lap.setAvgPower(stats.avg)
-                try lap.setMaxPower(stats.max)
+                // 调用 lapPowerStats：按该圈时间窗只统计 draftPower 非空秒。
+                if let stats = lapPowerStats(lap: lap, records: records, draftPower: draftPower) {
+                    // 调用 setAvgPower/setMaxPower：覆盖该圈原有功率统计。
+                    try lap.setAvgPower(stats.avg)
+                    try lap.setMaxPower(stats.max)
+                } else {
+                    // 该圈本次草稿无功率：清除残留 avg/max，避免旧功率计汇总留下。
+                    lap.removeField(fieldNum: LapMesg.avgPowerFieldNum)
+                    lap.removeField(fieldNum: LapMesg.maxPowerFieldNum)
+                }
             }
         }
 
@@ -428,10 +435,11 @@ enum FitVirtualPowerFiller {
         )
     }
 
-    /// 按 Lap 起止时间窗统计该圈功率 avg/max；窗口无效或无功率则返回 nil。
+    /// 按 Lap 起止时间窗，只统计本次草稿功率的 avg/max；窗口无效或草稿全空则 nil。
     private static func lapPowerStats(
         lap: LapMesg,
-        records: [RecordMesg]
+        records: [RecordMesg],
+        draftPower: [UInt16?]
     ) -> (avg: UInt16, max: UInt16)? {
         guard let start = lap.getStartTime()?.timestamp,
               let end = lap.getTimestamp()?.timestamp,
@@ -439,10 +447,11 @@ enum FitVirtualPowerFiller {
         var sum = 0.0
         var maxP: UInt16 = 0
         var n = 0
-        for record in records {
-            guard let ts = record.getTimestamp()?.timestamp,
+        for (index, record) in records.enumerated() {
+            guard index < draftPower.count,
+                  let ts = record.getTimestamp()?.timestamp,
                   ts >= start, ts <= end,
-                  let power = record.getPower() else { continue }
+                  let power = draftPower[index] else { continue }
             sum += Double(power)
             maxP = max(maxP, power)
             n += 1
