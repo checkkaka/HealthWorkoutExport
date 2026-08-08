@@ -320,6 +320,7 @@ final class AutoSyncEngine {
                             fitData: nil,
                             filename: nil,
                             commute: false,
+                            activityDescription: nil,
                             distanceMeters: activity.distanceMeters,
                             durationSeconds: activity.duration,
                             activityStart: activity.startDate,
@@ -347,6 +348,7 @@ final class AutoSyncEngine {
                         fitData: nil,
                         filename: nil,
                         commute: false,
+                        activityDescription: nil,
                         distanceMeters: activity.distanceMeters,
                         durationSeconds: activity.duration,
                         activityStart: activity.startDate,
@@ -432,11 +434,13 @@ final class AutoSyncEngine {
                     uploadMessage = gcjMsg
                 }
                 // 调用 applyVirtualPowerIfNeeded：缺功率时按 Gribble+天气回填原生 power。
-                uploadData = try await applyVirtualPowerIfNeeded(
+                let virtualPower = try await applyVirtualPowerIfNeeded(
                     uploadData,
                     activityTitle: activity.title,
                     notes: &notes
                 )
+                uploadData = virtualPower.data
+                let activityDescription = virtualPower.activityDescription
                 let gpsPoints = FitContentProbe.gpsPointCount(uploadData)
                 let hrPoints = FitContentProbe.heartRatePointCount(uploadData)
                 if gpsPoints < 5 {
@@ -457,7 +461,8 @@ final class AutoSyncEngine {
                     uploadData,
                     externalId: useOverwriteExternalId ? overwriteExternalId(fingerprint) : fingerprint,
                     filename: filename,
-                    commute: commute
+                    commute: commute,
+                    description: activityDescription
                 )
 
                 if result.isDuplicate {
@@ -471,6 +476,7 @@ final class AutoSyncEngine {
                         fitData: uploadData,
                         filename: filename,
                         commute: commute,
+                        activityDescription: activityDescription,
                         distanceMeters: activity.distanceMeters,
                         durationSeconds: activity.duration,
                         activityStart: activity.startDate,
@@ -596,15 +602,16 @@ final class AutoSyncEngine {
     }
 
     /// 开关开启且参数合法时，对 FIT 中缺失的原生 power 做虚拟功率回填。
+    /// 返回值：回填后的数据，以及是否应附带虚拟功率社交描述。
     private func applyVirtualPowerIfNeeded(
         _ data: Data,
         activityTitle: String,
         notes: inout [String]
-    ) async throws -> Data {
-        guard VirtualPowerSettings.enabled else { return data }
+    ) async throws -> (data: Data, activityDescription: String?) {
+        guard VirtualPowerSettings.enabled else { return (data, nil) }
         guard VirtualPowerSettings.isConfigured else {
             notes.append("虚拟功率已开但参数无效，已跳过：\(activityTitle)")
-            return data
+            return (data, nil)
         }
         // 调用 FitVirtualPowerFiller：Gribble + Open-Meteo，仅填 nil power；失败秒标 failed。
         let result = try await FitVirtualPowerFiller.fillIfNeeded(
@@ -621,7 +628,12 @@ final class AutoSyncEngine {
             || result.note.contains("放弃") {
             notes.append("\(result.note)：\(activityTitle)")
         }
-        return result.data
+        // 实际写入了功率才附社交描述；整条放弃则不写。
+        let description: String? =
+            (!result.activityRejected && result.filledCount > 0)
+            ? VirtualPowerSocialCopy.activityDescription
+            : nil
+        return (result.data, description)
     }
 
     /// 本批预检列表追加刚上传的活动，避免同批后条再传一遍。
@@ -665,6 +677,7 @@ final class AutoSyncEngine {
         fitData: Data?,
         filename: String?,
         commute: Bool,
+        activityDescription: String?,
         distanceMeters: Double?,
         durationSeconds: TimeInterval?,
         activityStart: Date,
@@ -684,7 +697,8 @@ final class AutoSyncEngine {
                 fitData,
                 externalId: overwriteExternalId(fingerprint),
                 filename: filename,
-                commute: commute
+                commute: commute,
+                description: activityDescription
             )
             if !result.isDuplicate {
                 await stateStore.markUploaded(
@@ -771,7 +785,8 @@ final class AutoSyncEngine {
                 fitData,
                 externalId: overwriteExternalId(fingerprint),
                 filename: filename,
-                commute: commute
+                commute: commute,
+                description: activityDescription
             )
             if result.isDuplicate {
                 let hit = result.remoteId.map { "（撞上远端 \($0)）" } ?? ""
@@ -947,11 +962,12 @@ final class AutoSyncEngine {
                             : "GCJ 开关已开但未转换任何坐标点"
                     }
                     // 调用 applyVirtualPowerIfNeeded：重传路径同样只补缺功率。
-                    uploadData = try await applyVirtualPowerIfNeeded(
+                    let virtualPower = try await applyVirtualPowerIfNeeded(
                         uploadData,
                         activityTitle: activity.title,
                         notes: &notes
                     )
+                    uploadData = virtualPower.data
 
                     prepared = PendingResyncUpload(
                         primarySourceId: primary.id,
@@ -968,7 +984,8 @@ final class AutoSyncEngine {
                         commute: CommuteClassifier.isCommute(
                             distanceMeters: activity.distanceMeters,
                             durationSeconds: activity.duration
-                        )
+                        ),
+                        activityDescription: virtualPower.activityDescription
                     )
                 }
 
@@ -998,7 +1015,8 @@ final class AutoSyncEngine {
                     prepared.uploadData,
                     externalId: overwriteExternalId(fingerprint),
                     filename: prepared.filename,
-                    commute: prepared.commute
+                    commute: prepared.commute,
+                    description: prepared.activityDescription
                 )
 
                 if result.isDuplicate {
@@ -1012,6 +1030,7 @@ final class AutoSyncEngine {
                         fitData: prepared.uploadData,
                         filename: prepared.filename,
                         commute: prepared.commute,
+                        activityDescription: prepared.activityDescription,
                         distanceMeters: prepared.distanceMeters,
                         durationSeconds: prepared.durationSeconds,
                         activityStart: prepared.startDate,
