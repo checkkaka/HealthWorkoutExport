@@ -1,0 +1,30 @@
+# Xcode
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+*.xccheckout
+*.xcscmblueprint
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift PM
+.build/
+.swiftpm/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# 真机拉取的本地数据/缓存（含同步记录、偏好）
+.tmp-device-sync/
+
+# 编辑器 / Agent
+.idea/
+.vscode/
+.cursor/
+*.swp
+*~
