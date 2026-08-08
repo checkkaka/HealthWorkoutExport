@@ -18,7 +18,7 @@ struct SourceLoginView: View {
                     .autocorrectionDisabled()
                 SecureField("密码", text: $password)
             } footer: {
-                Text("凭证仅保存在本机 Keychain，不会上传到任何远程服务器。")
+                Text("凭证仅保存在本机 Keychain；登录时仅直接提交给对应平台，不会上传到作者服务器。")
             }
 
             if let errorMessage {

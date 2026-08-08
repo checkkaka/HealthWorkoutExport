@@ -184,4 +184,31 @@ final class SyncFingerprintTests: XCTestCase {
         XCTAssertEqual(record?.message, "后台处理判定 duplicate")
         try? FileManager.default.removeItem(at: url)
     }
+
+    func testResyncRecoveryStoreRoundTripsAndRemovesPreparedUpload() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("resync_recovery_\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ResyncRecoveryStore(directoryURL: directory)
+        let fingerprint = String(repeating: "a", count: 64)
+        let upload = PendingResyncUpload(
+            primarySourceId: "healthkit",
+            primaryActivityId: "activity-1",
+            title: "恢复测试",
+            startDate: Date(timeIntervalSince1970: 1_700_000_000),
+            endDate: Date(timeIntervalSince1970: 1_700_003_600),
+            supplementSourceIds: ["xingzhe"],
+            distanceMeters: 20_000,
+            durationSeconds: 3_600,
+            uploadData: Data([0x01, 0x02, 0x03]),
+            uploadMessage: "已转换坐标",
+            filename: "healthkit-activity-1.fit",
+            commute: false
+        )
+
+        try store.save(upload, fingerprint: fingerprint)
+        XCTAssertEqual(try store.load(fingerprint: fingerprint), upload)
+        store.remove(fingerprint: fingerprint)
+        XCTAssertNil(try store.load(fingerprint: fingerprint))
+    }
 }

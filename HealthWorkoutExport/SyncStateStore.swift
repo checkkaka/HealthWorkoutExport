@@ -78,6 +78,61 @@ enum SyncRemoteIdBackfill {
     }
 }
 
+/// 远端覆盖后的可恢复上传包：删除前落盘，上传成功后清理。
+struct PendingResyncUpload: Codable, Equatable {
+    var primarySourceId: String
+    var primaryActivityId: String
+    var title: String
+    var startDate: Date
+    var endDate: Date
+    var supplementSourceIds: [String]
+    var distanceMeters: Double?
+    var durationSeconds: TimeInterval
+    var uploadData: Data
+    var uploadMessage: String?
+    var filename: String
+    var commute: Bool
+}
+
+/// 勾选覆盖的本地恢复文件；一条指纹一个受文件保护的原子 JSON 文件。
+struct ResyncRecoveryStore {
+    private let directoryURL: URL
+
+    init(directoryURL: URL? = nil) {
+        if let directoryURL {
+            self.directoryURL = directoryURL
+        } else {
+            let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+                ?? FileManager.default.temporaryDirectory
+            self.directoryURL = base.appendingPathComponent("pending_resync", isDirectory: true)
+        }
+    }
+
+    func save(_ upload: PendingResyncUpload, fingerprint: String) throws {
+        let url = try fileURL(for: fingerprint)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        try JSONEncoder().encode(upload).write(to: url, options: [.atomic, .completeFileProtection])
+    }
+
+    func load(fingerprint: String) throws -> PendingResyncUpload? {
+        let url = try fileURL(for: fingerprint)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return try JSONDecoder().decode(PendingResyncUpload.self, from: Data(contentsOf: url))
+    }
+
+    func remove(fingerprint: String) {
+        guard let url = try? fileURL(for: fingerprint) else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    private func fileURL(for fingerprint: String) throws -> URL {
+        guard !fingerprint.isEmpty, fingerprint.allSatisfy(\.isHexDigit) else {
+            throw CocoaError(.fileWriteInvalidFileName)
+        }
+        return directoryURL.appendingPathComponent("\(fingerprint).json")
+    }
+}
+
 /// 本地同步状态：保证当天/历史同步幂等，防重复上传。
 actor SyncStateStore {
     static let shared = SyncStateStore()

@@ -38,14 +38,14 @@ enum ActivityMatcher {
             let union = max(pEnd, cEnd).timeIntervalSince(min(pStart, cStart))
             guard union > 0 else { return nil }
             let ratio = overlap / union
-            return ratio >= minOverlapRatio ? ratio : nil
+            if ratio >= minOverlapRatio { return ratio }
         }
 
         let startDelta = abs(pStart.timeIntervalSince(cStart))
         guard startDelta <= maxStartDelta else { return nil }
         let ratio = abs(pDur - cDur) / max(pDur, cDur)
         guard ratio <= maxDurationRatio else { return nil }
-        // 无重叠时用「越近越高」的伪 IoU。
+        // 无重叠或低重叠时，用开始与时长容差兜底；越近分数越高。
         return max(0, 1 - startDelta / maxStartDelta) * (1 - ratio)
     }
 }
