@@ -20,6 +20,16 @@ struct WeatherSample: Sendable, Equatable {
 enum OpenMeteoWeatherClient {
     /// 历史天气根地址。
     private static let archiveBase = URL(string: "https://archive-api.open-meteo.com/v1/archive")!
+    /// 国内访问失败时尽快退化，避免拖垮整批同步（秒）。
+    private static let requestTimeoutSeconds: TimeInterval = 12
+
+    private static let shortTimeoutSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = requestTimeoutSeconds
+        config.timeoutIntervalForResource = requestTimeoutSeconds
+        config.waitsForConnectivity = false
+        return URLSession(configuration: config)
+    }()
 
     enum WeatherError: LocalizedError {
         case invalidResponse
@@ -41,8 +51,9 @@ enum OpenMeteoWeatherClient {
         longitude: Double,
         start: Date,
         end: Date,
-        session: URLSession = .shared
+        session: URLSession? = nil
     ) async throws -> [WeatherSample] {
+        let session = session ?? shortTimeoutSession
         let cal = Calendar(identifier: .gregorian)
         var utc = Calendar(identifier: .gregorian)
         utc.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -100,7 +111,7 @@ enum OpenMeteoWeatherClient {
             let raw = times[i]
             let date = iso.date(from: raw + "Z") ?? localIso.date(from: raw)
             guard let date else { continue }
-            let temp = temps[i]
+            guard let temp = temps[i] else { continue }
             let rh = hourly.relative_humidity_2m?[safe: i] ?? 50
             let pressure = hourly.pressure_msl?[safe: i] ?? 1013.25
             let wind = hourly.wind_speed_10m?[safe: i] ?? 0
@@ -109,10 +120,10 @@ enum OpenMeteoWeatherClient {
                 WeatherSample(
                     date: date,
                     temperatureC: temp,
-                    relativeHumidityPercent: rh,
-                    pressureMslHpa: pressure,
-                    windSpeedMps: wind,
-                    windFromDegrees: dir
+                    relativeHumidityPercent: rh ?? 50,
+                    pressureMslHpa: pressure ?? 1013.25,
+                    windSpeedMps: wind ?? 0,
+                    windFromDegrees: dir ?? 0
                 )
             )
         }
@@ -125,11 +136,11 @@ enum OpenMeteoWeatherClient {
 
     private struct Hourly: Decodable {
         var time: [String]?
-        var temperature_2m: [Double]?
-        var relative_humidity_2m: [Double]?
-        var pressure_msl: [Double]?
-        var wind_speed_10m: [Double]?
-        var wind_direction_10m: [Double]?
+        var temperature_2m: [Double?]?
+        var relative_humidity_2m: [Double?]?
+        var pressure_msl: [Double?]?
+        var wind_speed_10m: [Double?]?
+        var wind_direction_10m: [Double?]?
     }
 }
 

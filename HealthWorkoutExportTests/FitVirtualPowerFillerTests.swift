@@ -59,6 +59,42 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         XCTAssertEqual(result.data, fit)
     }
 
+    /// 天气 provider 抛取消时应向上抛出，不得吞掉。
+    func testRethrowsCancellationFromWeather() async {
+        let start = Date(timeIntervalSince1970: 1_720_000_000)
+        let fit = try! makeFit(
+            start: start,
+            records: [(0, speed: 8, alt: 10, power: nil, cadence: 80)]
+        )
+        do {
+            _ = try await FitVirtualPowerFiller.fillIfNeeded(
+                fit,
+                weatherProvider: { _, _, _, _ in throw CancellationError() }
+            )
+            XCTFail("应抛出 CancellationError")
+        } catch is CancellationError {
+            // expected
+        } catch {
+            XCTFail("意外错误：\(error)")
+        }
+    }
+
+    /// 低速 + 踏频 0 也应写入 0，而不是跳过。
+    func testZeroCadenceAtLowSpeedWritesZero() async throws {
+        let start = Date(timeIntervalSince1970: 1_720_000_000)
+        let fit = try makeFit(
+            start: start,
+            records: [(0, speed: 0.05, alt: 10, power: nil, cadence: 0)]
+        )
+        let result = try await FitVirtualPowerFiller.fillIfNeeded(
+            fit,
+            weatherProvider: { _, _, _, _ in [] }
+        )
+        XCTAssertEqual(result.filledCount, 1)
+        let records = try FitMerger.decode(result.data).recordMesgs
+        XCTAssertEqual(records.first?.getPower(), 0)
+    }
+
     private func makeFit(
         start: Date,
         records: [(offset: Double, speed: Double, alt: Double, power: UInt16?, cadence: UInt8)]

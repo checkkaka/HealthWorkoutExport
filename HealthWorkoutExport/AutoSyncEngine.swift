@@ -603,7 +603,9 @@ final class AutoSyncEngine {
             data,
             settings: VirtualPowerSettings.physicsParams()
         )
-        notes.append("\(result.note)：\(activityTitle)")
+        if result.filledCount > 0 || result.note.contains("退化") || result.note.contains("未写入") {
+            notes.append("\(result.note)：\(activityTitle)")
+        }
         return result.data
     }
 

@@ -4,8 +4,6 @@ import FITSwiftSDK
 /// 对缺功率的 Activity FIT 按 Gribble + Open-Meteo 回填原生 Record.power。
 enum FitVirtualPowerFiller {
     private static let semicirclesPerDegree = 2_147_483_648.0 / 180.0
-    /// 天气取样：相邻样本至少间隔的秒数。
-    private static let weatherSampleMinGapSeconds: TimeInterval = 600
     /// 速度/海拔平滑半窗（秒侧索引半径）。
     private static let smoothRadius = 2
 
@@ -59,6 +57,10 @@ enum FitVirtualPowerFiller {
                 weatherByTime = samples.map { ($0.date, $0) }
                 usedWeather = !samples.isEmpty
                 weatherPointCount = samples.count
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let urlError as URLError where urlError.code == .cancelled {
+                throw CancellationError()
             } catch {
                 usedWeather = false
             }
@@ -78,6 +80,14 @@ enum FitVirtualPowerFiller {
                 continue
             }
             let kin = kinematics[index]
+            let cadence = record.getCadence().map { Double($0) }
+            // 踏频为 0：即使低速也按滑行写 0，避免停车段留下空洞。
+            if let cadence, cadence <= 0 {
+                try record.setPower(0)
+                filled += 1
+                powerCount += 1
+                continue
+            }
             guard let speed = kin.speedMps, speed > 0.1 else { continue }
 
             let sample = interpolateWeather(at: kin.date, samples: weatherByTime)
@@ -111,7 +121,6 @@ enum FitVirtualPowerFiller {
 
             var params = baseParams
             params.airDensity = rho
-            let cadence = record.getCadence().map { Double($0) }
             // 调用 VirtualPowerPhysics：Gribble+惯性估算该秒功率。
             let watts = VirtualPowerPhysics.powerWatts(
                 groundSpeedMps: speed,
@@ -139,7 +148,7 @@ enum FitVirtualPowerFiller {
             )
         }
 
-        // Session/Lap 仅在原字段为空时补平均/最大功率。
+        // Session 用整场；Lap 按各自时间窗聚合，避免多圈共用一场均值。
         if powerCount > 0 {
             let avg = UInt16(min(max((sumPower / Double(powerCount)).rounded(), 0), Double(UInt16.max)))
             for session in messages.sessionMesgs {
@@ -151,11 +160,13 @@ enum FitVirtualPowerFiller {
                 }
             }
             for lap in messages.lapMesgs {
+                // 调用 lapPowerStats：按该圈起止过滤 record 算 avg/max。
+                guard let stats = lapPowerStats(lap: lap, records: records) else { continue }
                 if lap.getAvgPower() == nil {
-                    try lap.setAvgPower(avg)
+                    try lap.setAvgPower(stats.avg)
                 }
                 if lap.getMaxPower() == nil {
-                    try lap.setMaxPower(maxPower)
+                    try lap.setMaxPower(stats.max)
                 }
             }
         }
@@ -186,6 +197,30 @@ enum FitVirtualPowerFiller {
             start: start,
             end: end
         )
+    }
+
+    /// 按 Lap 起止时间窗统计该圈功率 avg/max；窗口无效或无功率则返回 nil。
+    private static func lapPowerStats(
+        lap: LapMesg,
+        records: [RecordMesg]
+    ) -> (avg: UInt16, max: UInt16)? {
+        guard let start = lap.getStartTime()?.timestamp,
+              let end = lap.getTimestamp()?.timestamp,
+              end >= start else { return nil }
+        var sum = 0.0
+        var maxP: UInt16 = 0
+        var n = 0
+        for record in records {
+            guard let ts = record.getTimestamp()?.timestamp,
+                  ts >= start, ts <= end,
+                  let power = record.getPower() else { continue }
+            sum += Double(power)
+            maxP = max(maxP, power)
+            n += 1
+        }
+        guard n > 0 else { return nil }
+        let avg = UInt16(min(max((sum / Double(n)).rounded(), 0), Double(UInt16.max)))
+        return (avg, maxP)
     }
 
     private struct Kinematics {
@@ -298,16 +333,7 @@ enum FitVirtualPowerFiller {
     }
 
     private static func weatherAnchor(from records: [RecordMesg]) -> (lat: Double, lon: Double)? {
-        var lastSampleTime: TimeInterval = -.infinity
-        for record in records {
-            guard let la = record.getPositionLat(), let lo = record.getPositionLong(),
-                  let ts = record.getTimestamp()?.timestamp else { continue }
-            let t = TimeInterval(ts)
-            if t - lastSampleTime >= weatherSampleMinGapSeconds {
-                return (Double(la) / semicirclesPerDegree, Double(lo) / semicirclesPerDegree)
-            }
-        }
-        // 回退：第一条有 GPS 的点。
+        // 取第一条有 GPS 的点作为天气查询锚点（格点尺度下足够）。
         for record in records {
             if let la = record.getPositionLat(), let lo = record.getPositionLong() {
                 return (Double(la) / semicirclesPerDegree, Double(lo) / semicirclesPerDegree)
