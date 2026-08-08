@@ -21,6 +21,11 @@ enum VirtualPowerPhysics {
         var airDensity: Double
     }
 
+    /// 业余站姿起步约 1.3–1.6 m/s²，滚动冲刺多 <1；钳位上限为真冲刺留余量。
+    static let maxRealisticAccelerationMps2 = 2.0
+    /// 原速变化率达到该值（m/s²）视为 GPS 飞点，惯性项置 0；约等于 8 km/h/s。
+    static let gpsSpeedJumpGlitchMps2 = 8.0 / 3.6
+
     /// 估算腿部功率。cadenceRpm==0 时强制滑行功率 0；负功率钳为 0。
     static func powerWatts(
         groundSpeedMps: Double,
@@ -46,6 +51,27 @@ enum VirtualPowerPhysics {
         let eta = max(0.5, 1 - params.drivetrainLossPercent / 100)
         let legs = force * groundSpeedMps / eta
         return max(0, legs)
+    }
+
+    /// 清洗加速度：原速跳变达飞点阈值则惯性置 0；否则钳到业余冲刺合理上限。
+    static func sanitizedAccelerationMps2(
+        smoothedAccelerationMps2: Double,
+        rawSpeed0Mps: Double?,
+        rawSpeed1Mps: Double?,
+        dtSeconds: Double
+    ) -> Double {
+        guard dtSeconds > 0 else { return 0 }
+        if let raw0 = rawSpeed0Mps, let raw1 = rawSpeed1Mps {
+            let rawAccel = (raw1 - raw0) / dtSeconds
+            // GPS 飞点：一秒内原速跳变过大，不用惯性项。
+            if abs(rawAccel) >= gpsSpeedJumpGlitchMps2 {
+                return 0
+            }
+        }
+        return min(
+            max(smoothedAccelerationMps2, -maxRealisticAccelerationMps2),
+            maxRealisticAccelerationMps2
+        )
     }
 
     /// 由气温、气压、相对湿度计算空气密度（kg/m³）。

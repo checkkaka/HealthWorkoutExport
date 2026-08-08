@@ -509,7 +509,14 @@ enum FitVirtualPowerFiller {
                         grade = VirtualPowerPhysics.gradePercent(deltaAltitudeM: a1 - a0, deltaDistanceM: dd)
                     }
                     if let s0 = smoothSpeed[i - 1], let s1 = smoothSpeed[i] {
-                        accel = (s1 - s0) / dt
+                        let rawAccel = (s1 - s0) / dt
+                        // 调用 sanitizedAcceleration：飞点置 0，其余钳到 ±2.0，避免 GPS 尖峰虚高功率。
+                        accel = VirtualPowerPhysics.sanitizedAccelerationMps2(
+                            smoothedAccelerationMps2: rawAccel,
+                            rawSpeed0Mps: speeds[i - 1],
+                            rawSpeed1Mps: speeds[i],
+                            dtSeconds: dt
+                        )
                     }
                     if let la0 = lats[i - 1], let lo0 = lons[i - 1],
                        let la1 = lats[i], let lo1 = lons[i] {

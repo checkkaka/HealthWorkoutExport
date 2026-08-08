@@ -216,6 +216,39 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         XCTAssertEqual(result.filledCount, 11)
     }
 
+    /// GPS 速度飞点不应把虚拟功率抬到上千瓦（加速度清洗后）。
+    func testGpsSpeedJumpDoesNotInflateVirtualPower() async throws {
+        let start = Date(timeIntervalSince1970: 1_720_000_000)
+        let fit = try makeFit(
+            start: start,
+            records: [
+                (0, speed: 8.0, alt: 10, power: nil, cadence: 90),
+                (1, speed: 8.2, alt: 10, power: nil, cadence: 90),
+                (2, speed: 16.8, alt: 10, power: nil, cadence: 90), // ~60 km/h 飞点
+                (3, speed: 9.0, alt: 10, power: nil, cadence: 90)
+            ]
+        )
+        let params = VirtualPowerPhysics.Params(
+            totalMassKg: 71,
+            cda: 0.35,
+            crr: 0.004,
+            drivetrainLossPercent: 2,
+            airDensity: 1.225
+        )
+        let result = try await FitVirtualPowerFiller.fillIfNeeded(
+            fit,
+            settings: params,
+            weatherProvider: { _, _, _, _ in [] }
+        )
+        XCTAssertFalse(result.activityRejected)
+        let records = try FitMerger.decode(result.data).recordMesgs.sorted {
+            ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)
+        }
+        let spikePower = try XCTUnwrap(records[2].getPower())
+        // 飞点秒惯性置 0 后，不应再出现含假加速的上千瓦。
+        XCTAssertLessThan(spikePower, 800, "飞点秒功率应被加速度清洗压住，实际 \(spikePower)")
+    }
+
     /// 非骑行运动应整文件跳过。
     func testSkipsNonCyclingSport() async throws {
         let start = Date(timeIntervalSince1970: 1_720_000_000)
