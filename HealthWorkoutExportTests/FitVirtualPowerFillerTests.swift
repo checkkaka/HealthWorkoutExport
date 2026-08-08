@@ -301,6 +301,36 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         XCTAssertLessThanOrEqual(offPowers[2], onPowers[2])
     }
 
+    /// 无踏频时停车低速应记 0W 成功，不因停驶段抬高失败率导致整条放弃。
+    func testNilCadenceStoppedSecondsAreVirtualZeroNotFailures() async throws {
+        let start = Date(timeIntervalSince1970: 1_720_000_000)
+        // 10 秒停车 + 1 秒骑行：若把低速当失败，失败率会 ≥10/11 而整条放弃。
+        var specs: [(offset: Double, speed: Double?, alt: Double, power: UInt16?, cadence: UInt8?)] = []
+        for i in 0..<10 {
+            specs.append((Double(i), speed: 0, alt: 10, power: nil, cadence: nil))
+        }
+        specs.append((10, speed: 8, alt: 10, power: nil, cadence: nil))
+        let fit = try makeFit(start: start, records: specs)
+        let result = try await FitVirtualPowerFiller.fillIfNeeded(
+            fit,
+            weatherProvider: { _, _, _, _ in [] }
+        )
+        XCTAssertFalse(result.activityRejected)
+        XCTAssertEqual(result.failedCount, 0)
+        XCTAssertEqual(result.filledCount, 11)
+        XCTAssertEqual(result.virtualMarkedCount, 11)
+        let records = try FitMerger.decode(result.data).recordMesgs.sorted {
+            ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)
+        }
+        XCTAssertEqual(records[0].getPower(), 0)
+        XCTAssertEqual(
+            VirtualPowerSourceMark.powerSource(of: records[0]),
+            VirtualPowerSourceMark.virtualValue
+        )
+        XCTAssertNotNil(records[10].getPower())
+        XCTAssertGreaterThan(records[10].getPower() ?? 0, 0)
+    }
+
     /// 非骑行运动应整文件跳过。
     func testSkipsNonCyclingSport() async throws {
         let start = Date(timeIntervalSince1970: 1_720_000_000)
