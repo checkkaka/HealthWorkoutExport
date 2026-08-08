@@ -472,6 +472,88 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         XCTAssertLessThan(lapMax, 999)
     }
 
+    /// 失败秒无时间戳时邻域无法定位：须清除残留功率计值并标 failed（失败率 <10%）。
+    func testClearsResidualPowerWhenFailedSecondHasNoTimestamp() async throws {
+        let start = Date(timeIntervalSince1970: 1_720_000_000)
+        let fit = try makeFitWithTimestamplessFailedRecord(
+            start: start,
+            successCount: 10,
+            residualPower: 999
+        )
+        let result = try await FitVirtualPowerFiller.fillIfNeeded(
+            fit,
+            weatherProvider: { _, _, _, _ in [] }
+        )
+        XCTAssertFalse(result.activityRejected)
+        XCTAssertEqual(result.failedCount, 1)
+        XCTAssertEqual(result.filledCount, 10)
+
+        let messages = try FitMerger.decode(result.data)
+        let failedRecords = messages.recordMesgs.filter {
+            VirtualPowerSourceMark.powerSource(of: $0) == VirtualPowerSourceMark.failedValue
+        }
+        XCTAssertEqual(failedRecords.count, 1)
+        XCTAssertNil(failedRecords[0].getPower(), "无时间戳失败秒应清除残留功率")
+        XCTAssertNil(failedRecords[0].getTimestamp())
+
+        let virtualRecords = messages.recordMesgs.filter {
+            VirtualPowerSourceMark.powerSource(of: $0) == VirtualPowerSourceMark.virtualValue
+        }
+        XCTAssertEqual(virtualRecords.count, 10)
+        XCTAssertFalse(messages.recordMesgs.contains { $0.getPower() == 999 })
+    }
+
+    /// 相邻失败秒不得互相污染；邻域均值也不得吃功率计残留值。
+    func testNeighborAverageIgnoresAdjacentFailedSecondsAndMeterResidue() async throws {
+        let start = Date(timeIntervalSince1970: 1_720_000_000)
+        // 19 成功 + 2 相邻失败 → 失败率 ≈9.5% <10%；两失败带残留 888/999。
+        var specs: [(offset: Double, speed: Double?, alt: Double, power: UInt16?, cadence: UInt8?)] = []
+        for i in 0..<19 {
+            specs.append((Double(i), speed: 8, alt: 10, power: nil, cadence: 90))
+        }
+        specs.append((19, speed: nil, alt: 10, power: 888, cadence: 90))
+        specs.append((20, speed: nil, alt: 10, power: 999, cadence: 90))
+        let fit = try makeFit(start: start, records: specs)
+        let result = try await FitVirtualPowerFiller.fillIfNeeded(
+            fit,
+            weatherProvider: { _, _, _, _ in [] }
+        )
+        XCTAssertFalse(result.activityRejected)
+        XCTAssertEqual(result.failedCount, 2)
+        XCTAssertEqual(result.filledCount, 21)
+
+        let records = try FitMerger.decode(result.data).recordMesgs.sorted {
+            ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)
+        }
+        let p19 = try XCTUnwrap(records[19].getPower())
+        let p20 = try XCTUnwrap(records[20].getPower())
+        XCTAssertNotEqual(p19, 888)
+        XCTAssertNotEqual(p19, 999)
+        XCTAssertNotEqual(p20, 888)
+        XCTAssertNotEqual(p20, 999)
+
+        // ±5s 内成功秒：offset 14…18；相邻失败秒被 estimateFailed 排除。
+        let neighborsFor19 = records[14...18].compactMap { $0.getPower() }.map { Double($0) }
+        XCTAssertEqual(neighborsFor19.count, 5)
+        let expected19 = UInt16((neighborsFor19.reduce(0, +) / Double(neighborsFor19.count)).rounded())
+        XCTAssertEqual(p19, expected19, "不得纳入相邻失败秒或功率计残留")
+
+        // t=20 的 ±5s 成功秒：15…18（19 为失败已跳过，即便已有草稿）。
+        let neighborsFor20 = records[15...18].compactMap { $0.getPower() }.map { Double($0) }
+        XCTAssertEqual(neighborsFor20.count, 4)
+        let expected20 = UInt16((neighborsFor20.reduce(0, +) / Double(neighborsFor20.count)).rounded())
+        XCTAssertEqual(p20, expected20)
+
+        XCTAssertEqual(
+            VirtualPowerSourceMark.powerSource(of: records[19]),
+            VirtualPowerSourceMark.failedValue
+        )
+        XCTAssertEqual(
+            VirtualPowerSourceMark.powerSource(of: records[20]),
+            VirtualPowerSourceMark.failedValue
+        )
+    }
+
     /// 任一 session 为骑行时整文件处理（含跑步+骑行多运动）。
     func testProcessesWhenAnySessionIsCycling() async throws {
         let start = Date(timeIntervalSince1970: 1_720_000_000)
@@ -545,6 +627,54 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         try session.setTotalElapsedTime(endOffset)
         try session.setTotalTimerTime(endOffset)
         try session.setSport(sport)
+        encoder.write(mesg: session)
+        return encoder.close()
+    }
+
+    /// 构造：若干带时间戳的成功秒 + 1 条无时间戳、无速度、带残留功率的失败秒。
+    private func makeFitWithTimestamplessFailedRecord(
+        start: Date,
+        successCount: Int,
+        residualPower: UInt16
+    ) throws -> Data {
+        let startFit = DateTime(date: start)
+        let fileId = FileIdMesg()
+        try fileId.setType(File.activity)
+        try fileId.setManufacturer(Manufacturer.development)
+        try fileId.setProduct(1)
+        try fileId.setTimeCreated(startFit)
+        try fileId.setSerialNumber(1)
+
+        let encoder = Encoder()
+        encoder.write(mesg: fileId)
+        let semicircles = 2_147_483_648.0 / 180.0
+        let endOffset = Double(max(successCount - 1, 0))
+        for i in 0..<successCount {
+            let record = RecordMesg()
+            try record.setTimestamp(DateTime(date: start.addingTimeInterval(Double(i))))
+            try record.setSpeed(8)
+            try record.setDistance(8 * Double(i))
+            try record.setAltitude(10)
+            try record.setCadence(90)
+            try record.setPositionLat(Int32((31.2 * semicircles).rounded()))
+            try record.setPositionLong(Int32((121.5 * semicircles).rounded()))
+            encoder.write(mesg: record)
+        }
+        // 无 timestamp、无 speed：估算失败且邻域无法按时间定位。
+        let failed = RecordMesg()
+        try failed.setAltitude(10)
+        try failed.setCadence(90)
+        try failed.setPower(residualPower)
+        try failed.setPositionLat(Int32((31.2 * semicircles).rounded()))
+        try failed.setPositionLong(Int32((121.5 * semicircles).rounded()))
+        encoder.write(mesg: failed)
+
+        let session = SessionMesg()
+        try session.setTimestamp(DateTime(date: start.addingTimeInterval(endOffset)))
+        try session.setStartTime(startFit)
+        try session.setTotalElapsedTime(endOffset)
+        try session.setTotalTimerTime(endOffset)
+        try session.setSport(.cycling)
         encoder.write(mesg: session)
         return encoder.close()
     }
