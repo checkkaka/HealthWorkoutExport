@@ -70,6 +70,18 @@ enum VirtualPowerSourceMark {
         record.setDeveloperField(field)
     }
 
+    /// 读取 Record 上的 powerSource developer 字段；无则 nil。
+    static func powerSource(of record: RecordMesg) -> String? {
+        record.developerFields
+            .first { $0.getName() == fieldName }
+            .flatMap { $0.getValue(index: 0) as? String }
+    }
+
+    /// FIT 中是否存在至少一秒 `powerSource=virtual`。
+    static func containsVirtualMarkedRecord(in messages: FitMessages) -> Bool {
+        messages.recordMesgs.contains { powerSource(of: $0) == virtualValue }
+    }
+
     private static func nextFreeDeveloperDataIndex(in messages: FitMessages) -> UInt8 {
         let used = Set(messages.developerDataIdMesgs.compactMap { $0.getDeveloperDataIndex() })
         var index: UInt8 = 0

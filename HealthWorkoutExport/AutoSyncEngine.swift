@@ -628,12 +628,16 @@ final class AutoSyncEngine {
             || result.note.contains("放弃") {
             notes.append("\(result.note)：\(activityTitle)")
         }
-        // 实际写入了功率才附社交描述；整条放弃则不写。
-        let description: String? =
-            (!result.activityRejected && result.filledCount > 0)
-            ? VirtualPowerSocialCopy.activityDescription
-            : nil
-        return (result.data, description)
+        // 仅当编码结果里确有 powerSource=virtual 时才附社交描述（仅 filled/failed 不够）。
+        guard !result.activityRejected, result.virtualMarkedCount > 0 else {
+            return (result.data, nil)
+        }
+        guard let messages = try? FitMerger.decode(result.data),
+              // 调用 containsVirtualMarkedRecord：按 developer 字段确认是虚拟功率。
+              VirtualPowerSourceMark.containsVirtualMarkedRecord(in: messages) else {
+            return (result.data, nil)
+        }
+        return (result.data, VirtualPowerSocialCopy.activityDescription)
     }
 
     /// 本批预检列表追加刚上传的活动，避免同批后条再传一遍。

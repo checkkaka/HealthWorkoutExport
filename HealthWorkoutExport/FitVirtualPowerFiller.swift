@@ -18,6 +18,8 @@ enum FitVirtualPowerFiller {
         var filledCount: Int
         /// 估算环节失败的秒数（含已用邻域均值补上的）。
         var failedCount: Int
+        /// 写入 `powerSource=virtual` 的秒数（直接估算成功，不含 failed）。
+        var virtualMarkedCount: Int
         /// 失败率 ≥10% 导致整条放弃回填。
         var activityRejected: Bool
         /// 是否使用了 Open-Meteo（否则为退化默认大气）。
@@ -44,6 +46,7 @@ enum FitVirtualPowerFiller {
                 data: data,
                 filledCount: 0,
                 failedCount: 0,
+                virtualMarkedCount: 0,
                 activityRejected: false,
                 usedWeather: false,
                 weatherPointCount: 0,
@@ -60,6 +63,7 @@ enum FitVirtualPowerFiller {
                 data: data,
                 filledCount: 0,
                 failedCount: 0,
+                virtualMarkedCount: 0,
                 activityRejected: false,
                 usedWeather: false,
                 weatherPointCount: 0,
@@ -243,6 +247,7 @@ enum FitVirtualPowerFiller {
                 data: data,
                 filledCount: 0,
                 failedCount: failed,
+                virtualMarkedCount: 0,
                 activityRejected: true,
                 usedWeather: usedWeather,
                 weatherPointCount: weatherPointCount,
@@ -297,6 +302,7 @@ enum FitVirtualPowerFiller {
                 data: data,
                 filledCount: 0,
                 failedCount: failed,
+                virtualMarkedCount: 0,
                 activityRejected: false,
                 usedWeather: usedWeather,
                 weatherPointCount: weatherPointCount,
@@ -362,6 +368,7 @@ enum FitVirtualPowerFiller {
             data: encoded,
             filledCount: filled,
             failedCount: failed,
+            virtualMarkedCount: successRecords.count,
             activityRejected: false,
             usedWeather: usedWeather,
             weatherPointCount: weatherPointCount,

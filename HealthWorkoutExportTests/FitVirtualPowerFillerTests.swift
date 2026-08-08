@@ -137,6 +137,8 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         XCTAssertNotNil(filledPowerSource)
         let value = filledPowerSource?.getValue(index: 0) as? String
         XCTAssertEqual(value, VirtualPowerSourceMark.virtualValue)
+        XCTAssertEqual(result.virtualMarkedCount, 1)
+        XCTAssertTrue(VirtualPowerSourceMark.containsVirtualMarkedRecord(in: messages))
     }
 
     /// 单秒缺速度失败时，应用前后 5 秒功率均值回填，并标 failed。
