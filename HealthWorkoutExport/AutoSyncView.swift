@@ -19,6 +19,7 @@ struct AutoSyncView: View {
     @State private var showStravaSettings = false
     @State private var showSyncHistory = false
     @State private var virtualPowerEnabled = VirtualPowerSettings.enabled
+    @State private var includeInertia = VirtualPowerSettings.includeInertia
     @State private var riderMassKg = VirtualPowerSettings.riderMassKg
     @State private var bikeMassKg = VirtualPowerSettings.bikeMassKg
     @State private var cda = VirtualPowerSettings.cda
@@ -128,6 +129,8 @@ struct AutoSyncView: View {
                     Toggle("虚拟功率（缺功率时回填）", isOn: $virtualPowerEnabled)
                         .disabled(session.isRunning)
                     if virtualPowerEnabled {
+                        Toggle("计入惯性（加速/减速）", isOn: $includeInertia)
+                            .disabled(session.isRunning)
                         HStack {
                             Text("骑手重量 kg")
                             TextField("70", value: $riderMassKg, format: .number.precision(.fractionLength(1)))
@@ -153,7 +156,7 @@ struct AutoSyncView: View {
                 } header: {
                     Text("虚拟功率")
                 } footer: {
-                    Text("仅当 FIT 某秒缺少原生 power 时，用 Gribble 公式 + Open-Meteo 历史天气估算并写入。已有功率计/补源功率不会覆盖。心率不参与计算；踏频为 0 时按滑行记 0 W。Crr 固定 0.005，传动损失固定 2%。")
+                    Text("仅当 FIT 某秒缺少原生 power 时，用 Gribble 公式 + Open-Meteo 历史天气估算并写入。已有功率计/补源功率不会覆盖。心率不参与计算；踏频为 0 时按滑行记 0 W。Crr 固定 0.005，传动损失固定 2%。关闭「计入惯性」后均功率通常略低、更稳，尖峰也会明显下降。Strava 上传无法声明「这是虚拟功率」，有原生 power 时一般会按设备功率显示。")
                 }
 
                 if primarySourceId == XingzheDataSource.sourceId
@@ -213,6 +216,7 @@ struct AutoSyncView: View {
                 applySupplementLinkage()
             }
             .onChange(of: virtualPowerEnabled) { _, _ in persistVirtualPowerSettings() }
+            .onChange(of: includeInertia) { _, _ in persistVirtualPowerSettings() }
             .onChange(of: riderMassKg) { _, _ in persistVirtualPowerSettings() }
             .onChange(of: bikeMassKg) { _, _ in persistVirtualPowerSettings() }
             .onChange(of: cda) { _, _ in persistVirtualPowerSettings() }
@@ -270,6 +274,7 @@ struct AutoSyncView: View {
     /// 把表单中的虚拟功率开关与开放参数写入 UserDefaults。
     private func persistVirtualPowerSettings() {
         VirtualPowerSettings.enabled = virtualPowerEnabled
+        VirtualPowerSettings.includeInertia = includeInertia
         VirtualPowerSettings.riderMassKg = riderMassKg
         VirtualPowerSettings.bikeMassKg = bikeMassKg
         VirtualPowerSettings.cda = cda

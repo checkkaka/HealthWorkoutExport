@@ -33,6 +33,7 @@ enum FitVirtualPowerFiller {
     static func fillIfNeeded(
         _ data: Data,
         settings: VirtualPowerPhysics.Params? = nil,
+        includeInertia: Bool? = nil,
         weatherCache: OpenMeteoWeatherCache? = nil,
         weatherProvider: ((Double, Double, Date, Date) async throws -> [WeatherSample])? = nil
     ) async throws -> FillResult {
@@ -67,6 +68,8 @@ enum FitVirtualPowerFiller {
         }
 
         let baseParams = settings ?? VirtualPowerSettings.physicsParams()
+        // 调用 VirtualPowerSettings.includeInertia：未显式传入时用设置里的惯性开关。
+        let useInertia = includeInertia ?? VirtualPowerSettings.includeInertia
         var weatherStations: [WeatherStation] = []
         var usedWeather = false
         var weatherPointCount = 0
@@ -197,12 +200,14 @@ enum FitVirtualPowerFiller {
 
             var params = baseParams
             params.airDensity = rho
-            // 调用 VirtualPowerPhysics：Gribble+惯性估算该秒功率。
+            // 关惯性时加速度按 0，避免加减速不对称抬高均功率。
+            let accel = useInertia ? kin.accelerationMps2 : 0
+            // 调用 VirtualPowerPhysics：Gribble（可选惯性）估算该秒功率。
             let watts = VirtualPowerPhysics.powerWatts(
                 groundSpeedMps: speed,
                 gradePercent: kin.gradePercent,
                 headwindMps: headwind,
-                accelerationMps2: kin.accelerationMps2,
+                accelerationMps2: accel,
                 params: params,
                 cadenceRpm: cadence
             )

@@ -249,6 +249,56 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         XCTAssertLessThan(spikePower, 500, "飞点秒功率应被压住，实际 \(spikePower)")
     }
 
+    /// 关闭惯性后，加速段功率应不高于开启惯性。
+    func testIncludeInertiaOffIgnoresAcceleration() async throws {
+        let start = Date(timeIntervalSince1970: 1_720_000_000)
+        let fit = try makeFit(
+            start: start,
+            records: [
+                (0, speed: 6, alt: 10, power: nil, cadence: 90),
+                (1, speed: 8, alt: 10, power: nil, cadence: 90),
+                (2, speed: 10, alt: 10, power: nil, cadence: 90),
+                (3, speed: 10, alt: 10, power: nil, cadence: 90)
+            ]
+        )
+        let params = VirtualPowerPhysics.Params(
+            totalMassKg: 71.5,
+            cda: 0.3,
+            crr: 0.005,
+            drivetrainLossPercent: 2,
+            airDensity: 1.225
+        )
+        let withInertia = try await FitVirtualPowerFiller.fillIfNeeded(
+            fit,
+            settings: params,
+            includeInertia: true,
+            weatherProvider: { _, _, _, _ in [] }
+        )
+        let withoutInertia = try await FitVirtualPowerFiller.fillIfNeeded(
+            fit,
+            settings: params,
+            includeInertia: false,
+            weatherProvider: { _, _, _, _ in [] }
+        )
+        let powered: ([RecordMesg]) -> [UInt16] = { records in
+            records.compactMap { $0.getPower() }
+        }
+        let onRecords = try FitMerger.decode(withInertia.data).recordMesgs.sorted {
+            ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)
+        }
+        let offRecords = try FitMerger.decode(withoutInertia.data).recordMesgs.sorted {
+            ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)
+        }
+        let onPowers = powered(onRecords)
+        let offPowers = powered(offRecords)
+        XCTAssertEqual(onPowers.count, offPowers.count)
+        let onSum = onPowers.reduce(0, +)
+        let offSum = offPowers.reduce(0, +)
+        XCTAssertGreaterThan(onSum, offSum, "开惯性总功率应高于关惯性")
+        XCTAssertLessThanOrEqual(offPowers[1], onPowers[1])
+        XCTAssertLessThanOrEqual(offPowers[2], onPowers[2])
+    }
+
     /// 非骑行运动应整文件跳过。
     func testSkipsNonCyclingSport() async throws {
         let start = Date(timeIntervalSince1970: 1_720_000_000)

@@ -10,6 +10,8 @@ enum VirtualPowerSettings {
     private static let bikeMassKey = "virtualPower.bikeMassKg"
     /// 气动阻力面积 CdA（m²）。
     private static let cdaKey = "virtualPower.cda"
+    /// 是否计入惯性项（m·a·v）；关则加速度按 0，均功率通常更稳、略低。
+    private static let includeInertiaKey = "virtualPower.includeInertia"
 
     /// 滚动阻力系数：不开放配置，固定偏保守公路胎。
     static let crr: Double = 0.005
@@ -20,6 +22,18 @@ enum VirtualPowerSettings {
     static var enabled: Bool {
         get { UserDefaults.standard.bool(forKey: enabledKey) }
         set { UserDefaults.standard.set(newValue, forKey: enabledKey) }
+    }
+
+    /// 默认开：与功率计均功率语义更接近（加速计入、减速不记负功）。
+    static var includeInertia: Bool {
+        get {
+            // 未写过该键时默认 true；显式关掉后保持 false。
+            if UserDefaults.standard.object(forKey: includeInertiaKey) == nil {
+                return true
+            }
+            return UserDefaults.standard.bool(forKey: includeInertiaKey)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: includeInertiaKey) }
     }
 
     /// 默认 70 kg。
