@@ -40,4 +40,20 @@ final class ActivityMatcherTests: XCTestCase {
         )
         XCTAssertNil(ActivityMatcher.bestMatch(primary: primary, candidates: [far]))
     }
+
+    func testNoMatchWhenOverlapIsTiny() {
+        let primary = SourceActivity(
+            id: "p1", sourceId: "healthkit", title: "主",
+            startDate: Date(timeIntervalSince1970: 1_700_000_000),
+            endDate: Date(timeIntervalSince1970: 1_700_003_600),
+            duration: 3600, distanceMeters: 20_000
+        )
+        let barelyOverlapping = SourceActivity(
+            id: "s1", sourceId: "xingzhe", title: "擦边",
+            startDate: Date(timeIntervalSince1970: 1_700_003_599),
+            endDate: Date(timeIntervalSince1970: 1_700_010_799),
+            duration: 7200, distanceMeters: 40_000
+        )
+        XCTAssertNil(ActivityMatcher.bestMatch(primary: primary, candidates: [barelyOverlapping]))
+    }
 }

@@ -828,14 +828,11 @@ final class AutoSyncEngine {
             onProgress(progress)
 
             do {
-                if let remoteId = record.remoteId, StravaSpeedAnomaly.isOpenableRemoteId(remoteId) {
-                    guard await webUploader.isReady() else {
-                        throw StravaUploadError.uploadFailed("覆盖需要网页 Cookie：请先完成网页登录")
-                    }
-                    // 调用 deleteActivity：勾选重传默认先删远端。
-                    try await webUploader.deleteActivity(id: remoteId)
-                    remoteActivities.removeAll { $0.id == remoteId }
-                    notes.append("已删除远端 \(remoteId)：\(title)")
+                let remoteIdToReplace = record.remoteId.flatMap {
+                    StravaSpeedAnomaly.isOpenableRemoteId($0) ? $0 : nil
+                }
+                if remoteIdToReplace != nil, !(await webUploader.isReady()) {
+                    throw StravaUploadError.uploadFailed("覆盖需要网页 Cookie：请先完成网页登录")
                 }
 
                 let anchor = record.startDate ?? Date()
@@ -856,19 +853,6 @@ final class AutoSyncEngine {
                     // 调用 listActivities：预取补源同窗活动。
                     supplementLists[source.id] = (try? await source.listActivities(from: windowStart, to: windowEnd)) ?? []
                 }
-
-                // 调用 markPending：重传前重置本地幂等行。
-                await stateStore.markPending(
-                    fingerprint: fingerprint,
-                    primarySourceId: primary.id,
-                    primaryActivityId: activity.id,
-                    title: activity.title,
-                    startDate: activity.startDate,
-                    supplementSourceIds: supplementIds,
-                    distanceMeters: activity.distanceMeters,
-                    durationSeconds: activity.duration,
-                    batchAt: batchAt
-                )
 
                 // 调用 fetchFitData：拉主源 FIT。
                 let primaryFit = try await primary.fetchFitData(for: activity)
@@ -923,6 +907,26 @@ final class AutoSyncEngine {
                 let commute = CommuteClassifier.isCommute(
                     distanceMeters: activity.distanceMeters,
                     durationSeconds: activity.duration
+                )
+
+                // 替换文件准备完成后才删除远端；准备失败时保留原活动和远端 ID。
+                if let remoteIdToReplace {
+                    // 调用 deleteActivity：勾选重传默认覆盖远端。
+                    try await webUploader.deleteActivity(id: remoteIdToReplace)
+                    remoteActivities.removeAll { $0.id == remoteIdToReplace }
+                    notes.append("已删除远端 \(remoteIdToReplace)：\(title)")
+                }
+                // 远端删除成功（或无需删除）后再重置本地幂等行。
+                await stateStore.markPending(
+                    fingerprint: fingerprint,
+                    primarySourceId: primary.id,
+                    primaryActivityId: activity.id,
+                    title: activity.title,
+                    startDate: activity.startDate,
+                    supplementSourceIds: supplementIds,
+                    distanceMeters: activity.distanceMeters,
+                    durationSeconds: activity.duration,
+                    batchAt: batchAt
                 )
                 // 调用 uploadFit：按当前设置通道上传（重传一律换 external_id）。
                 let result = try await uploader.uploadFit(
