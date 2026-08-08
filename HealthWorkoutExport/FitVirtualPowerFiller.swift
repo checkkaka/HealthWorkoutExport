@@ -436,7 +436,7 @@ enum FitVirtualPowerFiller {
         start: Date,
         end: Date
     ) async throws -> [WeatherSample] {
-        // 调用 OpenMeteoWeatherClient：拉 Archive 逐小时样本。
+        // 调用 OpenMeteoWeatherClient：按 7 天分流拉天气逐小时样本。
         try await OpenMeteoWeatherClient.fetchHourly(
             latitude: lat,
             longitude: lon,

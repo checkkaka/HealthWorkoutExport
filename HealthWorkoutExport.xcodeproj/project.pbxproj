@@ -61,6 +61,7 @@
 		B00100000000000000000037 /* VirtualPowerSourceMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000037 /* VirtualPowerSourceMark.swift */; };
 		B00100000000000000000038 /* VirtualPowerSocialCopy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000038 /* VirtualPowerSocialCopy.swift */; };
 		B00100000000000000000039 /* VirtualPowerSocialCopyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000039 /* VirtualPowerSocialCopyTests.swift */; };
+		B0010000000000000000003A /* OpenMeteoWeatherClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000003A /* OpenMeteoWeatherClientTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */

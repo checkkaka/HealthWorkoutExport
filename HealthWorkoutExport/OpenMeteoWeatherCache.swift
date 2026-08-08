@@ -1,6 +1,6 @@
 import Foundation
 
-/// 同批次 Open-Meteo 天气缓存：按 UTC 日期范围 + 粗网格坐标去重 HTTP。
+/// 同批次 Open-Meteo 天气缓存：按数据源 + UTC 日期范围 + 粗网格坐标去重 HTTP。
 /// 粗网格只影响「少打几次 API」，不替代沿途多锚点；空气密度仍按每秒海拔订正。
 actor OpenMeteoWeatherCache {
     /// 粗网格边长（度），约 11 km，同城多条活动可命中同一格。
@@ -13,7 +13,7 @@ actor OpenMeteoWeatherCache {
     init(
         fetcher: @escaping @Sendable (Double, Double, Date, Date) async throws -> [WeatherSample] = {
             lat, lon, start, end in
-            // 调用 OpenMeteoWeatherClient：未命中缓存时真正打 Archive API。
+            // 调用 OpenMeteoWeatherClient：未命中缓存时按 7 天分流打天气 API。
             try await OpenMeteoWeatherClient.fetchHourly(
                 latitude: lat,
                 longitude: lon,
@@ -58,13 +58,16 @@ actor OpenMeteoWeatherCache {
         inFlight.removeAll()
     }
 
-    /// 生成缓存键：粗网格 lat/lon + UTC 起止日。
+    /// 生成缓存键：主数据源 + 粗网格 lat/lon + UTC 起止日。
     static func cacheKey(
         latitude: Double,
         longitude: Double,
         start: Date,
-        end: Date
+        end: Date,
+        now: Date = Date()
     ) -> String {
+        // 调用 preferredSource：键含主源，避免 Forecast/Archive 串缓存。
+        let source = OpenMeteoWeatherClient.preferredSource(activityEnd: end, now: now)
         let gridLat = (latitude / gridDegrees).rounded() * gridDegrees
         let gridLon = (longitude / gridDegrees).rounded() * gridDegrees
         var utc = Calendar(identifier: .gregorian)
@@ -78,6 +81,6 @@ actor OpenMeteoWeatherCache {
         df.dateFormat = "yyyy-MM-dd"
         let latKey = String(format: "%.1f", gridLat)
         let lonKey = String(format: "%.1f", gridLon)
-        return "\(latKey),\(lonKey)@\(df.string(from: startDay))_\(df.string(from: endDay))"
+        return "\(source.rawValue)|\(latKey),\(lonKey)@\(df.string(from: startDay))_\(df.string(from: endDay))"
     }
 }

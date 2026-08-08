@@ -45,14 +45,32 @@ final class OpenMeteoWeatherCacheTests: XCTestCase {
 
     /// 粗网格键对邻近坐标应一致。
     func testCacheKeyRoundsToSameGrid() {
-        let start = Date(timeIntervalSince1970: 1_720_000_000)
+        let now = Date(timeIntervalSince1970: 1_720_000_000)
+        let start = now.addingTimeInterval(-3 * 86_400)
         let a = OpenMeteoWeatherCache.cacheKey(
-            latitude: 31.20, longitude: 121.50, start: start, end: start
+            latitude: 31.20, longitude: 121.50, start: start, end: start, now: now
         )
         let b = OpenMeteoWeatherCache.cacheKey(
-            latitude: 31.24, longitude: 121.54, start: start, end: start
+            latitude: 31.24, longitude: 121.54, start: start, end: start, now: now
         )
         XCTAssertEqual(a, b)
+        XCTAssertTrue(a.hasPrefix("forecast|"), "近 7 天主源应为 forecast，实际 \(a)")
+    }
+
+    /// 不同主数据源的缓存键应区分开。
+    func testCacheKeyIncludesPreferredSource() {
+        let now = Date(timeIntervalSince1970: 1_720_000_000)
+        let recent = now.addingTimeInterval(-2 * 86_400)
+        let older = now.addingTimeInterval(-30 * 86_400)
+        let recentKey = OpenMeteoWeatherCache.cacheKey(
+            latitude: 31.2, longitude: 121.5, start: recent, end: recent, now: now
+        )
+        let olderKey = OpenMeteoWeatherCache.cacheKey(
+            latitude: 31.2, longitude: 121.5, start: older, end: older, now: now
+        )
+        XCTAssertTrue(recentKey.hasPrefix("forecast|"))
+        XCTAssertTrue(olderKey.hasPrefix("historicalForecast|"))
+        XCTAssertNotEqual(recentKey, olderKey)
     }
 }
 
