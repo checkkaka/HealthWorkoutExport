@@ -6,7 +6,7 @@ final class VirtualPowerSocialCopyTests: XCTestCase {
     func testConfirmedCopy() {
         XCTAssertEqual(
             VirtualPowerSocialCopy.activityDescription,
-            "没钱买功率计，本场瓦特靠风速、坡度和速度等参数拼出来的，仅供娱乐（出自HealthWorkoutExport）"
+            "没钱买功率计，本场瓦特靠风速、坡度和速度等参数拼出来的，仅供参考（出自HealthWorkoutExport）"
         )
     }
 }
