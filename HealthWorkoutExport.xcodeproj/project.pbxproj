@@ -56,6 +56,8 @@
 		B00100000000000000000032 /* FitVirtualPowerFiller.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000032 /* FitVirtualPowerFiller.swift */; };
 		B00100000000000000000033 /* VirtualPowerPhysicsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000033 /* VirtualPowerPhysicsTests.swift */; };
 		B00100000000000000000034 /* FitVirtualPowerFillerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000034 /* FitVirtualPowerFillerTests.swift */; };
+		B00100000000000000000035 /* OpenMeteoWeatherCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000035 /* OpenMeteoWeatherCache.swift */; };
+		B00100000000000000000036 /* OpenMeteoWeatherCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000036 /* OpenMeteoWeatherCacheTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -120,6 +122,8 @@
 		F00100000000000000000032 /* FitVirtualPowerFiller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitVirtualPowerFiller.swift; sourceTree = "<group>"; };
 		F00100000000000000000033 /* VirtualPowerPhysicsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualPowerPhysicsTests.swift; sourceTree = "<group>"; };
 		F00100000000000000000034 /* FitVirtualPowerFillerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitVirtualPowerFillerTests.swift; sourceTree = "<group>"; };
+		F00100000000000000000035 /* OpenMeteoWeatherCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenMeteoWeatherCache.swift; sourceTree = "<group>"; };
+		F00100000000000000000036 /* OpenMeteoWeatherCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenMeteoWeatherCacheTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -192,6 +196,7 @@
 				F00100000000000000000030 /* VirtualPowerSettings.swift */,
 				F00100000000000000000031 /* OpenMeteoWeatherClient.swift */,
 				F00100000000000000000032 /* FitVirtualPowerFiller.swift */,
+				F00100000000000000000035 /* OpenMeteoWeatherCache.swift */,
 				F00100000000000000000009 /* Assets.xcassets */,
 				F0010000000000000000000A /* Info.plist */,
 				F0010000000000000000000B /* HealthWorkoutExport.entitlements */,
@@ -219,6 +224,7 @@
 				F0010000000000000000002C /* XingzheRateLimitTests.swift */,
 				F00100000000000000000033 /* VirtualPowerPhysicsTests.swift */,
 				F00100000000000000000034 /* FitVirtualPowerFillerTests.swift */,
+				F00100000000000000000036 /* OpenMeteoWeatherCacheTests.swift */,
 			);
 			path = HealthWorkoutExportTests;
 			sourceTree = "<group>";
@@ -362,6 +368,7 @@
 				B00100000000000000000030 /* VirtualPowerSettings.swift in Sources */,
 				B00100000000000000000031 /* OpenMeteoWeatherClient.swift in Sources */,
 				B00100000000000000000032 /* FitVirtualPowerFiller.swift in Sources */,
+				B00100000000000000000035 /* OpenMeteoWeatherCache.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -377,6 +384,7 @@
 				B0010000000000000000002C /* XingzheRateLimitTests.swift in Sources */,
 				B00100000000000000000033 /* VirtualPowerPhysicsTests.swift in Sources */,
 				B00100000000000000000034 /* FitVirtualPowerFillerTests.swift in Sources */,
+				B00100000000000000000036 /* OpenMeteoWeatherCacheTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

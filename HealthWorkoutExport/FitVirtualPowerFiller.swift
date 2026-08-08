@@ -23,6 +23,7 @@ enum FitVirtualPowerFiller {
     static func fillIfNeeded(
         _ data: Data,
         settings: VirtualPowerPhysics.Params? = nil,
+        weatherCache: OpenMeteoWeatherCache? = nil,
         weatherProvider: ((Double, Double, Date, Date) async throws -> [WeatherSample])? = nil
     ) async throws -> FillResult {
         let messages = try FitMerger.decode(data)
@@ -50,9 +51,20 @@ enum FitVirtualPowerFiller {
            let lastTs = records.last?.getTimestamp()?.timestamp {
             let start = Date(timeIntervalSince1970: TimeInterval(firstTs))
             let end = Date(timeIntervalSince1970: TimeInterval(lastTs))
-            let provider = weatherProvider ?? defaultWeatherProvider
+            let provider = weatherProvider ?? { lat, lon, start, end in
+                if let weatherCache {
+                    // 调用 OpenMeteoWeatherCache：同批按日+粗网格复用天气。
+                    return try await weatherCache.hourly(
+                        latitude: lat,
+                        longitude: lon,
+                        start: start,
+                        end: end
+                    )
+                }
+                return try await defaultWeatherProvider(lat: lat, lon: lon, start: start, end: end)
+            }
             do {
-                // 调用 Open-Meteo：按轨迹锚点拉历史逐小时天气。
+                // 调用天气 provider：按轨迹锚点拉历史逐小时天气。
                 let samples = try await provider(anchor.lat, anchor.lon, start, end)
                 weatherByTime = samples.map { ($0.date, $0) }
                 usedWeather = !samples.isEmpty

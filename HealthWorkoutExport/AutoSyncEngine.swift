@@ -50,6 +50,8 @@ final class AutoSyncEngine {
     private let apiUploader: StravaAPIUploader
     private let webUploader: StravaWebUploader
     private let recoveryStore: ResyncRecoveryStore
+    /// 本批同步共用的天气缓存（按日+粗网格），避免同城多活动重复打 Open-Meteo。
+    private var weatherCache: OpenMeteoWeatherCache?
 
     init(
         registry: DataSourceRegistry? = nil,
@@ -97,6 +99,11 @@ final class AutoSyncEngine {
 
         let uploader = uploader()
         guard await uploader.isReady() else { throw StravaUploadError.notConfigured }
+
+        // 本批新建天气缓存；结束时清空引用，避免跨批次串数据。
+        let batchWeatherCache = OpenMeteoWeatherCache()
+        weatherCache = batchWeatherCache
+        defer { weatherCache = nil }
 
         // 调用 listActivities：拉取主源时间窗内活动。
         let primaries = try await primary.listActivities(from: range.start, to: range.end)
@@ -601,7 +608,8 @@ final class AutoSyncEngine {
         // 调用 FitVirtualPowerFiller：Gribble + Open-Meteo，仅填 nil power。
         let result = try await FitVirtualPowerFiller.fillIfNeeded(
             data,
-            settings: VirtualPowerSettings.physicsParams()
+            settings: VirtualPowerSettings.physicsParams(),
+            weatherCache: weatherCache
         )
         if result.filledCount > 0 || result.note.contains("退化") || result.note.contains("未写入") {
             notes.append("\(result.note)：\(activityTitle)")
@@ -802,6 +810,11 @@ final class AutoSyncEngine {
     ) async throws -> AutoSyncResult {
         let uploader = uploader()
         guard await uploader.isReady() else { throw StravaUploadError.notConfigured }
+
+        // 重传批次同样共用天气缓存。
+        let batchWeatherCache = OpenMeteoWeatherCache()
+        weatherCache = batchWeatherCache
+        defer { weatherCache = nil }
 
         var progress = AutoSyncProgress.zero
         progress.total = fingerprints.count
