@@ -2,6 +2,8 @@ import Foundation
 
 /// 主活动与补源活动的时间窗匹配（区间 IoU 优先）。
 enum ActivityMatcher {
+    /// 区间重叠匹配的最小 IoU，避免仅擦边一小段也合并补源。
+    static let minOverlapRatio = 0.5
     /// 开始时间差上限（秒）。
     static let maxStartDelta: TimeInterval = 15 * 60
     /// 时长相对差上限。
@@ -35,7 +37,8 @@ enum ActivityMatcher {
         if overlap > 0 {
             let union = max(pEnd, cEnd).timeIntervalSince(min(pStart, cStart))
             guard union > 0 else { return nil }
-            return overlap / union
+            let ratio = overlap / union
+            return ratio >= minOverlapRatio ? ratio : nil
         }
 
         let startDelta = abs(pStart.timeIntervalSince(cStart))

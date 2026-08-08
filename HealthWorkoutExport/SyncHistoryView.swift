@@ -239,18 +239,16 @@ struct SyncHistoryView: View {
                     )
                 )
             } else {
-                SyncHistoryBatchSections(
-                    batches: cachedBatches,
-                    isSelecting: isSelecting,
-                    selectedFingerprints: selectedFingerprints,
-                    onToggle: toggleSelection,
-                    onToggleBatch: toggleSelectBatch,
-                    onOpen: openStrava,
-                    onRemove: { fingerprint in
-                        Task { await remove(fingerprint) }
+                // Section 必须直接属于 List，才能按批次独立布局而不是混成一个容器。
+                ForEach(cachedBatches) { batch in
+                    Section {
+                        ForEach(batch.records) { record in
+                            historyRow(record)
+                        }
+                    } header: {
+                        batchHeader(batch)
                     }
-                )
-                .equatable()
+                }
             }
 
             if let errorMessage {
@@ -667,34 +665,6 @@ struct SyncHistoryView: View {
         await reload()
     }
 
-    /// 批次列表独立 Equatable：SyncSession 进度刷新时若数据未变则跳过重绘，减轻滑动卡顿。
-    private struct SyncHistoryBatchSections: View, Equatable {
-        let batches: [SyncBatchGroup]
-        let isSelecting: Bool
-        let selectedFingerprints: Set<String>
-        let onToggle: (String) -> Void
-        let onToggleBatch: (SyncBatchGroup) -> Void
-        let onOpen: (SyncStateRecord) -> Void
-        let onRemove: (String) -> Void
-
-        static func == (lhs: Self, rhs: Self) -> Bool {
-            lhs.batches == rhs.batches
-                && lhs.isSelecting == rhs.isSelecting
-                && lhs.selectedFingerprints == rhs.selectedFingerprints
-        }
-
-        var body: some View {
-            ForEach(batches) { batch in
-                Section {
-                    ForEach(batch.records) { record in
-                        row(record)
-                    }
-                } header: {
-                    batchHeader(batch)
-                }
-            }
-        }
-
         @ViewBuilder
         private func batchHeader(_ batch: SyncBatchGroup) -> some View {
             HStack(spacing: 8) {
@@ -704,7 +674,7 @@ struct SyncHistoryView: View {
                     let allOn = !ids.isEmpty && selectedCount == ids.count
                     let partial = selectedCount > 0 && !allOn
                     Button {
-                        onToggleBatch(batch)
+                        toggleSelectBatch(batch)
                     } label: {
                         Image(systemName: allOn
                               ? "checkmark.circle.fill"
@@ -731,12 +701,12 @@ struct SyncHistoryView: View {
         }
 
         @ViewBuilder
-        private func row(_ record: SyncStateRecord) -> some View {
+        private func historyRow(_ record: SyncStateRecord) -> some View {
             Button {
                 if isSelecting {
-                    onToggle(record.fingerprint)
+                    toggleSelection(record.fingerprint)
                 } else {
-                    onOpen(record)
+                    openStrava(record)
                 }
             } label: {
                 HStack(alignment: .top, spacing: 10) {
@@ -808,7 +778,7 @@ struct SyncHistoryView: View {
             .buttonStyle(.plain)
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                 Button(role: .destructive) {
-                    onRemove(record.fingerprint)
+                    Task { await remove(record.fingerprint) }
                 } label: {
                     Label("删除本地", systemImage: "trash")
                 }
@@ -847,5 +817,4 @@ struct SyncHistoryView: View {
             }
             return parts.joined(separator: " · ")
         }
-    }
 }

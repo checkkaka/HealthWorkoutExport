@@ -173,11 +173,16 @@ final class HealthKitService: @unchecked Sendable {
 
     /// 优先系列查询拿高分辨率点，失败则回退普通 SampleQuery。
     private func fetchQuantitySeries(type: HKQuantityType, workout: HKWorkout) async throws -> [TimedSample] {
-        let predicate = HKQuery.predicateForSamples(
+        let datePredicate = HKQuery.predicateForSamples(
             withStart: workout.startDate,
             end: workout.endDate,
             options: .strictStartDate
         )
+        // 时间窗可能存在重叠训练；同时限定关联 workout，避免混入其它活动样本。
+        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            datePredicate,
+            HKQuery.predicateForObjects(from: workout)
+        ])
         let unit = preferredUnit(for: type)
 
         do {
