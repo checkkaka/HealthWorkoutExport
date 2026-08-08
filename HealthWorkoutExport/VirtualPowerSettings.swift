@@ -10,10 +10,11 @@ enum VirtualPowerSettings {
     private static let bikeMassKey = "virtualPower.bikeMassKg"
     /// 气动阻力面积 CdA（m²）。
     private static let cdaKey = "virtualPower.cda"
-    /// 滚动阻力系数 Crr。
-    private static let crrKey = "virtualPower.crr"
-    /// 传动损失百分比。
-    private static let lossKey = "virtualPower.drivetrainLossPercent"
+
+    /// 滚动阻力系数：不开放配置，固定偏保守公路胎。
+    static let crr: Double = 0.005
+    /// 传动损失百分比：不开放配置，固定常用值。
+    static let drivetrainLossPercent: Double = 2
 
     /// 默认关：避免未填参数时误写功率。
     static var enabled: Bool {
@@ -39,31 +40,13 @@ enum VirtualPowerSettings {
         set { UserDefaults.standard.set(newValue, forKey: bikeMassKey) }
     }
 
-    /// 默认弯把姿势约 0.32 m²。
+    /// 默认 CdA 0.3 m²（介于弯把与刹把之间的常用折中）。
     static var cda: Double {
         get {
             let v = UserDefaults.standard.double(forKey: cdaKey)
-            return v > 0 ? v : 0.32
+            return v > 0 ? v : 0.3
         }
         set { UserDefaults.standard.set(newValue, forKey: cdaKey) }
-    }
-
-    /// 默认公路胎约 0.004。
-    static var crr: Double {
-        get {
-            let v = UserDefaults.standard.double(forKey: crrKey)
-            return v > 0 ? v : 0.004
-        }
-        set { UserDefaults.standard.set(newValue, forKey: crrKey) }
-    }
-
-    /// 默认传动损失 2%。
-    static var drivetrainLossPercent: Double {
-        get {
-            if UserDefaults.standard.object(forKey: lossKey) == nil { return 2 }
-            return UserDefaults.standard.double(forKey: lossKey)
-        }
-        set { UserDefaults.standard.set(newValue, forKey: lossKey) }
     }
 
     /// 组装物理参数（空气密度由天气覆盖）。
@@ -77,7 +60,7 @@ enum VirtualPowerSettings {
         )
     }
 
-    /// 参数是否可算（质量与 CdA/Crr 为正）。
+    /// 参数是否可算（质量与 CdA 为正）。
     static var isConfigured: Bool {
         riderMassKg > 0 && bikeMassKg > 0 && cda > 0 && crr > 0
     }

@@ -22,8 +22,6 @@ struct AutoSyncView: View {
     @State private var riderMassKg = VirtualPowerSettings.riderMassKg
     @State private var bikeMassKg = VirtualPowerSettings.bikeMassKg
     @State private var cda = VirtualPowerSettings.cda
-    @State private var crr = VirtualPowerSettings.crr
-    @State private var drivetrainLossPercent = VirtualPowerSettings.drivetrainLossPercent
 
     private var sources: [any WorkoutDataSource] { DataSourceRegistry.shared.all }
 
@@ -146,21 +144,7 @@ struct AutoSyncView: View {
                         .disabled(session.isRunning)
                         HStack {
                             Text("CdA m²")
-                            TextField("0.32", value: $cda, format: .number.precision(.fractionLength(3)))
-                                .keyboardType(.decimalPad)
-                                .multilineTextAlignment(.trailing)
-                        }
-                        .disabled(session.isRunning)
-                        HStack {
-                            Text("Crr")
-                            TextField("0.004", value: $crr, format: .number.precision(.fractionLength(4)))
-                                .keyboardType(.decimalPad)
-                                .multilineTextAlignment(.trailing)
-                        }
-                        .disabled(session.isRunning)
-                        HStack {
-                            Text("传动损失 %")
-                            TextField("2", value: $drivetrainLossPercent, format: .number.precision(.fractionLength(1)))
+                            TextField("0.3", value: $cda, format: .number.precision(.fractionLength(3)))
                                 .keyboardType(.decimalPad)
                                 .multilineTextAlignment(.trailing)
                         }
@@ -169,7 +153,7 @@ struct AutoSyncView: View {
                 } header: {
                     Text("虚拟功率")
                 } footer: {
-                    Text("仅当 FIT 某秒缺少原生 power 时，用 Gribble 公式 + Open-Meteo 历史天气估算并写入。已有功率计/补源功率不会覆盖。心率不参与计算；踏频为 0 时按滑行记 0 W。")
+                    Text("仅当 FIT 某秒缺少原生 power 时，用 Gribble 公式 + Open-Meteo 历史天气估算并写入。已有功率计/补源功率不会覆盖。心率不参与计算；踏频为 0 时按滑行记 0 W。Crr 固定 0.005，传动损失固定 2%。")
                 }
 
                 if primarySourceId == XingzheDataSource.sourceId
@@ -232,8 +216,6 @@ struct AutoSyncView: View {
             .onChange(of: riderMassKg) { _, _ in persistVirtualPowerSettings() }
             .onChange(of: bikeMassKg) { _, _ in persistVirtualPowerSettings() }
             .onChange(of: cda) { _, _ in persistVirtualPowerSettings() }
-            .onChange(of: crr) { _, _ in persistVirtualPowerSettings() }
-            .onChange(of: drivetrainLossPercent) { _, _ in persistVirtualPowerSettings() }
         }
     }
 
@@ -285,13 +267,11 @@ struct AutoSyncView: View {
         session.start(job)
     }
 
-    /// 把表单中的虚拟功率开关与 CdA/Crr 等写入 UserDefaults。
+    /// 把表单中的虚拟功率开关与开放参数写入 UserDefaults。
     private func persistVirtualPowerSettings() {
         VirtualPowerSettings.enabled = virtualPowerEnabled
         VirtualPowerSettings.riderMassKg = riderMassKg
         VirtualPowerSettings.bikeMassKg = bikeMassKg
         VirtualPowerSettings.cda = cda
-        VirtualPowerSettings.crr = crr
-        VirtualPowerSettings.drivetrainLossPercent = drivetrainLossPercent
     }
 }
