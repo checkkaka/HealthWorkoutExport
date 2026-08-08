@@ -694,9 +694,14 @@ enum FitSpeedSpikeFixer {
     }
 }
 
-/// FIT 消息重编码（尖峰修复 / GCJ 改写共用）。
+/// FIT 消息重编码（尖峰修复 / GCJ 改写 / 虚拟功率共用）。
 enum FitMessagesReencoder {
-    static func encode(_ messages: FitMessages) throws -> Data {
+    static func encode(
+        _ messages: FitMessages,
+        extraDeviceInfos: [DeviceInfoMesg] = [],
+        developerDataIds: [DeveloperDataIdMesg] = [],
+        fieldDescriptions: [FieldDescriptionMesg] = []
+    ) throws -> Data {
         let encoder = FITSwiftSDK.Encoder()
         let fileId: FileIdMesg
         if let primary = messages.fileIdMesgs.first {
@@ -712,6 +717,22 @@ enum FitMessagesReencoder {
         encoder.write(mesg: fileId)
         for deviceInfo in messages.deviceInfoMesgs {
             encoder.write(mesg: deviceInfo)
+        }
+        for deviceInfo in extraDeviceInfos {
+            encoder.write(mesg: deviceInfo)
+        }
+        // Developer 定义须在带 developer field 的 Record/Session 之前写出。
+        for developerId in messages.developerDataIdMesgs {
+            encoder.write(mesg: developerId)
+        }
+        for developerId in developerDataIds {
+            encoder.write(mesg: developerId)
+        }
+        for fieldDescription in messages.fieldDescriptionMesgs {
+            encoder.write(mesg: fieldDescription)
+        }
+        for fieldDescription in fieldDescriptions {
+            encoder.write(mesg: fieldDescription)
         }
         for event in messages.eventMesgs.sorted(by: {
             ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)

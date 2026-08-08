@@ -104,6 +104,7 @@ enum FitVirtualPowerFiller {
         var sumPower = 0.0
         var maxPower: UInt16 = 0
         var powerCount = 0
+        var markedRecords: [RecordMesg] = []
 
         for (index, record) in records.enumerated() {
             if let existing = record.getPower() {
@@ -119,6 +120,7 @@ enum FitVirtualPowerFiller {
                 try record.setPower(0)
                 filled += 1
                 powerCount += 1
+                markedRecords.append(record)
                 continue
             }
             guard let speed = kin.speedMps, speed > 0.1 else { continue }
@@ -174,6 +176,7 @@ enum FitVirtualPowerFiller {
             sumPower += Double(clipped)
             maxPower = max(maxPower, clipped)
             powerCount += 1
+            markedRecords.append(record)
         }
 
         guard filled > 0 else {
@@ -209,7 +212,19 @@ enum FitVirtualPowerFiller {
             }
         }
 
-        let encoded = try FitMessagesReencoder.encode(messages)
+        // 调用 VirtualPowerSourceMark：仅给本次估算写入的 Record 打 powerSource=virtual。
+        let markTimestamp = records.first?.getTimestamp() ?? DateTime()
+        let markBundle = try VirtualPowerSourceMark.makeBundle(timestamp: markTimestamp)
+        for record in markedRecords {
+            try VirtualPowerSourceMark.markRecord(record, bundle: markBundle)
+        }
+
+        let encoded = try FitMessagesReencoder.encode(
+            messages,
+            extraDeviceInfos: [markBundle.deviceInfo],
+            developerDataIds: [markBundle.developerDataId],
+            fieldDescriptions: [markBundle.fieldDescription]
+        )
         let weatherNote: String
         if usedWeather {
             weatherNote = "天气锚点 \(weatherAnchorCount)、时序 \(weatherPointCount) 点"
@@ -221,7 +236,7 @@ enum FitVirtualPowerFiller {
             filledCount: filled,
             usedWeather: usedWeather,
             weatherPointCount: weatherPointCount,
-            note: "虚拟功率已回填 \(filled) 秒（\(weatherNote)）"
+            note: "虚拟功率已回填 \(filled) 秒并标记 powerSource=virtual（\(weatherNote)）"
         )
     }
 

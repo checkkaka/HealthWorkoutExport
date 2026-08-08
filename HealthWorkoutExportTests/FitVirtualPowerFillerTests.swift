@@ -95,6 +95,50 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         XCTAssertEqual(records.first?.getPower(), 0)
     }
 
+    /// 估算写入的秒应带 developer 字段 powerSource=virtual；原有功率秒不打标。
+    func testMarksFilledRecordsWithPowerSourceVirtual() async throws {
+        let start = Date(timeIntervalSince1970: 1_720_000_000)
+        let fit = try makeFit(
+            start: start,
+            records: [
+                (0, speed: 8, alt: 10, power: 180, cadence: 80),
+                (1, speed: 8, alt: 10, power: nil, cadence: 80)
+            ]
+        )
+        let result = try await FitVirtualPowerFiller.fillIfNeeded(
+            fit,
+            weatherProvider: { _, _, _, _ in [] }
+        )
+        XCTAssertEqual(result.filledCount, 1)
+        XCTAssertTrue(result.note.contains("powerSource=virtual"))
+
+        let messages = try FitMerger.decode(result.data)
+        XCTAssertFalse(messages.developerDataIdMesgs.isEmpty)
+        XCTAssertTrue(
+            messages.fieldDescriptionMesgs.contains {
+                $0.getFieldName(index: 0) == VirtualPowerSourceMark.fieldName
+            }
+        )
+        XCTAssertTrue(
+            messages.deviceInfoMesgs.contains { $0.getProductName() == "VirtPower Est" }
+        )
+
+        let records = messages.recordMesgs.sorted {
+            ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)
+        }
+        let existingPowerSource = records[0].developerFields.first {
+            $0.getName() == VirtualPowerSourceMark.fieldName
+        }
+        XCTAssertNil(existingPowerSource, "已有功率秒不应标记 virtual")
+
+        let filledPowerSource = records[1].developerFields.first {
+            $0.getName() == VirtualPowerSourceMark.fieldName
+        }
+        XCTAssertNotNil(filledPowerSource)
+        let value = filledPowerSource?.getValue(index: 0) as? String
+        XCTAssertEqual(value, VirtualPowerSourceMark.virtualValue)
+    }
+
     /// 长轨迹应按距离抽出多个天气锚点（而不只是起点）。
     func testWeatherAnchorsSampleAlongRoute() throws {
         let start = Date(timeIntervalSince1970: 1_720_000_000)
