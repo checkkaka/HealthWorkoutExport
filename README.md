@@ -74,3 +74,13 @@ App 运行时会在自身沙盒中用 `sync_state.json` 记录同步指纹：
 - `AutoSyncEngine` / `ActivityMatcher` / `SyncStateStore` / `CommuteClassifier`
 - `StravaAPIUploader` / `StravaWebUploader`
 - `RootTabView` / `AutoSyncView` / 各设置页
+
+## 许可
+
+本项目采用 [GNU General Public License v3.0](LICENSE)（GPL-3.0）。
+
+- 可商用、可修改、可再分发
+- 再分发时须保留版权与许可声明
+- 衍生作品须以 GPL-3.0（或兼容的同类 copyleft）开源，不可闭源再分发
+
+Copyright (C) 2026 checkkaka
