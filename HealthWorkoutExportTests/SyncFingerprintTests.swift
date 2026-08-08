@@ -153,6 +153,18 @@ final class SyncFingerprintTests: XCTestCase {
         try? FileManager.default.removeItem(at: url)
     }
 
+    /// 列表远端 ID 以本地记录为准，即使记录仍是 pending 也要展示。
+    func testLocalRemoteIdsIncludeNonUploadedRecord() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sync_state_remote_map_\(UUID().uuidString).json")
+        let store = SyncStateStore(fileURL: url)
+        await store.markPending(fingerprint: "fp", primarySourceId: "healthkit", primaryActivityId: "activity-1")
+        await store.setRemoteId(fingerprint: "fp", remoteId: "19651682943")
+        let ids = await store.localRemoteIdsByPrimaryKey()
+        XCTAssertEqual(ids[SyncStateStore.primaryKey(sourceId: "healthkit", activityId: "activity-1")], "19651682943")
+        try? FileManager.default.removeItem(at: url)
+    }
+
     /// 后台 poll 硬错误须能把已 uploaded 打回 failed，否则本地跳过永不再传。
     func testMarkFailedAfterUploadedAllowsRetry() async throws {
         let url = FileManager.default.temporaryDirectory

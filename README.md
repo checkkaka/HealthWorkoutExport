@@ -23,6 +23,8 @@ open HealthWorkoutExport.xcodeproj
 - **合并 FIT**：选主文件，其余补缺（设备时钟可用自动/手动对齐）
 - **多页签数据源**：健康 / 行者 / 顽鹿
 - **自动同步**：选主源 + 可选补源 → `FitMerger` 合并 → 幂等上传 Strava（当天 / 历史，含全部与自定义）
+- **同步恢复**：失败后可继续剩余项目或整批重试；重复活动会进入覆盖确认
+- **远端关联**：健康、行者、顽鹿三个页签显示本地记录的 Strava 远端 ID，可直接打开对应活动；历史页支持补全缺失 ID
 
 ## 数据源登录
 
@@ -37,6 +39,7 @@ open HealthWorkoutExport.xcodeproj
 - **API（默认）**：自备 Client ID/Secret，App 内 OAuth；上传走 [Uploads API](https://developers.strava.com/docs/reference/) `POST /uploads`，支持 `commute` 字段
 - **网页**：WebView 登录后用 Cookie 上传（不依赖 API 上传权限；**通勤标记仅 API 模式生效**）
 - 回调：`healthworkoutexport://localhost/callback`（Authorization Callback Domain 填 `localhost`）
+- API 设置页显示 Strava 响应头返回的 15 分钟与每日限额使用情况
 
 ### 通勤自动标记（API）
 
@@ -45,21 +48,26 @@ open HealthWorkoutExport.xcodeproj
 - 距离 &lt; 5 km
 - 或平均速度 &lt; 28 km/h **且** 距离 &lt; 16 km
 
-## 幂等
+## 本地状态与隐私
 
-本地 `sync_state.json` 记录指纹：
+App 运行时会在自身沙盒中用 `sync_state.json` 记录同步指纹：
 
 `sha256(主源|活动ID|开始时间|排序后的补源列表|strava)`
 
-已成功上传会跳过；补源集合变更会生成新键。
+已成功上传会跳过；补源集合变更会生成新键。该文件不是项目文件，也不会提交到仓库。
+
+- HealthKit 数据、同步状态和待恢复任务仅保存在设备本地
+- 顽鹿、行者与 Strava 的登录凭证保存在系统 Keychain
+- 登录凭证只发送给对应平台；顽鹿凭证仅允许发送到顽鹿 HTTPS 域名
+- 导出文件由用户通过系统分享面板自行处理，项目不包含任何账号、Cookie 或个人运动数据
 
 ## 验证状态
 
 - 模拟器编译：需本地 `xcodebuild` 验证
-- 单元测试：`ActivityMatcher` / `SyncFingerprint` / `CommuteClassifier` / `FitActivityEncoder`
+- 单元测试：`ActivityMatcher` / `SyncFingerprint` / `CommuteClassifier` / `FitActivityEncoder` / `StravaActivityLookup`
 - HealthKit / 行者 / 顽鹿 / Strava：需真机与真实账号自测
 
-## 目录（新增）
+## 主要目录
 
 - `WorkoutDataSource.swift`：可插拔数据源协议与注册表
 - `HealthKitDataSource` / `XingzheDataSource` / `OnelapDataSource`

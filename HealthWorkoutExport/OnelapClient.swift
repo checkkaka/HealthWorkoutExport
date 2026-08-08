@@ -187,7 +187,7 @@ actor OnelapClient {
         return best
     }
 
-    /// 拉取 FIT 字节；CDN 先无鉴权，失败再用顽鹿 token。
+    /// 拉取 FIT 字节；CDN 先无鉴权，仅顽鹿 HTTPS 域名失败后再附带登录凭证。
     private func fetchFitBytes(from url: URL) async throws -> Data {
         var plain = URLRequest(url: url)
         plain.httpMethod = "GET"
@@ -227,6 +227,9 @@ actor OnelapClient {
 
     private func authorizedRequest(url: URL) async throws -> URLRequest {
         try requireAuth()
+        guard Self.isTrustedAuthenticatedURL(url) else {
+            throw WorkoutDataSourceError.fetchFailed("拒绝向非顽鹿 HTTPS 域名发送登录凭证")
+        }
         var request = URLRequest(url: url)
         request.setValue(token, forHTTPHeaderField: "Authorization")
         if let uid {
@@ -234,6 +237,11 @@ actor OnelapClient {
         }
         request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
         return request
+    }
+
+    static func isTrustedAuthenticatedURL(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased() else { return false }
+        return host == "onelap.cn" || host.hasSuffix(".onelap.cn")
     }
 
     private func postJSON(path: String, body: [String: Any]) async throws -> [String: Any] {

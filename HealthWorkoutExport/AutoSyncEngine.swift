@@ -486,8 +486,6 @@ final class AutoSyncEngine {
                         endDate: activity.endDate,
                         distanceMeters: activity.distanceMeters
                     )
-                    // 调用 scheduleRemoteIdBackfill：API POST 成功后后台补远端 ID。
-                    scheduleRemoteIdBackfill(fingerprint: fingerprint, from: result)
                     progress.uploaded += 1
                 }
             } catch {
@@ -608,22 +606,6 @@ final class AutoSyncEngine {
         ))
     }
 
-    /// API POST 成功后串行后台补 remoteId，不阻塞本批下一条。
-    private func scheduleRemoteIdBackfill(fingerprint: String, from result: StravaUploadResult) {
-        guard let uploadId = result.pendingUploadId, !result.isDuplicate else { return }
-        let api = apiUploader
-        let store = stateStore
-        Task {
-            // 调用 StravaRemoteIdBackfillQueue：全局串行 poll，避免打满限速。
-            await StravaRemoteIdBackfillQueue.shared.enqueue(
-                api: api,
-                store: store,
-                fingerprint: fingerprint,
-                uploadId: uploadId
-            )
-        }
-    }
-
     /// 覆盖/重传用唯一 external_id：删远端后 Strava 仍可能用原 external_id 判 duplicate（撞已删幽灵 ID）。
     private func overwriteExternalId(_ fingerprint: String) -> String {
         "\(fingerprint)-ow-\(Int(Date().timeIntervalSince1970))"
@@ -678,8 +660,6 @@ final class AutoSyncEngine {
                     endDate: activityEnd,
                     distanceMeters: distanceMeters
                 )
-                // 调用 scheduleRemoteIdBackfill：幽灵重传后后台补远端 ID。
-                scheduleRemoteIdBackfill(fingerprint: fingerprint, from: result)
                 progress.uploaded += 1
                 notes.append("幽灵 duplicate（远端 \(remoteId) 已不存在），已换 ID 重传：\(title)")
                 return true
@@ -781,8 +761,6 @@ final class AutoSyncEngine {
                     endDate: activityEnd,
                     distanceMeters: distanceMeters
                 )
-                // 调用 scheduleRemoteIdBackfill：覆盖重传后后台补远端 ID。
-                scheduleRemoteIdBackfill(fingerprint: fingerprint, from: result)
                 progress.uploaded += 1
             }
             return true
@@ -1007,8 +985,6 @@ final class AutoSyncEngine {
                         endDate: prepared.endDate,
                         distanceMeters: prepared.distanceMeters
                     )
-                    // 调用 scheduleRemoteIdBackfill：勾选重传后后台补远端 ID。
-                    scheduleRemoteIdBackfill(fingerprint: fingerprint, from: result)
                     progress.uploaded += 1
                 }
                 // 成功或已完成 duplicate 处理后，恢复文件不再需要。
@@ -1034,53 +1010,5 @@ final class AutoSyncEngine {
             failed: progress.failed,
             notes: notes
         )
-    }
-}
-
-/// 全局串行补远端 ID：一批多条 POST 后排队 poll，避免并发打满 Strava。
-private actor StravaRemoteIdBackfillQueue {
-    static let shared = StravaRemoteIdBackfillQueue()
-
-    func enqueue(
-        api: StravaAPIUploader,
-        store: SyncStateStore,
-        fingerprint: String,
-        uploadId: String
-    ) async {
-        do {
-            // 调用 resolveUpload：等 Strava 处理出 activity_id 或 duplicate。
-            let polled = try await api.resolveUpload(id: uploadId)
-            if polled.isDuplicate {
-                let openable = polled.remoteId.flatMap {
-                    StravaSpeedAnomaly.isOpenableRemoteId($0) ? $0 : nil
-                }
-                // 调用 markDeduped：后台才发现的 duplicate，纠正去重语义。
-                await store.markDeduped(
-                    fingerprint: fingerprint,
-                    reason: "后台处理判定 duplicate",
-                    remoteId: openable
-                )
-                return
-            }
-            if let id = polled.remoteId, StravaSpeedAnomaly.isOpenableRemoteId(id) {
-                // 调用 setRemoteId：只补链接，不改 uploaded 状态。
-                await store.setRemoteId(fingerprint: fingerprint, remoteId: id)
-            }
-        } catch let error as StravaUploadError {
-            switch error {
-            case .uploadFailed(let message):
-                // 调用 markFailed：处理失败不能留着 uploaded，否则本地跳过会永不再传。
-                await store.markFailed(fingerprint: fingerprint, message: message)
-            case .rateLimited, .unauthorized:
-                await store.markFailed(
-                    fingerprint: fingerprint,
-                    message: error.localizedDescription
-                )
-            case .notConfigured:
-                break
-            }
-        } catch {
-            // 网络抖动：保持 uploaded、ID 空，可稍后手动补全。
-        }
     }
 }

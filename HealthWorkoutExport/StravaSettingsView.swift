@@ -10,6 +10,9 @@ struct StravaSettingsView: View {
     @State private var showWebLogin = false
     @State private var apiReady = false
     @State private var webReady = false
+    @State private var rateLimitUsage: StravaRateLimitUsage?
+    @State private var rateLimitError: String?
+    @State private var isLoadingRateLimit = false
 
     private let apiUploader = StravaAPIUploader()
 
@@ -54,6 +57,42 @@ struct StravaSettingsView: View {
                     Text("API 凭证")
                 } footer: {
                     Text("在 https://www.strava.com/settings/api ：授权回调域填 localhost；网站可填 http://localhost。本 App 回调 healthworkoutexport://localhost/callback。")
+                }
+
+                Section {
+                    if let usage = rateLimitUsage {
+                        rateLimitRow("综合 · 15 分钟", used: usage.overall.fifteenMinutesUsed, limit: usage.overall.fifteenMinutesLimit)
+                        rateLimitRow("综合 · 每日", used: usage.overall.dailyUsed, limit: usage.overall.dailyLimit)
+                        if let read = usage.read {
+                            rateLimitRow("读取 · 15 分钟", used: read.fifteenMinutesUsed, limit: read.fifteenMinutesLimit)
+                            rateLimitRow("读取 · 每日", used: read.dailyUsed, limit: read.dailyLimit)
+                        }
+                    } else {
+                        Text(apiReady ? "暂无限额数据" : "授权后显示当前用量")
+                            .foregroundStyle(.secondary)
+                    }
+                    if let rateLimitError {
+                        Text(rateLimitError)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                    Button {
+                        Task { await refreshRateLimit() }
+                    } label: {
+                        if isLoadingRateLimit {
+                            HStack {
+                                ProgressView()
+                                Text("刷新限额…")
+                            }
+                        } else {
+                            Text("刷新限额")
+                        }
+                    }
+                    .disabled(!apiReady || isLoadingRateLimit)
+                } header: {
+                    Text("API 限额")
+                } footer: {
+                    Text("数据来自 Strava API 响应头；刷新会消耗 1 次读取请求。")
                 }
             } else {
                 Section("网页登录") {
@@ -102,5 +141,33 @@ struct StravaSettingsView: View {
     private func refreshReady() async {
         apiReady = await apiUploader.isReady()
         webReady = await StravaWebUploader().isReady()
+        if apiReady {
+            await refreshRateLimit()
+        } else {
+            rateLimitUsage = nil
+            rateLimitError = nil
+        }
+    }
+
+    private func refreshRateLimit() async {
+        guard !isLoadingRateLimit else { return }
+        isLoadingRateLimit = true
+        defer { isLoadingRateLimit = false }
+        do {
+            // 调用 fetchRateLimitUsage：展示 Strava 返回的实时限额用量。
+            rateLimitUsage = try await apiUploader.fetchRateLimitUsage()
+            rateLimitError = nil
+        } catch {
+            rateLimitUsage = nil
+            rateLimitError = error.localizedDescription
+        }
+    }
+
+    private func rateLimitRow(_ title: String, used: Int, limit: Int) -> some View {
+        LabeledContent(title) {
+            Text("\(used) / \(limit)")
+                .monospacedDigit()
+                .foregroundStyle(used >= limit ? Color.red : Color.secondary)
+        }
     }
 }

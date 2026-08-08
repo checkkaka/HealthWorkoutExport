@@ -2,6 +2,19 @@ import Foundation
 import AuthenticationServices
 import UIKit
 
+/// Strava 响应头返回的当前 API 用量与限额。
+struct StravaRateLimitUsage: Equatable, Sendable {
+    struct Window: Equatable, Sendable {
+        let fifteenMinutesUsed: Int
+        let fifteenMinutesLimit: Int
+        let dailyUsed: Int
+        let dailyLimit: Int
+    }
+
+    let overall: Window
+    let read: Window?
+}
+
 /// Strava REST API 上传（默认模式）：OAuth + /uploads。
 @MainActor
 final class StravaAPIUploader: NSObject, StravaUploading {
@@ -19,6 +32,65 @@ final class StravaAPIUploader: NSObject, StravaUploading {
         !StravaSettings.clientId.isEmpty
             && !StravaSettings.clientSecret.isEmpty
             && !StravaSettings.refreshToken.isEmpty
+    }
+
+    /// 请求当前运动员资料，并从响应头读取综合/读取 API 限额用量。
+    func fetchRateLimitUsage() async throws -> StravaRateLimitUsage {
+        try await ensureValidAccessToken()
+        var request = URLRequest(url: URL(string: "https://www.strava.com/api/v3/athlete")!)
+        request.setValue("Bearer \(StravaSettings.accessToken)", forHTTPHeaderField: "Authorization")
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw StravaUploadError.uploadFailed("读取 API 限额无响应")
+        }
+        if http.statusCode == 401 { throw StravaUploadError.unauthorized }
+        // 429 时响应头仍包含当前用量；额度耗尽时也要让设置页展示出来。
+        if http.statusCode == 429,
+           let usage = Self.parseRateLimitUsage(from: http) {
+            return usage
+        }
+        if http.statusCode == 429 { throw StravaUploadError.rateLimited }
+        guard (200..<300).contains(http.statusCode) else {
+            throw StravaUploadError.uploadFailed("读取 API 限额失败 HTTP \(http.statusCode)")
+        }
+        guard let usage = Self.parseRateLimitUsage(from: http) else {
+            throw StravaUploadError.uploadFailed("Strava 未返回 API 限额信息")
+        }
+        return usage
+    }
+
+    /// 解析 Strava `X-RateLimit-*` 响应头；读取限额头可能不存在。
+    nonisolated static func parseRateLimitUsage(from response: HTTPURLResponse) -> StravaRateLimitUsage? {
+        func pair(_ name: String) -> (Int, Int)? {
+            guard let value = response.value(forHTTPHeaderField: name) else { return nil }
+            let numbers = value.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            guard numbers.count == 2 else { return nil }
+            return (numbers[0], numbers[1])
+        }
+
+        guard let overallLimit = pair("X-RateLimit-Limit"),
+              let overallUsage = pair("X-RateLimit-Usage") else { return nil }
+        let readLimit = pair("X-ReadRateLimit-Limit")
+        let readUsage = pair("X-ReadRateLimit-Usage")
+        let read = readLimit.flatMap { limit in
+            readUsage.map { usage in
+                StravaRateLimitUsage.Window(
+                    fifteenMinutesUsed: usage.0,
+                    fifteenMinutesLimit: limit.0,
+                    dailyUsed: usage.1,
+                    dailyLimit: limit.1
+                )
+            }
+        }
+        return StravaRateLimitUsage(
+            overall: .init(
+                fifteenMinutesUsed: overallUsage.0,
+                fifteenMinutesLimit: overallLimit.0,
+                dailyUsed: overallUsage.1,
+                dailyLimit: overallLimit.1
+            ),
+            read: read
+        )
     }
 
     /// 浏览器 OAuth 授权，写入 refresh/access token。
@@ -111,23 +183,20 @@ final class StravaAPIUploader: NSObject, StravaUploading {
             return StravaUploadResult(remoteId: remoteId, isDuplicate: true)
         }
         guard (200..<300).contains(http.statusCode) else {
-            throw StravaUploadError.uploadFailed("上传失败 HTTP \(http.statusCode): \(text.prefix(200))")
+            let detail = StravaUploadError.cleanedMessage(String(text.prefix(200)))
+            throw StravaUploadError.uploadFailed("上传失败 HTTP \(http.statusCode): \(detail)")
         }
         let json = (try? JSONSerialization.jsonObject(with: respData)) as? [String: Any]
         // 调用 jsonActivityId：POST 响应偶发已带 activity_id，有则直接用。
         if let activityId = StravaActivityLookup.jsonActivityId(json?["activity_id"]) {
             return StravaUploadResult(remoteId: activityId, isDuplicate: false)
         }
-        let uploadId = json?["id"].map { "\($0)" }
-        // POST 成功即返回：不阻塞等处理；pendingUploadId 供后台 resolveUpload 补 ID。
-        // 无 activity_id 时不要回落成 upload id（会当成假远端活动）。
-        return StravaUploadResult(remoteId: nil, isDuplicate: false, pendingUploadId: uploadId)
-    }
-
-    /// 轮询 upload 直至有 activity_id / duplicate / 超时；供后台补远端 ID。
-    func resolveUpload(id: String) async throws -> StravaUploadResult {
-        try await ensureValidAccessToken()
-        return try await pollUpload(id: id)
+        guard let uploadId = json?["id"].map({ "\($0)" }), !uploadId.isEmpty else {
+            throw StravaUploadError.uploadFailed("Strava 未返回上传 ID")
+        }
+        // 上传是异步处理：在当前同步任务内等最终 activity_id / duplicate / error，
+        // 避免先记成功后由后台静默改成去重或失败。
+        return try await pollUpload(id: uploadId)
     }
 
     /// 拉取单条活动有效峰值速度（max_speed ∪ best_efforts）；404 返回 nil。
@@ -290,8 +359,8 @@ final class StravaAPIUploader: NSObject, StravaUploading {
     }
 
     private func pollUpload(id: String) async throws -> StravaUploadResult {
-        // 大批量时 Strava 处理排队更久；约 60s 仍无 activity_id 则宁可记「已传无 ID」，
-        // 也不要把 upload id 当成活动 ID（数字看起来能打开，实际 404，还会污染本批预检）。
+        // 大批量时 Strava 处理排队更久；约 60s 仍无最终状态则记失败，
+        // 不把 upload id 当成活动 ID，也不提前写成「已上传」。
         for attempt in 0..<StravaUploadPoll.maxAttempts {
             let delay = StravaUploadPoll.delaySeconds(beforeAttempt: attempt)
             if delay > 0 {
@@ -321,14 +390,14 @@ final class StravaAPIUploader: NSObject, StravaUploading {
                     let fromText = StravaActivityLookup.parseDuplicateActivityId(err)
                     return StravaUploadResult(remoteId: fromJson ?? fromText, isDuplicate: true)
                 }
-                throw StravaUploadError.uploadFailed(err)
+                throw StravaUploadError.uploadFailed(StravaUploadError.cleanedMessage(err))
             }
             // 调用 jsonActivityId：仅数字 ID 才算处理完成；null 继续轮询。
             if let activityId = StravaActivityLookup.jsonActivityId(json["activity_id"]) {
                 return StravaUploadResult(remoteId: activityId, isDuplicate: false)
             }
         }
-        return StravaUploadResult(remoteId: nil, isDuplicate: false)
+        throw StravaUploadError.uploadFailed("Strava 处理超时，尚未确认活动是否创建，请稍后重试")
     }
 
     private func exchangeCode(_ code: String) async throws {
