@@ -477,7 +477,12 @@ enum FitVirtualPowerFiller {
             dists[i] = r.getDistance()
         }
 
-        let smoothSpeed = smooth(speeds, radius: smoothRadius, fillMissingCenter: false)
+        // 调用 replaceGlitchSpeedsWithPrevious：跳变+回落确认的飞点改用上一秒速度。
+        let cleanedSpeeds = VirtualPowerPhysics.replaceGlitchSpeedsWithPrevious(
+            speeds: speeds,
+            times: times
+        )
+        let smoothSpeed = smooth(cleanedSpeeds, radius: smoothRadius, fillMissingCenter: false)
         let smoothAlt = smooth(alts, radius: smoothRadius, fillMissingCenter: true)
 
         var result = [Kinematics](repeating: Kinematics(
@@ -510,11 +515,9 @@ enum FitVirtualPowerFiller {
                     }
                     if let s0 = smoothSpeed[i - 1], let s1 = smoothSpeed[i] {
                         let rawAccel = (s1 - s0) / dt
-                        // 调用 sanitizedAcceleration：飞点置 0，其余钳到 ±2.0，避免 GPS 尖峰虚高功率。
+                        // 调用 sanitizedAcceleration：飞点已在速度侧处理，这里只钳 ±2.0。
                         accel = VirtualPowerPhysics.sanitizedAccelerationMps2(
                             smoothedAccelerationMps2: rawAccel,
-                            rawSpeed0Mps: speeds[i - 1],
-                            rawSpeed1Mps: speeds[i],
                             dtSeconds: dt
                         )
                     }
@@ -532,7 +535,7 @@ enum FitVirtualPowerFiller {
 
             result[i] = Kinematics(
                 date: date,
-                speedMps: smoothSpeed[i] ?? speeds[i],
+                speedMps: smoothSpeed[i] ?? cleanedSpeeds[i],
                 altitudeM: smoothAlt[i] ?? alts[i],
                 lat: lats[i],
                 lon: lons[i],

@@ -93,40 +93,85 @@ final class VirtualPowerPhysicsTests: XCTestCase {
         XCTAssertEqual(hw, 5, accuracy: 0.05)
     }
 
-    /// 原速跳变 ≥8 km/h/s 视为飞点，惯性加速度置 0。
-    func testSanitizedAccelerationZerosGpsJump() {
-        // 34.6 → 60.6 km/h / 1s ≈ 7.2 m/s² ≫ 8 km/h/s。
-        let a = VirtualPowerPhysics.sanitizedAccelerationMps2(
-            smoothedAccelerationMps2: 1.48,
-            rawSpeed0Mps: 34.6 / 3.6,
-            rawSpeed1Mps: 60.6 / 3.6,
-            dtSeconds: 1
+    /// 大跳变且下一秒回落 → 判定飞点。
+    func testGpsGlitchRequiresJumpAndRecovery() {
+        XCTAssertTrue(
+            VirtualPowerPhysics.isGpsSpeedGlitch(
+                previousMps: 34.6 / 3.6,
+                candidateMps: 60.6 / 3.6,
+                followingMps: 35.0 / 3.6,
+                dtToCandidate: 1,
+                dtToFollowing: 1
+            )
         )
-        XCTAssertEqual(a, 0, accuracy: 0.001)
     }
 
-    /// 正常冲刺加速应保留并钳在 ±2.0。
+    /// 仅有跳变、后续继续升高 → 不当飞点（可能是真加速）。
+    func testGpsGlitchRejectedWhenFollowingContinues() {
+        XCTAssertFalse(
+            VirtualPowerPhysics.isGpsSpeedGlitch(
+                previousMps: 20 / 3.6,
+                candidateMps: 30 / 3.6,
+                followingMps: 32 / 3.6,
+                dtToCandidate: 1,
+                dtToFollowing: 1
+            )
+        )
+    }
+
+    /// 急刹后继续低速：跳变大但不回落靠近前值 → 不当飞点。
+    func testHardBrakeNotTreatedAsGlitch() {
+        XCTAssertFalse(
+            VirtualPowerPhysics.isGpsSpeedGlitch(
+                previousMps: 45 / 3.6,
+                candidateMps: 13 / 3.6,
+                followingMps: 12 / 3.6,
+                dtToCandidate: 1,
+                dtToFollowing: 1
+            )
+        )
+    }
+
+    /// 飞点速度替换为上一秒。
+    func testReplaceGlitchSpeedsUsesPrevious() {
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        let times: [Date?] = [
+            t0,
+            t0.addingTimeInterval(1),
+            t0.addingTimeInterval(2),
+            t0.addingTimeInterval(3)
+        ]
+        let speeds: [Double?] = [
+            34.6 / 3.6,
+            60.6 / 3.6,
+            35.0 / 3.6,
+            34.8 / 3.6
+        ]
+        let cleaned = VirtualPowerPhysics.replaceGlitchSpeedsWithPrevious(
+            speeds: speeds,
+            times: times
+        )
+        XCTAssertEqual(cleaned[1]!, speeds[0]!, accuracy: 0.001)
+        XCTAssertEqual(cleaned[0]!, speeds[0]!, accuracy: 0.001)
+        XCTAssertEqual(cleaned[2]!, speeds[2]!, accuracy: 0.001)
+    }
+
+    /// 正常冲刺加速应钳在 ±2.0。
     func testSanitizedAccelerationClampsToSprintCap() {
         let within = VirtualPowerPhysics.sanitizedAccelerationMps2(
             smoothedAccelerationMps2: 1.6,
-            rawSpeed0Mps: 8,
-            rawSpeed1Mps: 9.6,
             dtSeconds: 1
         )
         XCTAssertEqual(within, 1.6, accuracy: 0.001)
 
         let over = VirtualPowerPhysics.sanitizedAccelerationMps2(
             smoothedAccelerationMps2: 2.5,
-            rawSpeed0Mps: 8,
-            rawSpeed1Mps: 9.5,
             dtSeconds: 1
         )
         XCTAssertEqual(over, VirtualPowerPhysics.maxRealisticAccelerationMps2, accuracy: 0.001)
 
         let under = VirtualPowerPhysics.sanitizedAccelerationMps2(
             smoothedAccelerationMps2: -2.5,
-            rawSpeed0Mps: 9.5,
-            rawSpeed1Mps: 8,
             dtSeconds: 1
         )
         XCTAssertEqual(under, -VirtualPowerPhysics.maxRealisticAccelerationMps2, accuracy: 0.001)

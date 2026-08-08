@@ -23,8 +23,10 @@ enum VirtualPowerPhysics {
 
     /// 业余站姿起步约 1.3–1.6 m/s²，滚动冲刺多 <1；钳位上限为真冲刺留余量。
     static let maxRealisticAccelerationMps2 = 2.0
-    /// 原速变化率达到该值（m/s²）视为 GPS 飞点，惯性项置 0；约等于 8 km/h/s。
+    /// 原速变化率达到该值（m/s²）才可能是 GPS 飞点；约等于 8 km/h/s。
     static let gpsSpeedJumpGlitchMps2 = 8.0 / 3.6
+    /// 尖峰回落后与跳变前速度相差不超过该值（m/s）视为回落连贯；约等于 5 km/h。
+    static let gpsGlitchRecoveryMaxDeltaMps = 5.0 / 3.6
 
     /// 估算腿部功率。cadenceRpm==0 时强制滑行功率 0；负功率钳为 0。
     static func powerWatts(
@@ -53,21 +55,64 @@ enum VirtualPowerPhysics {
         return max(0, legs)
     }
 
-    /// 清洗加速度：原速跳变达飞点阈值则惯性置 0；否则钳到业余冲刺合理上限。
+    /// 飞点须同时满足：跳变过大 + 下一秒相对尖峰回落（前后不连贯）。
+    static func isGpsSpeedGlitch(
+        previousMps: Double,
+        candidateMps: Double,
+        followingMps: Double,
+        dtToCandidate: Double,
+        dtToFollowing: Double
+    ) -> Bool {
+        guard dtToCandidate > 0, dtToFollowing > 0 else { return false }
+        let jumpRate = abs(candidateMps - previousMps) / dtToCandidate
+        guard jumpRate >= gpsSpeedJumpGlitchMps2 else { return false }
+
+        // 回落靠近跳变前，或从尖峰回落至少一半且比尖峰更接近前值。
+        let backNearPrevious = abs(followingMps - previousMps) <= gpsGlitchRecoveryMaxDeltaMps
+        let spikeDelta = abs(candidateMps - previousMps)
+        let recoveredTowardPrevious =
+            spikeDelta > 0
+            && abs(followingMps - candidateMps) >= spikeDelta * 0.5
+            && abs(followingMps - previousMps) < abs(candidateMps - previousMps)
+        return backNearPrevious || recoveredTowardPrevious
+    }
+
+    /// 检出飞点后用上一秒速度替换，避免尖峰进入平滑与气动项。
+    static func replaceGlitchSpeedsWithPrevious(
+        speeds: [Double?],
+        times: [Date?]
+    ) -> [Double?] {
+        guard speeds.count == times.count, speeds.count >= 3 else { return speeds }
+        var out = speeds
+        for i in 1..<(speeds.count - 1) {
+            guard let previous = out[i - 1] ?? speeds[i - 1],
+                  let candidate = speeds[i],
+                  let following = speeds[i + 1],
+                  let t0 = times[i - 1],
+                  let t1 = times[i],
+                  let t2 = times[i + 1] else { continue }
+            let dt1 = t1.timeIntervalSince(t0)
+            let dt2 = t2.timeIntervalSince(t1)
+            // 调用 isGpsSpeedGlitch：跳变+回落双条件确认后再改速度。
+            if isGpsSpeedGlitch(
+                previousMps: previous,
+                candidateMps: candidate,
+                followingMps: following,
+                dtToCandidate: dt1,
+                dtToFollowing: dt2
+            ) {
+                out[i] = previous
+            }
+        }
+        return out
+    }
+
+    /// 清洗加速度：钳到业余冲刺合理上限 ±2.0（飞点应先在速度序列中替换）。
     static func sanitizedAccelerationMps2(
         smoothedAccelerationMps2: Double,
-        rawSpeed0Mps: Double?,
-        rawSpeed1Mps: Double?,
         dtSeconds: Double
     ) -> Double {
         guard dtSeconds > 0 else { return 0 }
-        if let raw0 = rawSpeed0Mps, let raw1 = rawSpeed1Mps {
-            let rawAccel = (raw1 - raw0) / dtSeconds
-            // GPS 飞点：一秒内原速跳变过大，不用惯性项。
-            if abs(rawAccel) >= gpsSpeedJumpGlitchMps2 {
-                return 0
-            }
-        }
         return min(
             max(smoothedAccelerationMps2, -maxRealisticAccelerationMps2),
             maxRealisticAccelerationMps2
