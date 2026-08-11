@@ -1,6 +1,7 @@
 #![deny(unsafe_code)]
 
 mod api;
+pub mod fit;
 #[allow(unsafe_code)]
 mod frb_generated;
 

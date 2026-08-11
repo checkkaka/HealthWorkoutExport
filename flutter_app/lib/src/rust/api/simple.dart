@@ -6,9 +6,49 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
+
 /// Flutter 调用的最小同步入口，直接复用已测试的核心规则。
 bool isCommute({double? distanceMeters, required double durationSeconds}) =>
     WorkoutCoreRustLib.instance.api.crateApiSimpleIsCommute(
       distanceMeters: distanceMeters,
       durationSeconds: durationSeconds,
     );
+
+/// 严格校验 FIT 并返回轨迹/心率内容质量摘要。
+FitProbeSummary fitContentSummary({required List<int> data}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleFitContentSummary(data: data);
+
+bool isValidFit({required List<int> data}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleIsValidFit(data: data);
+
+/// 当前重编码保持全部未知消息和数组字段原字节不变。
+Uint8List reencodeFit({required List<int> data}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleReencodeFit(data: data);
+
+class FitProbeSummary {
+  final int gpsPointCount;
+  final int heartRatePointCount;
+  final int qualityScore;
+
+  const FitProbeSummary({
+    required this.gpsPointCount,
+    required this.heartRatePointCount,
+    required this.qualityScore,
+  });
+
+  @override
+  int get hashCode =>
+      gpsPointCount.hashCode ^
+      heartRatePointCount.hashCode ^
+      qualityScore.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FitProbeSummary &&
+          runtimeType == other.runtimeType &&
+          gpsPointCount == other.gpsPointCount &&
+          heartRatePointCount == other.heartRatePointCount &&
+          qualityScore == other.qualityScore;
+}

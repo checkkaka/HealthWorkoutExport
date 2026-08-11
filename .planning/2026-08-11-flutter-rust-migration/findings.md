@@ -43,6 +43,10 @@ iOS 原生通道已接入 HealthKit 可用性、全量现有读取类型授权�
 
 Flutter 健康页已调用上述 HealthKit 通道，并覆盖授权、日期查询、加载/空态/错误重试与选择状态。iOS Strava OAuth 原生通道也已注册：只接受官方 HTTPS 授权地址，使用 256 位随机 state，并严格校验 `healthworkoutexport://localhost/callback`；token 交换、刷新和设置页仍留给后续切片。Rust 同步指纹已与 Swift 固定摘要对齐，但尚未替换生产调用。
 
+HealthKit 完整训练包现通过一个 UUID 集合查询回查训练，再以最多 3 条并发读取 quantity、路线、事件和 metadata；Flutter 对返回数量、UUID 顺序及所有嵌套字段做严格解析。Rust FIT 首切片已实现严格完整性探测、内容质量摘要和原字节无损重编码，并生成真实 Flutter FFI；语义级消息编辑、合并与编码仍未完成，不能把 FIT-02 标为完整完成。
+
+当前锁定的 FITSwiftSDK 与 Rust 实现都不支持 compressed timestamp data message；Rust `is_valid_fit` 会做完整 CRC/消息边界校验，而旧 `FitContentProbe.isValidFit` 只检查文件魔数。前者是有意的严格校验，后续若引入压缩时间戳解码，必须同时扩展摘要与重编码测试，不能只放宽入口判断。
+
 ## Resources
 - `HealthWorkoutExport/WorkoutDataSource.swift`
 - `HealthWorkoutExport/HealthKitService.swift`

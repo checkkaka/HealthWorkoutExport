@@ -15,6 +15,7 @@
 
 - **未完成**：现有 Swift 功能尚未在新架构中通过对等验收。
 - **Rust 已实现，未接入**：纯规则已存在于 `rust/workout_core`，但尚未由 Flutter/原生生产链路调用，不能视为功能完成。
+- **Rust 部分实现，已接桥**：已有可由 Flutter 调用的 Rust 子能力，但本行仍有语义处理或生产流程未迁移，不能视为功能完成。
 - **适配层已实现，未接入**：平台通道及契约测试已存在，但尚未接入生产 UI/业务链路，不能视为功能完成。
 - **已实现，待平台验收**：代码和最小自动测试已接入，但尚缺真机或其余适用平台验收，不能视为功能完成。
 - **完成**：实现、自动测试和适用平台验收全部通过；本矩阵初始没有此状态。
@@ -58,9 +59,9 @@
 |---|---|---|---|---|---|---|
 | HK-01 | HealthKit 可用性、读取授权、隐私说明与 entitlement | `HealthKitService.swift`、`Info.plist`、`HealthWorkoutExport.entitlements` | 无；需真机 | iOS 原生 Swift 插件 | 真机首次授权、拒绝、重新授权和系统设置跳转可用；只申请现有读取类型；非 Apple 平台显示明确不可用/替代入口 | 已实现，待平台验收 |
 | HK-02 | 严格按开始时间查询训练摘要并按时间倒序 | `HealthKitService.swift`、`HealthKitDataSource.swift` | 无；需真机 | iOS 原生 Swift 插件 | `[start,end)` 查询结果、摘要字段、来源名称、活动中文名和排序与 Swift 基线一致 | 已实现，待平台验收 |
-| HK-03 | 训练缓存与按 UUID 回查，避免列表后逐条 N+1 | `HealthKitService.swift` | 无 | iOS 原生 Swift 插件 | 同批导出优先命中缓存；缓存缺失可按 UUID 回查；并发导出无竞态或错误复用 | 未完成 |
-| HK-04 | 读取心率、能量、距离、步频/踏频、跑步动态、速度和功率等序列 | `HealthKitService.swift`、`WorkoutBundle.swift` | `FitActivityEncoderTests.swift`（编码侧字段） | iOS 原生 Swift 插件 → Rust 批量模型 | 各 quantity 使用与 Swift 相同单位；关联查询失败时保留现有来源/日期兜底；空序列不伪造数据 | 未完成 |
-| HK-05 | 读取路线、多段 route、海拔/时间/速度、训练事件和 metadata | `HealthKitService.swift`、`WorkoutBundle.swift` | `FitActivityEncoderTests.swift`（事件/JSON/路线编码） | iOS 原生 Swift 插件 → Rust 批量模型 | 多段路线顺序稳定；暂停/恢复等事件名称一致；可选值与 metadata 序列化不崩溃 | 未完成 |
+| HK-03 | 训练缓存与按 UUID 回查，避免列表后逐条 N+1 | `HealthKitService.swift` | 无 | iOS 原生 Swift 插件 | 同批导出优先命中缓存；缓存缺失可按 UUID 回查；并发导出无竞态或错误复用 | 适配层已实现，未接入 |
+| HK-04 | 读取心率、能量、距离、步频/踏频、跑步动态、速度和功率等序列 | `HealthKitService.swift`、`WorkoutBundle.swift` | `FitActivityEncoderTests.swift`（编码侧字段） | iOS 原生 Swift 插件 → Rust 批量模型 | 各 quantity 使用与 Swift 相同单位；关联查询失败时保留现有来源/日期兜底；空序列不伪造数据 | 适配层已实现，未接入 |
+| HK-05 | 读取路线、多段 route、海拔/时间/速度、训练事件和 metadata | `HealthKitService.swift`、`WorkoutBundle.swift` | `FitActivityEncoderTests.swift`（事件/JSON/路线编码） | iOS 原生 Swift 插件 → Rust 批量模型 | 多段路线顺序稳定；暂停/恢复等事件名称一致；可选值与 metadata 序列化不崩溃 | 适配层已实现，未接入 |
 | HK-06 | HealthKit 活动转换为统一数据源并现场生成 FIT | `HealthKitDataSource.swift`、`FitActivityEncoder.swift` | `FitActivityEncoderTests.swift` | 原生 HealthKit + Rust FIT | 同一训练生成的统一活动 ID、时间、距离和 FIT 语义与当前 Swift 输出一致 | 未完成 |
 | HK-07 | Android 健康数据对应能力 | 当前 Swift 无 Android 实现 | 无 | Android 原生 Health Connect 插件 | 明确映射可支持字段；无法等价的 HealthKit 字段标记缺失而非伪造；权限、撤销和无服务状态可测 | 未完成 |
 
@@ -80,7 +81,7 @@
 | ID | 当前功能 | Swift 实现基线 | 已有测试 | 目标归属 | 对等验收条件 | 状态 |
 |---|---|---|---|---|---|---|
 | FIT-01 | WorkoutBundle 编码 Garmin FIT | `FitActivityEncoder.swift` | `FitActivityEncoderTests.swift`（头、累计距离、动态字段、事件） | Rust | 合成和真机样本均可被 Garmin/Strava 解码；时间、距离、事件、路线和传感器字段与基线一致 | 未完成 |
-| FIT-02 | FIT 解码、重编码、有效性和内容质量探测 | `FitMerger.swift` 中 `FitMessagesReencoder`、`FitContentProbe` | `FitActivityEncoderTests.swift` | Rust | 非 FIT 被拒绝；重编码保留未知/数组字段；GPS、心率点数和质量分稳定 | 未完成 |
+| FIT-02 | FIT 解码、重编码、有效性和内容质量探测 | `FitMerger.swift` 中 `FitMessagesReencoder`、`FitContentProbe` | `FitActivityEncoderTests.swift` | Rust | 非 FIT 被拒绝；重编码保留未知/数组字段；GPS、心率点数和质量分稳定 | Rust 部分实现，已接桥 |
 | FIT-03 | 主文件优先、补文件只填缺失字段 | `FitMerger.swift` | `FitActivityEncoderTests.swift`（主源优先、补缺） | Rust | 字段冲突主源胜出；缺失传感器可补；不插入不允许的 GPS/间隙记录 | 未完成 |
 | FIT-04 | 全字段与仅传感器补充模式 | `FitMerger.swift` | `FitActivityEncoderTests.swift` | Rust | 两种模式在记录插入、GPS、事件、lap/session 处理上与 Swift 一致 | 未完成 |
 | FIT-05 | 自动、手动、逐文件和绝对时间对齐 | `FitMerger.swift`、`FitMergeView.swift` | `FitActivityEncoderTests.swift`（时钟偏差、互相关、累计距离兜底） | Rust + Flutter | 同场可估偏移；不同活动拒绝自动对齐；手动偏移和逐文件偏移精确生效；估算失败有明确错误 | 未完成 |

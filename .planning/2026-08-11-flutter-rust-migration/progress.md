@@ -42,16 +42,19 @@
 - Rust 已迁移 SHA-256 同步指纹规则，保持 Swift 的整秒 RFC3339、补源排序和空字段语义；当前尚未接入生产同步链路。
 - 本批次验证已覆盖 iOS、macOS、Android 构建和 iOS 模拟器实际启动；Windows 需在 Windows 主机上验收。
 - 审查发现并修复 HealthKit 首次授权期间切换日期的竞态、非 iOS 平台误调用 HealthKit、拒绝权限后缺少系统设置入口；三项均补了组件回归测试。
+- iOS HealthKit 已新增按 UUID 批量读取完整训练包，quantity、路线、事件与 metadata 最多 3 条并发且保持请求顺序；Flutter typed client 会严格校验 UUID、数量、顺序与字段类型。
+- Rust 已实现 FIT 严格头/长度/CRC/消息边界探测、GPS/心率质量计数及无损字节重编码，并通过真实 FRB 接口供 Flutter 调用；可编辑消息模型尚未迁移。
+- 提交前复审撤回了 compressed timestamp 误报：当前锁定 FITSwiftSDK 同样明确不支持该消息类型；本批次无 Critical/Important 缺陷，Rust 19/19、Flutter 22/22 与静态分析再次通过。
 
 ### Test Results
 | Test | Expected | Actual | Status |
 |------|----------|--------|--------|
-| `cargo fmt --check && cargo test` | Rust 格式正确、全部通过 | 14/14 通过 | ✅ |
-| `fvm flutter test` | Flutter 单测/组件测试、原生通道契约及真实 Rust FFI 全部通过 | 20/20 通过 | ✅ |
+| `cargo fmt --check && cargo test` | Rust 格式正确、全部通过 | 19/19 通过 | ✅ |
+| `fvm flutter test` | Flutter 单测/组件测试、原生通道契约及真实 Rust FFI 全部通过 | 22/22 通过 | ✅ |
 | `fvm flutter analyze` | 无静态分析问题 | No issues found | ✅ |
 | `fvm flutter build ios --simulator --debug` | Flutter UI 与 Rust 在 iOS 模拟器链接成功 | Built Runner.app | ✅ |
 | `fvm flutter build macos --debug` | Flutter UI 与 Rust 在 macOS 链接成功 | Built health_workout_export.app | ✅ |
-| `xcodebuild test`（Flutter Runner，iOS 26.5 模拟器） | HealthKit/Keychain/OAuth 原生边界测试通过 | 4/4 通过 | ✅ |
+| `xcodebuild test`（Flutter Runner，iOS 26.5 模拟器） | HealthKit/Keychain/OAuth 原生边界测试通过 | 8/8 通过 | ✅ |
 | `fvm flutter build apk --debug` | Flutter UI 与四 ABI Rust 在 Android 链接成功 | Built app-debug.apk | ✅ |
 | `xcodebuild test`（iOS 26.5 模拟器） | Swift 基线全部通过 | TEST SUCCEEDED | ✅ |
 | `xcodebuild test`（Mac 运行 iOS App） | 可安装测试宿主 | provisioning/未签名宿主不可安装 | ⚠️ 改用 iOS 模拟器完成验证 |

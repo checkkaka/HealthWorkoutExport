@@ -158,6 +158,103 @@ void main() {
         throwsA(isA<FormatException>()),
       );
     });
+
+    test('按 UUID 批量读取并解析完整训练明细', () async {
+      const uuid = 'A4B64E8C-0012-4A0B-993E-140FC6B721C0';
+      MethodCall? received;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        received = call;
+        return <Object?>[
+          <String, Object?>{
+            'uuid': uuid,
+            'startMs': 1000,
+            'endMs': 2000,
+            'durationSeconds': 1,
+            'activityType': 13,
+            'activityName': '骑车',
+            'sourceName': 'Apple Watch',
+            'sourceBundleId': 'com.apple.health',
+            'totalEnergyKcal': 42,
+            'totalDistanceMeters': 1234.5,
+            'metadata': <String, Object?>{'HKIndoorWorkout': 'true'},
+            'events': <Object?>[
+              <String, Object?>{'type': 'pause', 'dateMs': 1250},
+            ],
+            'series': <String, Object?>{
+              'HKQuantityTypeIdentifierHeartRate': <Object?>[
+                <String, Object?>{
+                  'dateMs': 1300,
+                  'value': 143,
+                  'unit': 'count/min',
+                },
+              ],
+            },
+            'route': <Object?>[
+              <String, Object?>{
+                'latitude': 31.34,
+                'longitude': 120.55,
+                'altitudeMeters': 8.5,
+                'timestampMs': 1400,
+                'speedMetersPerSecond': 4.2,
+              },
+            ],
+          },
+        ];
+      });
+
+      final bundles = await const HealthKitChannel().fetchWorkoutBundles([
+        uuid,
+      ]);
+
+      expect(received?.method, 'fetchWorkoutBundles');
+      expect(received?.arguments, {
+        'uuids': [uuid],
+      });
+      final bundle = bundles.single;
+      expect(bundle.summary.uuid, uuid);
+      expect(bundle.metadata, {'HKIndoorWorkout': 'true'});
+      expect(
+        bundle.events.single,
+        const HealthWorkoutEvent(type: 'pause', dateMs: 1250),
+      );
+      expect(
+        bundle.series['HKQuantityTypeIdentifierHeartRate']?.single,
+        const HealthQuantitySample(dateMs: 1300, value: 143, unit: 'count/min'),
+      );
+      expect(
+        bundle.route.single,
+        const HealthRoutePoint(
+          latitude: 31.34,
+          longitude: 120.55,
+          altitudeMeters: 8.5,
+          timestampMs: 1400,
+          speedMetersPerSecond: 4.2,
+        ),
+      );
+    });
+
+    test('完整训练明细拒绝空 UUID、重复 UUID 和错序响应', () async {
+      const first = 'A4B64E8C-0012-4A0B-993E-140FC6B721C0';
+      const second = 'C369A834-FF0B-4D46-BB79-39246FA8A589';
+      const healthKit = HealthKitChannel();
+
+      expect(
+        () => healthKit.fetchWorkoutBundles(const []),
+        throwsArgumentError,
+      );
+      expect(
+        () => healthKit.fetchWorkoutBundles(const [first, first]),
+        throwsArgumentError,
+      );
+      messenger.setMockMethodCallHandler(
+        channel,
+        (_) async => [_bundlePayload(second), _bundlePayload(first)],
+      );
+      expect(
+        () => healthKit.fetchWorkoutBundles(const [first, second]),
+        throwsA(isA<FormatException>()),
+      );
+    });
   });
 
   group('StravaOAuthChannel', () {
@@ -206,3 +303,20 @@ void main() {
     });
   });
 }
+
+Map<String, Object?> _bundlePayload(String uuid) => {
+  'uuid': uuid,
+  'startMs': 1000,
+  'endMs': 2000,
+  'durationSeconds': 1,
+  'activityType': 13,
+  'activityName': '骑车',
+  'sourceName': null,
+  'sourceBundleId': null,
+  'totalEnergyKcal': null,
+  'totalDistanceMeters': null,
+  'metadata': <String, Object?>{},
+  'events': <Object?>[],
+  'series': <String, Object?>{},
+  'route': <Object?>[],
+};

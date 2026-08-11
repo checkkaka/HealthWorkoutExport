@@ -37,5 +37,18 @@ void main() {
       isCommute(distanceMeters: 20000, durationSeconds: 2400),
       isFalse,
     );
+
+    final fit = Uint8List.fromList(const [
+      0x0E, 0x20, 0xD5, 0x52, 0x20, 0, 0, 0, 0x2E, 0x46, 0x49, 0x54,
+      0x6F, 0x47, 0x40, 0, 0, 0x14, 0, 4, 0xFD, 4, 0x86, 0, 4, 0x85,
+      1, 4, 0x85, 3, 1, 2, 0, 0x11, 0x22, 0x33, 0x44, 4, 3, 2, 1, 8,
+      7, 6, 5, 0x8C, 0xD9, 0xFB,
+    ]);
+    final summary = fitContentSummary(data: fit);
+    expect(summary.gpsPointCount, 1);
+    expect(summary.heartRatePointCount, 1);
+    expect(summary.qualityScore, 11);
+    expect(reencodeFit(data: fit), fit);
+    expect(isValidFit(data: Uint8List.fromList('{"error":true}'.codeUnits)), isFalse);
   });
 }

@@ -70,7 +70,7 @@ class WorkoutCoreRustLib
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -2017170017;
+  int get rustContentHash => 1673619233;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -82,10 +82,16 @@ class WorkoutCoreRustLib
 }
 
 abstract class WorkoutCoreRustLibApi extends BaseApi {
+  FitProbeSummary crateApiSimpleFitContentSummary({required List<int> data});
+
   bool crateApiSimpleIsCommute({
     double? distanceMeters,
     required double durationSeconds,
   });
+
+  bool crateApiSimpleIsValidFit({required List<int> data});
+
+  Uint8List crateApiSimpleReencodeFit({required List<int> data});
 }
 
 class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
@@ -98,6 +104,29 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   });
 
   @override
+  FitProbeSummary crateApiSimpleFitContentSummary({required List<int> data}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(data, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 1)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_fit_probe_summary,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleFitContentSummaryConstMeta,
+        argValues: [data],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleFitContentSummaryConstMeta =>
+      const TaskConstMeta(debugName: "fit_content_summary", argNames: ["data"]);
+
+  @override
   bool crateApiSimpleIsCommute({
     double? distanceMeters,
     required double durationSeconds,
@@ -108,7 +137,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_opt_box_autoadd_f_64(distanceMeters, serializer);
           sse_encode_f_64(durationSeconds, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 1)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -125,6 +154,58 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
     debugName: "is_commute",
     argNames: ["distanceMeters", "durationSeconds"],
   );
+
+  @override
+  bool crateApiSimpleIsValidFit({required List<int> data}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(data, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSimpleIsValidFitConstMeta,
+        argValues: [data],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleIsValidFitConstMeta =>
+      const TaskConstMeta(debugName: "is_valid_fit", argNames: ["data"]);
+
+  @override
+  Uint8List crateApiSimpleReencodeFit({required List<int> data}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(data, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 4)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleReencodeFitConstMeta,
+        argValues: [data],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleReencodeFitConstMeta =>
+      const TaskConstMeta(debugName: "reencode_fit", argNames: ["data"]);
+
+  @protected
+  String dco_decode_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as String;
+  }
 
   @protected
   bool dco_decode_bool(dynamic raw) {
@@ -145,15 +226,59 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  FitProbeSummary dco_decode_fit_probe_summary(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return FitProbeSummary(
+      gpsPointCount: dco_decode_u_32(arr[0]),
+      heartRatePointCount: dco_decode_u_32(arr[1]),
+      qualityScore: dco_decode_u_32(arr[2]),
+    );
+  }
+
+  @protected
+  List<int> dco_decode_list_prim_u_8_loose(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as List<int>;
+  }
+
+  @protected
+  Uint8List dco_decode_list_prim_u_8_strict(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as Uint8List;
+  }
+
+  @protected
   double? dco_decode_opt_box_autoadd_f_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_f_64(raw);
   }
 
   @protected
+  int dco_decode_u_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
+  }
+
+  @protected
+  int dco_decode_u_8(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
+  }
+
+  @protected
   void dco_decode_unit(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return;
+  }
+
+  @protected
+  String sse_decode_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_list_prim_u_8_strict(deserializer);
+    return utf8.decoder.convert(inner);
   }
 
   @protected
@@ -175,6 +300,33 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  FitProbeSummary sse_decode_fit_probe_summary(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_gpsPointCount = sse_decode_u_32(deserializer);
+    var var_heartRatePointCount = sse_decode_u_32(deserializer);
+    var var_qualityScore = sse_decode_u_32(deserializer);
+    return FitProbeSummary(
+      gpsPointCount: var_gpsPointCount,
+      heartRatePointCount: var_heartRatePointCount,
+      qualityScore: var_qualityScore,
+    );
+  }
+
+  @protected
+  List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getUint8List(len_);
+  }
+
+  @protected
+  Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getUint8List(len_);
+  }
+
+  @protected
   double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -186,6 +338,18 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  int sse_decode_u_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint32();
+  }
+
+  @protected
+  int sse_decode_u_8(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint8();
+  }
+
+  @protected
   void sse_decode_unit(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
   }
@@ -194,6 +358,12 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   int sse_decode_i_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getInt32();
+  }
+
+  @protected
+  void sse_encode_String(String self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_prim_u_8_strict(utf8.encoder.convert(self), serializer);
   }
 
   @protected
@@ -215,6 +385,39 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  void sse_encode_fit_probe_summary(
+    FitProbeSummary self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.gpsPointCount, serializer);
+    sse_encode_u_32(self.heartRatePointCount, serializer);
+    sse_encode_u_32(self.qualityScore, serializer);
+  }
+
+  @protected
+  void sse_encode_list_prim_u_8_loose(
+    List<int> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer.putUint8List(
+      self is Uint8List ? self : Uint8List.fromList(self),
+    );
+  }
+
+  @protected
+  void sse_encode_list_prim_u_8_strict(
+    Uint8List self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer.putUint8List(self);
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -222,6 +425,18 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
     if (self != null) {
       sse_encode_box_autoadd_f_64(self, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_u_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint32(self);
+  }
+
+  @protected
+  void sse_encode_u_8(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint8(self);
   }
 
   @protected

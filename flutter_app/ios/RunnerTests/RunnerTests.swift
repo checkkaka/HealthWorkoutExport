@@ -2,6 +2,7 @@ import Flutter
 import HealthKit
 import UIKit
 import XCTest
+
 @testable import Runner
 
 class RunnerTests: XCTestCase {
@@ -31,6 +32,113 @@ class RunnerTests: XCTestCase {
       HealthKitPlugin.millisecondsSinceEpoch(Date(timeIntervalSince1970: 1)),
       1_000
     )
+  }
+
+  func testHealthKitBundleArgumentsRequireUniqueUUIDsAndPreserveOrder() throws {
+    let first = UUID(uuidString: "A4B64E8C-0012-4A0B-993E-140FC6B721C0")!
+    let second = UUID(uuidString: "C369A834-FF0B-4D46-BB79-39246FA8A589")!
+
+    XCTAssertEqual(
+      try HealthKitPlugin.parseWorkoutUUIDs(arguments: [
+        "uuids": [first.uuidString, second.uuidString]
+      ]),
+      [first, second]
+    )
+    XCTAssertThrowsError(try HealthKitPlugin.parseWorkoutUUIDs(arguments: ["uuids": []]))
+    XCTAssertThrowsError(
+      try HealthKitPlugin.parseWorkoutUUIDs(arguments: [
+        "uuids": [first.uuidString, first.uuidString]
+      ])
+    )
+    XCTAssertThrowsError(
+      try HealthKitPlugin.parseWorkoutUUIDs(arguments: ["uuids": ["not-a-uuid"]])
+    )
+  }
+
+  func testHealthKitBundlePayloadMatchesCompleteNativeContract() {
+    let date = Date(timeIntervalSince1970: 1.25)
+    let sample = HealthKitPlugin.quantityPayload(date: date, value: 143, unit: "count/min")
+    let event = HealthKitPlugin.eventPayload(type: .pause, date: date)
+    let route = HealthKitPlugin.routePayload(
+      latitude: 31.34,
+      longitude: 120.55,
+      altitude: 8.5,
+      timestamp: date,
+      speed: 4.2
+    )
+    let payload = HealthKitPlugin.bundlePayload(
+      summary: ["uuid": "workout-id"],
+      metadata: ["HKIndoorWorkout": "true"],
+      events: [event],
+      series: [HKQuantityTypeIdentifier.heartRate.rawValue: [sample]],
+      route: [route]
+    )
+
+    XCTAssertEqual(payload["uuid"] as? String, "workout-id")
+    XCTAssertEqual((payload["metadata"] as? [String: String])?["HKIndoorWorkout"], "true")
+    XCTAssertEqual(((payload["events"] as? [[String: Any]])?.first)?["type"] as? String, "pause")
+    XCTAssertEqual(((payload["events"] as? [[String: Any]])?.first)?["dateMs"] as? Int64, 1_250)
+    let series = payload["series"] as? [String: [[String: Any]]]
+    let heartRate = series?[HKQuantityTypeIdentifier.heartRate.rawValue]
+    XCTAssertEqual(
+      heartRate?.first?["unit"] as? String,
+      "count/min"
+    )
+    XCTAssertEqual(
+      ((payload["route"] as? [[String: Any]])?.first)?["altitudeMeters"] as? Double, 8.5)
+    XCTAssertEqual(
+      ((payload["route"] as? [[String: Any]])?.first)?["speedMetersPerSecond"] as? Double,
+      4.2
+    )
+    let sparseRoute = HealthKitPlugin.routePayload(
+      latitude: 31.34,
+      longitude: 120.55,
+      altitude: nil,
+      timestamp: nil,
+      speed: nil
+    )
+    XCTAssertNil(sparseRoute["altitudeMeters"])
+    XCTAssertNil(sparseRoute["timestampMs"])
+    XCTAssertNil(sparseRoute["speedMetersPerSecond"])
+    XCTAssertEqual(
+      HealthKitPlugin.metadataPayload(from: ["HKIndoorWorkout": true, "LapCount": 2]),
+      ["HKIndoorWorkout": "true", "LapCount": "2"]
+    )
+  }
+
+  func testHealthKitQuantityUnitsMatchSwiftBaseline() {
+    XCTAssertEqual(HealthKitPlugin.preferredUnit(for: .heartRate).unitString, "count/min")
+    XCTAssertEqual(HealthKitPlugin.preferredUnit(for: .activeEnergyBurned).unitString, "kcal")
+    XCTAssertEqual(HealthKitPlugin.preferredUnit(for: .distanceCycling).unitString, "m")
+    XCTAssertEqual(HealthKitPlugin.preferredUnit(for: .cyclingSpeed).unitString, "m/s")
+    XCTAssertEqual(HealthKitPlugin.preferredUnit(for: .runningPower).unitString, "W")
+    XCTAssertEqual(HealthKitPlugin.preferredUnit(for: .runningGroundContactTime).unitString, "ms")
+    XCTAssertEqual(HealthKitPlugin.preferredUnit(for: .stepCount).unitString, "count")
+  }
+
+  func testHealthKitBundleFetchUsesBoundedOrderedFailFastMapping() async throws {
+    XCTAssertEqual(HealthKitPlugin.detailConcurrencyLimit, 3)
+    let probe = ConcurrencyProbe()
+    let values = try await HealthKitPlugin.boundedConcurrentMap(Array(0..<8), limit: 3) { value in
+      await probe.enter()
+      try await Task<Never, Never>.sleep(for: .milliseconds(8 - value))
+      await probe.leave()
+      return value * 2
+    }
+
+    XCTAssertEqual(values, Array(0..<8).map { $0 * 2 })
+    let maximum = await probe.maximum()
+    XCTAssertEqual(maximum, 3)
+
+    do {
+      let _: [Int] = try await HealthKitPlugin.boundedConcurrentMap(Array(0..<8), limit: 3) {
+        if $0 == 2 { throw NSError(domain: "RunnerTests", code: 2) }
+        return $0
+      }
+      XCTFail("任一明细失败时批量读取必须整体失败")
+    } catch {
+      XCTAssertEqual((error as NSError).code, 2)
+    }
   }
 
   func testStravaOAuthAddsStateAndRejectsWrongCallback() throws {
@@ -65,4 +173,20 @@ class RunnerTests: XCTestCase {
       )
     )
   }
+}
+
+private actor ConcurrencyProbe {
+  private var active = 0
+  private var maximumActive = 0
+
+  func enter() {
+    active += 1
+    maximumActive = max(maximumActive, active)
+  }
+
+  func leave() {
+    active -= 1
+  }
+
+  func maximum() -> Int { maximumActive }
 }
