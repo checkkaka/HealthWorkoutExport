@@ -28,3 +28,9 @@ xcuserdata/
 .cursor/
 *.swp
 *~
+
+# Flutter Version Management
+.fvm/
+
+# Rust build artifacts
+rust/**/target/

@@ -150,16 +150,68 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         XCTAssertTrue(VirtualPowerSourceMark.containsVirtualMarkedRecord(in: messages))
     }
 
-    /// 单秒缺速度失败时，应用前后 5 秒功率均值回填，并标 failed。
-    func testFailedSecondUsesNeighborAveragePower() async throws {
+    /// 天气查询和逐秒插值必须使用 FIT SDK 转换后的真实日期，不能把 Garmin epoch 当 Unix epoch。
+    func testWeatherProviderReceivesActualFitDate() async throws {
         let start = Date(timeIntervalSince1970: 1_720_000_000)
         let fit = try makeFit(
             start: start,
             records: [
                 (0, speed: 8, alt: 10, power: nil, cadence: 80),
-                (1, speed: nil, alt: 10, power: nil, cadence: 80),
-                (2, speed: 8, alt: 10, power: nil, cadence: 80)
+                (3600, speed: 8, alt: 10, power: nil, cadence: 80)
             ]
+        )
+        var requestedStart: Date?
+        var requestedEnd: Date?
+
+        let result = try await FitVirtualPowerFiller.fillIfNeeded(
+            fit,
+            weatherProvider: { _, _, from, to in
+                requestedStart = from
+                requestedEnd = to
+                return [
+                    WeatherSample(
+                        date: from,
+                        temperatureC: 20,
+                        relativeHumidityPercent: 50,
+                        pressureMslHpa: 900,
+                        windSpeedMps: 0,
+                        windFromDegrees: 0
+                    ),
+                    WeatherSample(
+                        date: to,
+                        temperatureC: 20,
+                        relativeHumidityPercent: 50,
+                        pressureMslHpa: 1_100,
+                        windSpeedMps: 0,
+                        windFromDegrees: 0
+                    )
+                ]
+            }
+        )
+
+        XCTAssertEqual(try XCTUnwrap(requestedStart).timeIntervalSince1970, start.timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertEqual(
+            try XCTUnwrap(requestedEnd).timeIntervalSince1970,
+            start.addingTimeInterval(3600).timeIntervalSince1970,
+            accuracy: 0.001
+        )
+        let powers = try FitMerger.decode(result.data).recordMesgs
+            .sorted { ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0) }
+            .compactMap { $0.getPower() }
+        XCTAssertEqual(powers.count, 2)
+        XCTAssertGreaterThan(powers[1], powers[0], "后一小时气压更高，逐秒天气插值后的气动功率应更高")
+    }
+
+    /// 单秒缺速度失败时，应用前后 5 秒功率均值回填，并标 failed。
+    func testFailedSecondUsesNeighborAveragePower() async throws {
+        let start = Date(timeIntervalSince1970: 1_720_000_000)
+        let specs: [(offset: Double, speed: Double?, alt: Double, power: UInt16?, cadence: UInt8?)] =
+            (0..<11).map { i in
+                (Double(i), speed: i == 5 ? nil : 8, alt: 10, power: nil, cadence: 80)
+            }
+        let fit = try makeFit(
+            start: start,
+            records: specs
         )
         let result = try await FitVirtualPowerFiller.fillIfNeeded(
             fit,
@@ -167,23 +219,23 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         )
         XCTAssertFalse(result.activityRejected)
         XCTAssertEqual(result.failedCount, 1)
-        XCTAssertEqual(result.filledCount, 3)
+        XCTAssertEqual(result.filledCount, 11)
 
         let records = try FitMerger.decode(result.data).recordMesgs.sorted {
             ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)
         }
-        let p0 = try XCTUnwrap(records[0].getPower())
-        let p1 = try XCTUnwrap(records[1].getPower())
-        let p2 = try XCTUnwrap(records[2].getPower())
-        let expected = UInt16(((Double(p0) + Double(p2)) / 2.0).rounded())
-        XCTAssertEqual(p1, expected)
+        let p4 = try XCTUnwrap(records[4].getPower())
+        let p5 = try XCTUnwrap(records[5].getPower())
+        let p6 = try XCTUnwrap(records[6].getPower())
+        let expected = UInt16(((Double(p4) + Double(p6)) / 2.0).rounded())
+        XCTAssertEqual(p5, expected)
 
-        let mark = records[1].developerFields.first {
+        let mark = records[5].developerFields.first {
             $0.getName() == VirtualPowerSourceMark.fieldName
         }
         XCTAssertEqual(mark?.getValue(index: 0) as? String, VirtualPowerSourceMark.failedValue)
         XCTAssertEqual(
-            records[0].developerFields.first { $0.getName() == VirtualPowerSourceMark.fieldName }?
+            records[4].developerFields.first { $0.getName() == VirtualPowerSourceMark.fieldName }?
                 .getValue(index: 0) as? String,
             VirtualPowerSourceMark.virtualValue
         )

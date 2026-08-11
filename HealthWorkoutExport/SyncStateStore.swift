@@ -30,6 +30,8 @@ struct SyncStateRecord: Codable, Equatable, Identifiable {
     var batchAt: Date?
     /// 实际上传通道（API / 网页）；旧记录可能为空。
     var uploadChannel: StravaUploadMode?
+    /// 实际上传成功的 FIT 是否包含虚拟功率标记；旧记录/去重跳过可能为空。
+    var hasVirtualPower: Bool?
 
     var id: String { fingerprint }
 
@@ -141,18 +143,30 @@ actor SyncStateStore {
 
     private var records: [String: SyncStateRecord] = [:]
     private let fileURL: URL
+    /// 实际上传成功的最终 FIT；按指纹独立保存，避免塞入 JSON/Base64 膨胀。
+    private let fitDirectoryURL: URL
 
-    init(fileURL: URL? = nil) {
+    init(fileURL: URL? = nil, fitDirectoryURL: URL? = nil) {
+        let resolvedFileURL: URL
         if let fileURL {
-            self.fileURL = fileURL
+            resolvedFileURL = fileURL
         } else {
             let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
                 ?? FileManager.default.temporaryDirectory
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            self.fileURL = dir.appendingPathComponent("sync_state.json")
+            resolvedFileURL = dir.appendingPathComponent("sync_state.json")
         }
+        let resolvedFitDirectoryURL = fitDirectoryURL
+            ?? resolvedFileURL.deletingLastPathComponent().appendingPathComponent("synced_fits", isDirectory: true)
+        self.fileURL = resolvedFileURL
+        self.fitDirectoryURL = resolvedFitDirectoryURL
+        try? FileManager.default.createDirectory(at: resolvedFitDirectoryURL, withIntermediateDirectories: true)
+        var protectedDirectory = resolvedFitDirectoryURL
+        var resourceValues = URLResourceValues()
+        resourceValues.isExcludedFromBackup = true
+        try? protectedDirectory.setResourceValues(resourceValues)
         // 启动时加载已有状态。
-        if let data = try? Data(contentsOf: self.fileURL),
+        if let data = try? Data(contentsOf: resolvedFileURL),
            let decoded = try? JSONDecoder().decode([String: SyncStateRecord].self, from: data) {
             records = decoded
         }
@@ -175,6 +189,31 @@ actor SyncStateStore {
         var keys = Set<String>()
         for record in records.values where record.status == .uploaded {
             guard !record.primarySourceId.isEmpty, !record.primaryActivityId.isEmpty else { continue }
+            keys.insert(Self.primaryKey(sourceId: record.primarySourceId, activityId: record.primaryActivityId))
+        }
+        return keys
+    }
+
+    /// 每个主活动最近一次可确认的实际上传结果中，包含虚拟功率的活动键。
+    func virtualPowerPrimaryKeys() -> Set<String> {
+        var checked = Set<String>()
+        var keys = Set<String>()
+        for record in records.values.sorted(by: { $0.updatedAt > $1.updatedAt })
+        where record.status == .uploaded {
+            guard let hasVirtualPower = record.hasVirtualPower else { continue }
+            let key = Self.primaryKey(sourceId: record.primarySourceId, activityId: record.primaryActivityId)
+            guard checked.insert(key).inserted else { continue }
+            if hasVirtualPower { keys.insert(key) }
+        }
+        return keys
+    }
+
+    /// 本机仍保存 Strava 同步版 FIT 的活动键，供列表标签与导出按钮状态使用。
+    func syncedFITPrimaryKeys() -> Set<String> {
+        var keys = Set<String>()
+        for record in records.values where record.status == .uploaded {
+            guard let url = try? fitURL(fingerprint: record.fingerprint),
+                  FileManager.default.fileExists(atPath: url.path) else { continue }
             keys.insert(Self.primaryKey(sourceId: record.primarySourceId, activityId: record.primaryActivityId))
         }
         return keys
@@ -230,6 +269,29 @@ actor SyncStateStore {
         records[fingerprint]
     }
 
+    /// 最近一次实际上传成功且仍有本地文件的 Strava 同步版 FIT。
+    func syncedFITURL(primarySourceId: String, primaryActivityId: String) -> URL? {
+        let candidates = records.values
+            .filter {
+                $0.status == .uploaded
+                    && $0.primarySourceId == primarySourceId
+                    && $0.primaryActivityId == primaryActivityId
+            }
+            .sorted { $0.updatedAt > $1.updatedAt }
+        for record in candidates {
+            guard let url = try? fitURL(fingerprint: record.fingerprint),
+                  FileManager.default.fileExists(atPath: url.path) else { continue }
+            return url
+        }
+        return nil
+    }
+
+    /// 远端已删除时立即撤销旧 FIT，避免覆盖失败/duplicate 后误当成新远端文件。
+    func removeSyncedFIT(fingerprint: String) {
+        guard let url = try? fitURL(fingerprint: fingerprint) else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
     /// 只写回远端 ID（不改 status）；补全按钮用。
     func setRemoteId(fingerprint: String, remoteId: String) {
         guard var record = records[fingerprint] else { return }
@@ -268,6 +330,7 @@ actor SyncStateStore {
     /// 删除单条本地幂等记录（不删 Strava 远端）。
     func remove(fingerprint: String) {
         records.removeValue(forKey: fingerprint)
+        removeSyncedFIT(fingerprint: fingerprint)
         save()
     }
 
@@ -278,13 +341,18 @@ actor SyncStateStore {
             .map(\.fingerprint)
         for key in keys {
             records.removeValue(forKey: key)
+            removeSyncedFIT(fingerprint: key)
         }
         save()
     }
 
     /// 清空全部本地幂等记录（不删 Strava 远端）。
     func clearAll() {
+        let fingerprints = Array(records.keys)
         records.removeAll()
+        for fingerprint in fingerprints {
+            removeSyncedFIT(fingerprint: fingerprint)
+        }
         save()
     }
 
@@ -314,7 +382,8 @@ actor SyncStateStore {
             distanceMeters: distanceMeters,
             durationSeconds: durationSeconds,
             batchAt: batchAt,
-            uploadChannel: nil
+            uploadChannel: nil,
+            hasVirtualPower: nil
         )
         save()
     }
@@ -326,7 +395,9 @@ actor SyncStateStore {
         distanceMeters: Double? = nil,
         durationSeconds: TimeInterval? = nil,
         message: String? = nil,
-        uploadChannel: StravaUploadMode? = nil
+        uploadChannel: StravaUploadMode? = nil,
+        syncedFITData: Data? = nil,
+        hasVirtualPower: Bool? = nil
     ) {
         guard var record = records[fingerprint] else { return }
         record.status = .uploaded
@@ -340,6 +411,19 @@ actor SyncStateStore {
         if let distanceMeters { record.distanceMeters = distanceMeters }
         if let durationSeconds { record.durationSeconds = durationSeconds }
         if let uploadChannel { record.uploadChannel = uploadChannel }
+        if let hasVirtualPower { record.hasVirtualPower = hasVirtualPower }
+        if let syncedFITData {
+            do {
+                try FileManager.default.createDirectory(at: fitDirectoryURL, withIntermediateDirectories: true)
+                try syncedFITData.write(
+                    to: fitURL(fingerprint: fingerprint),
+                    options: [.atomic, .completeFileProtection]
+                )
+            } catch {
+                let failure = "同步 FIT 保存失败：\(error.localizedDescription)"
+                record.message = [record.message, failure].compactMap { $0 }.joined(separator: "；")
+            }
+        }
         record.updatedAt = Date()
         records[fingerprint] = record
         save()
@@ -414,7 +498,8 @@ actor SyncStateStore {
                 distanceMeters: nil,
                 durationSeconds: nil,
                 batchAt: nil,
-                uploadChannel: nil
+                uploadChannel: nil,
+                hasVirtualPower: nil
             )
             save()
             return
@@ -429,5 +514,12 @@ actor SyncStateStore {
     private func save() {
         guard let data = try? JSONEncoder().encode(records) else { return }
         try? data.write(to: fileURL, options: .atomic)
+    }
+
+    private func fitURL(fingerprint: String) throws -> URL {
+        guard !fingerprint.isEmpty, fingerprint.allSatisfy(\.isHexDigit) else {
+            throw CocoaError(.fileWriteInvalidFileName)
+        }
+        return fitDirectoryURL.appendingPathComponent("\(fingerprint).fit")
     }
 }

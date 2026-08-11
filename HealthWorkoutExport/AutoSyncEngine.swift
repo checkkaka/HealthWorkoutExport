@@ -495,7 +495,9 @@ final class AutoSyncEngine {
                         distanceMeters: activity.distanceMeters,
                         durationSeconds: activity.duration,
                         message: uploadMessage,
-                        uploadChannel: uploader.mode
+                        uploadChannel: uploader.mode,
+                        syncedFITData: uploadData,
+                        hasVirtualPower: activityDescription != nil
                     )
                     // 调用 rememberRemote：本批后续预检能立刻看到刚上传的活动。
                     rememberRemote(
@@ -711,7 +713,9 @@ final class AutoSyncEngine {
                     isDuplicate: false,
                     distanceMeters: distanceMeters,
                     durationSeconds: durationSeconds,
-                    uploadChannel: uploader.mode
+                    uploadChannel: uploader.mode,
+                    syncedFITData: fitData,
+                    hasVirtualPower: activityDescription != nil
                 )
                 rememberRemote(
                     &remoteActivities,
@@ -777,6 +781,7 @@ final class AutoSyncEngine {
             }
             // 调用 deleteActivity：仅覆盖路径用网页 Cookie 删远端。
             try await webUploader.deleteActivity(id: remoteId)
+            await stateStore.removeSyncedFIT(fingerprint: fingerprint)
             // 已删除的条目要从预检列表移除，避免后续活动再次匹配到它。
             remoteActivities.removeAll { $0.id == remoteId }
             guard let fitData, let filename else {
@@ -812,7 +817,9 @@ final class AutoSyncEngine {
                     isDuplicate: false,
                     distanceMeters: distanceMeters,
                     durationSeconds: durationSeconds,
-                    uploadChannel: uploader.mode
+                    uploadChannel: uploader.mode,
+                    syncedFITData: fitData,
+                    hasVirtualPower: activityDescription != nil
                 )
                 // 调用 rememberRemote：覆盖重传后写入本批预检列表。
                 rememberRemote(
@@ -848,7 +855,6 @@ final class AutoSyncEngine {
         onProgress(progress)
 
         var notes: [String] = []
-        let batchAt = Date()
         var remoteActivities: [StravaActivityLookup.RemoteActivity] = []
         var skipRestDuplicates = false
         var overwriteRestDuplicates = true
@@ -999,10 +1005,15 @@ final class AutoSyncEngine {
                 if let remoteIdToReplace {
                     // 调用 deleteActivity：勾选重传默认覆盖远端。
                     try await webUploader.deleteActivity(id: remoteIdToReplace)
+                    await stateStore.removeSyncedFIT(fingerprint: fingerprint)
                     remoteActivities.removeAll { $0.id == remoteIdToReplace }
                     notes.append("已删除远端 \(remoteIdToReplace)：\(title)")
                 }
-                // 远端删除成功（或无需删除）后再重置本地幂等行。
+                // 远端删除成功（或无需删除）后再重置本地幂等行，并保留原同步批次。
+                // 旧记录没有 batchAt，历史页原本按 updatedAt 的整分钟归桶。
+                let preservedBatchAt = record.batchAt ?? Date(
+                    timeIntervalSince1970: floor(record.updatedAt.timeIntervalSince1970 / 60) * 60
+                )
                 await stateStore.markPending(
                     fingerprint: fingerprint,
                     primarySourceId: prepared.primarySourceId,
@@ -1012,7 +1023,7 @@ final class AutoSyncEngine {
                     supplementSourceIds: prepared.supplementSourceIds,
                     distanceMeters: prepared.distanceMeters,
                     durationSeconds: prepared.durationSeconds,
-                    batchAt: batchAt
+                    batchAt: preservedBatchAt
                 )
                 // 调用 uploadFit：按当前设置通道上传（重传一律换 external_id）。
                 let result = try await uploader.uploadFit(
@@ -1053,7 +1064,9 @@ final class AutoSyncEngine {
                         distanceMeters: prepared.distanceMeters,
                         durationSeconds: prepared.durationSeconds,
                         message: prepared.uploadMessage,
-                        uploadChannel: uploader.mode
+                        uploadChannel: uploader.mode,
+                        syncedFITData: prepared.uploadData,
+                        hasVirtualPower: prepared.activityDescription != nil
                     )
                     rememberRemote(
                         &remoteActivities,

@@ -8,6 +8,8 @@ struct WorkoutListView: View {
     @State private var showStravaSettings = false
     @State private var showSyncHistory = false
     @State private var uploadedKeys: Set<String> = []
+    @State private var virtualPowerKeys: Set<String> = []
+    @State private var syncedFITKeys: Set<String> = []
     @State private var localRemoteIds: [String: String] = [:]
     @State private var detailWorkout: WorkoutSummary?
 
@@ -29,7 +31,9 @@ struct WorkoutListView: View {
             .sheet(isPresented: $showFitMerge) {
                 FitMergeView(viewModel: viewModel)
             }
-            .sheet(isPresented: $showAutoSync) {
+            .sheet(isPresented: $showAutoSync, onDismiss: {
+                Task { await refreshSyncState() }
+            }) {
                 AutoSyncView(entrySourceId: HealthKitDataSource.sourceId)
             }
             .sheet(isPresented: $showStravaSettings) {
@@ -118,6 +122,18 @@ struct WorkoutListView: View {
                             workout: workout,
                             isSelected: viewModel.selectedIDs.contains(workout.id),
                             isSynced: synced,
+                            hasVirtualPower: virtualPowerKeys.contains(
+                                SyncStateStore.primaryKey(
+                                    sourceId: HealthKitDataSource.sourceId,
+                                    activityId: workout.id.uuidString
+                                )
+                            ),
+                            hasSyncedFIT: syncedFITKeys.contains(
+                                SyncStateStore.primaryKey(
+                                    sourceId: HealthKitDataSource.sourceId,
+                                    activityId: workout.id.uuidString
+                                )
+                            ),
                             remoteId: remoteId,
                             onToggle: { viewModel.toggleSelection(workout.id) },
                             onOpenDetail: { detailWorkout = workout }
@@ -193,7 +209,7 @@ struct WorkoutListView: View {
         }
         ToolbarItem(placement: .topBarTrailing) {
             Button {
-                viewModel.prepareExport()
+                viewModel.prepareExport(syncedFITKeys: syncedFITKeys)
             } label: {
                 Label("导出", systemImage: "square.and.arrow.up")
             }
@@ -202,8 +218,10 @@ struct WorkoutListView: View {
     }
 
     private func refreshSyncState() async {
-        // 从本地同步记录同时刷新已同步徽标与 Strava 远端 ID。
+        // 从本地同步记录同时刷新同步、虚拟功率、同步 FIT 徽标与 Strava 远端 ID。
         uploadedKeys = await SyncStateStore.shared.uploadedPrimaryKeys()
+        virtualPowerKeys = await SyncStateStore.shared.virtualPowerPrimaryKeys()
+        syncedFITKeys = await SyncStateStore.shared.syncedFITPrimaryKeys()
         localRemoteIds = await SyncStateStore.shared.localRemoteIdsByPrimaryKey()
     }
 }
@@ -212,6 +230,8 @@ struct WorkoutRowView: View {
     let workout: WorkoutSummary
     let isSelected: Bool
     let isSynced: Bool
+    let hasVirtualPower: Bool
+    let hasSyncedFIT: Bool
     let remoteId: String?
     let onToggle: () -> Void
     let onOpenDetail: () -> Void
@@ -241,6 +261,22 @@ struct WorkoutRowView: View {
                                     Image(systemName: "checkmark.seal.fill")
                                         .font(.caption)
                                         .foregroundStyle(.green)
+                                }
+                                if hasVirtualPower {
+                                    Text("虚拟功率")
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(.blue)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 2)
+                                        .background(.blue.opacity(0.12), in: Capsule())
+                                }
+                                if hasSyncedFIT {
+                                    Text("同步 FIT")
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(.teal)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 2)
+                                        .background(.teal.opacity(0.12), in: Capsule())
                                 }
                                 if remoteId != nil {
                                     Image(systemName: "bicycle.circle.fill")

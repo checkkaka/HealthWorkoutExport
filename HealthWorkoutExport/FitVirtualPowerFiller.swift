@@ -84,10 +84,8 @@ enum FitVirtualPowerFiller {
 
         let anchors = weatherAnchors(from: records)
         if !anchors.isEmpty,
-           let firstTs = records.first?.getTimestamp()?.timestamp,
-           let lastTs = records.last?.getTimestamp()?.timestamp {
-            let start = Date(timeIntervalSince1970: TimeInterval(firstTs))
-            let end = Date(timeIntervalSince1970: TimeInterval(lastTs))
+           let start = records.first?.getTimestamp()?.date,
+           let end = records.last?.getTimestamp()?.date {
             let provider = weatherProvider ?? { lat, lon, start, end in
                 if let weatherCache {
                     // 调用 OpenMeteoWeatherCache：同批按日+粗网格去重请求。
@@ -504,9 +502,8 @@ enum FitVirtualPowerFiller {
 
         for i in 0..<n {
             let r = records[i]
-            if let ts = r.getTimestamp()?.timestamp {
-                times[i] = Date(timeIntervalSince1970: TimeInterval(ts))
-            }
+            // FIT timestamp 使用 Garmin epoch；由 SDK 统一转换为 Unix Date。
+            times[i] = r.getTimestamp()?.date
             speeds[i] = r.getSpeed() ?? r.getEnhancedSpeed()
             // 海拔优先原生 altitude，缺失时回退 enhanced_altitude。
             alts[i] = r.getAltitude() ?? r.getEnhancedAltitude()
@@ -641,7 +638,7 @@ enum FitVirtualPowerFiller {
             guard let la = record.getPositionLat(), let lo = record.getPositionLong() else { continue }
             let lat = Double(la) / semicirclesPerDegree
             let lon = Double(lo) / semicirclesPerDegree
-            let time = record.getTimestamp().map { Date(timeIntervalSince1970: TimeInterval($0.timestamp)) }
+            let time = record.getTimestamp()?.date
 
             if anchors.isEmpty {
                 append(lat, lon)

@@ -16,6 +16,21 @@ enum ExportFormat: String, CaseIterable, Identifiable {
     }
 }
 
+/// FIT 导出内容：源侧原始文件，或 App 当时实际上传到 Strava 的最终文件。
+enum FITExportSource: String, CaseIterable, Identifiable {
+    case original
+    case strava
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .original: return "原始文件"
+        case .strava: return "Strava 同步版"
+        }
+    }
+}
+
 /// 导出进度回调。
 struct ExportProgress: Sendable {
     let completed: Int
@@ -25,11 +40,13 @@ struct ExportProgress: Sendable {
 
 enum ExportPipelineError: LocalizedError {
     case nothingSelected
+    case missingSyncedFIT(String)
     case writeFailed(String)
 
     var errorDescription: String? {
         switch self {
         case .nothingSelected: return "请先选择要导出的训练"
+        case .missingSyncedFIT(let title): return "“\(title)”没有保存 Strava 同步版 FIT，请重新同步一次后再导出"
         case .writeFailed(let message): return message
         }
     }
@@ -51,6 +68,7 @@ final class ExportPipeline: Sendable {
         summaries: [WorkoutSummary],
         format: ExportFormat,
         timeZone: TimeZone,
+        syncedFITURLs: [String: URL] = [:],
         progress: @MainActor @escaping (ExportProgress) -> Void
     ) async throws -> URL {
         guard !summaries.isEmpty else { throw ExportPipelineError.nothingSelected }
@@ -76,6 +94,13 @@ final class ExportPipeline: Sendable {
             func enqueueNext() {
                 guard let summary = iterator.next() else { return }
                 group.addTask { [healthKit] in
+                    if format == .fit, let sourceURL = syncedFITURLs[summary.id.uuidString] {
+                        let destination = workDir.appendingPathComponent(
+                            Self.fileBaseName(summary: summary, timeZone: timeZone) + ".fit"
+                        )
+                        try FileManager.default.copyItem(at: sourceURL, to: destination)
+                        return
+                    }
                     // 调用 fetchWorkoutBundle：拉取该次训练的完整样本与路线。
                     let bundle = try await healthKit.fetchWorkoutBundle(for: summary)
                     // 调用 writeBundle：按所选格式落盘。
@@ -104,6 +129,7 @@ final class ExportPipeline: Sendable {
         source: any WorkoutDataSource,
         format: ExportFormat,
         timeZone: TimeZone,
+        syncedFITURLs: [String: URL] = [:],
         progress: @MainActor @escaping (ExportProgress) -> Void
     ) async throws -> URL {
         guard !activities.isEmpty else { throw ExportPipelineError.nothingSelected }
@@ -128,13 +154,15 @@ final class ExportPipeline: Sendable {
                 group.addTask {
                     switch format {
                     case .fit:
-                        // 调用 fetchFitData：下载源侧原始 FIT。
-                        let data = try await source.fetchFitData(for: activity)
                         let name = Self.fileBaseName(activity: activity, timeZone: timeZone) + ".fit"
-                        try data.write(
-                            to: workDir.appendingPathComponent(name),
-                            options: .atomic
-                        )
+                        let destination = workDir.appendingPathComponent(name)
+                        if let sourceURL = syncedFITURLs[activity.id] {
+                            try FileManager.default.copyItem(at: sourceURL, to: destination)
+                        } else {
+                            // 调用 fetchFitData：下载源侧原始 FIT。
+                            let data = try await source.fetchFitData(for: activity)
+                            try data.write(to: destination, options: .atomic)
+                        }
                     case .json:
                         // 第三方源无 Health 明细，JSON 仅导出活动摘要。
                         try Self.writeSourceActivityJSON(
@@ -188,6 +216,16 @@ final class ExportPipeline: Sendable {
         return "\(stamp)_\(typeToken)_\(idToken)"
     }
 
+    private static func fileBaseName(summary: WorkoutSummary, timeZone: TimeZone) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyyMMdd_HHmm"
+        let stamp = formatter.string(from: summary.startDate)
+        let typeToken = summary.activityName.replacingOccurrences(of: " ", with: "_")
+        return "\(stamp)_\(typeToken)_\(summary.uuid.uuidString.prefix(8))"
+    }
+
     private static func writeSourceActivityJSON(
         _ activity: SourceActivity,
         to directory: URL,
@@ -213,14 +251,7 @@ final class ExportPipeline: Sendable {
     }
 
     private static func writeBundle(_ bundle: WorkoutBundle, to directory: URL, format: ExportFormat, timeZone: TimeZone) throws {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = timeZone
-        formatter.dateFormat = "yyyyMMdd_HHmm"
-        let stamp = formatter.string(from: bundle.summary.startDate)
-        let typeToken = bundle.summary.activityName
-            .replacingOccurrences(of: " ", with: "_")
-        let base = "\(stamp)_\(typeToken)_\(bundle.summary.uuid.uuidString.prefix(8))"
+        let base = fileBaseName(summary: bundle.summary, timeZone: timeZone)
 
         switch format {
         case .json:

@@ -20,6 +20,10 @@ final class ExportViewModel {
     var isExporting = false
     /// 导出格式：JSON 或 FIT 二选一。
     var exportFormat: ExportFormat = .json
+    /// FIT 导出内容：源数据或当时实际上传到 Strava 的最终文件。
+    var fitExportSource: FITExportSource = .original
+    /// 当前所选活动是否全部存在本地 Strava 同步版 FIT。
+    var canExportSyncedFIT = false
     /// 导出文件使用的时区（影响 JSON 日期、FIT 本地时间与文件名）。
     var exportTimeZone: TimeZone = .current
     /// 时区下拉候选（含当前时区与上海）。
@@ -108,11 +112,20 @@ final class ExportViewModel {
     }
 
     /// 打开导出面板。
-    func prepareExport() {
+    func prepareExport(syncedFITKeys: Set<String>) {
         guard !selectedWorkouts.isEmpty else {
             errorMessage = ExportPipelineError.nothingSelected.localizedDescription
             return
         }
+        canExportSyncedFIT = selectedWorkouts.allSatisfy {
+            syncedFITKeys.contains(
+                SyncStateStore.primaryKey(
+                    sourceId: HealthKitDataSource.sourceId,
+                    activityId: $0.id.uuidString
+                )
+            )
+        }
+        if !canExportSyncedFIT { fitExportSource = .original }
         shareURL = nil
         exportProgress = ExportProgress(completed: 0, total: selectedWorkouts.count)
         showExportSheet = true
@@ -125,11 +138,25 @@ final class ExportViewModel {
         errorMessage = nil
         defer { isExporting = false }
         do {
+            var syncedFITURLs: [String: URL] = [:]
+            if exportFormat == .fit, fitExportSource == .strava {
+                for summary in selectedWorkouts {
+                    let activityId = summary.id.uuidString
+                    guard let url = await SyncStateStore.shared.syncedFITURL(
+                        primarySourceId: HealthKitDataSource.sourceId,
+                        primaryActivityId: activityId
+                    ) else {
+                        throw ExportPipelineError.missingSyncedFIT(summary.activityName)
+                    }
+                    syncedFITURLs[activityId] = url
+                }
+            }
             // 调用 pipeline.export：并发拉明细并按所选时区写 JSON/FIT。
             let url = try await pipeline.export(
                 summaries: selectedWorkouts,
                 format: exportFormat,
-                timeZone: exportTimeZone
+                timeZone: exportTimeZone,
+                syncedFITURLs: syncedFITURLs
             ) { [weak self] progress in
                 self?.exportProgress = progress
             }
@@ -174,6 +201,8 @@ final class SourceExportViewModel {
     var isExporting = false
     /// 第三方默认 FIT（源文件即 FIT）。
     var exportFormat: ExportFormat = .fit
+    var fitExportSource: FITExportSource = .original
+    var canExportSyncedFIT = false
     var exportTimeZone: TimeZone = .current
     let timeZoneOptions = ExportTimeZone.options()
     var errorMessage: String?
@@ -206,12 +235,16 @@ final class SourceExportViewModel {
         selectedIDs.removeAll()
     }
 
-    func prepareExport(from activities: [SourceActivity]) {
+    func prepareExport(from activities: [SourceActivity], syncedFITKeys: Set<String>) {
         let selected = selectedActivities(from: activities)
         guard !selected.isEmpty else {
             errorMessage = ExportPipelineError.nothingSelected.localizedDescription
             return
         }
+        canExportSyncedFIT = selected.allSatisfy {
+            syncedFITKeys.contains(SyncStateStore.primaryKey(sourceId: $0.sourceId, activityId: $0.id))
+        }
+        if !canExportSyncedFIT { fitExportSource = .original }
         shareURL = nil
         exportProgress = ExportProgress(completed: 0, total: selected.count)
         showExportSheet = true
@@ -228,12 +261,25 @@ final class SourceExportViewModel {
         errorMessage = nil
         defer { isExporting = false }
         do {
+            var syncedFITURLs: [String: URL] = [:]
+            if exportFormat == .fit, fitExportSource == .strava {
+                for activity in selected {
+                    guard let url = await SyncStateStore.shared.syncedFITURL(
+                        primarySourceId: activity.sourceId,
+                        primaryActivityId: activity.id
+                    ) else {
+                        throw ExportPipelineError.missingSyncedFIT(activity.title)
+                    }
+                    syncedFITURLs[activity.id] = url
+                }
+            }
             // 调用 pipeline.export：按源拉取 FIT 或写摘要 JSON。
             let url = try await pipeline.export(
                 activities: selected,
                 source: source,
                 format: exportFormat,
-                timeZone: exportTimeZone
+                timeZone: exportTimeZone,
+                syncedFITURLs: syncedFITURLs
             ) { [weak self] progress in
                 self?.exportProgress = progress
             }
