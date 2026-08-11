@@ -15,6 +15,8 @@
 
 - **未完成**：现有 Swift 功能尚未在新架构中通过对等验收。
 - **Rust 已实现，未接入**：纯规则已存在于 `rust/workout_core`，但尚未由 Flutter/原生生产链路调用，不能视为功能完成。
+- **适配层已实现，未接入**：平台通道及契约测试已存在，但尚未接入生产 UI/业务链路，不能视为功能完成。
+- **已实现，待平台验收**：代码和最小自动测试已接入，但尚缺真机或其余适用平台验收，不能视为功能完成。
 - **完成**：实现、自动测试和适用平台验收全部通过；本矩阵初始没有此状态。
 
 ## 平台验收门槛
@@ -39,7 +41,7 @@
 | ID | 当前功能 | Swift 实现基线 | 已有测试 | 目标归属 | 对等验收条件 | 状态 |
 |---|---|---|---|---|---|---|
 | UI-01 | 应用启动与健康/行者/顽鹿三页签 | `HealthWorkoutExportApp.swift`、`RootTabView.swift` | 无 UI 自动测试 | Flutter | 冷启动进入三页签；切换页签不丢列表、选择和正在同步状态；iOS/Android/桌面按平台能力正确展示 | 未完成 |
-| UI-02 | 近 7 天、30 天、今年、全部、自定义日期范围 | `DateRangeAndExportViews.swift`、`WorkoutBundle.swift`、`WorkoutDataSource.swift` | 无日期范围专测 | Flutter + Rust 日期规则 | 各预设生成与 Swift 相同的半开区间；自定义起止颠倒时自动归一；本地日历边界一致 | 未完成 |
+| UI-02 | 近 7 天、30 天、今年、全部、自定义日期范围 | `DateRangeAndExportViews.swift`、`WorkoutBundle.swift`、`WorkoutDataSource.swift` | 无日期范围专测 | Flutter + Rust 日期规则 | 各预设生成与 Swift 相同的半开区间；自定义起止颠倒时自动归一；本地日历边界一致 | 已实现，待平台验收 |
 | UI-03 | 健康训练列表、加载/空态/权限错误、全选与取消全选 | `WorkoutListView.swift`、`ExportViewModel.swift` | 无 UI 自动测试 | Flutter | 加载、空数据、授权失败和重试状态齐全；选择计数与批量选择行为一致 | 未完成 |
 | UI-04 | 第三方源登录态、活动列表、退出、全选与导出入口 | `ThirdPartySourceListView.swift`、`SourceLoginView.swift` | 无 UI 自动测试 | Flutter | 未登录/登录中/已登录/会话过期状态正确；退出清理凭证并回到登录态 | 未完成 |
 | UI-05 | 活动详情、同步印章、虚拟功率/同步 FIT 徽标、Strava 远端 ID | `ActivityDetailSheet.swift`、`WorkoutListView.swift`、`ThirdPartySourceListView.swift` | `SyncFingerprintTests.swift`（同步 FIT 可用性） | Flutter | 三类源展示相同状态；仅合法数字远端 ID 可打开；删除本地记录后徽标立即刷新 | 未完成 |
@@ -54,8 +56,8 @@
 
 | ID | 当前功能 | Swift 实现基线 | 已有测试 | 目标归属 | 对等验收条件 | 状态 |
 |---|---|---|---|---|---|---|
-| HK-01 | HealthKit 可用性、读取授权、隐私说明与 entitlement | `HealthKitService.swift`、`Info.plist`、`HealthWorkoutExport.entitlements` | 无；需真机 | iOS 原生 Swift 插件 | 真机首次授权、拒绝、重新授权和系统设置跳转可用；只申请现有读取类型；非 Apple 平台显示明确不可用/替代入口 | 未完成 |
-| HK-02 | 严格按开始时间查询训练摘要并按时间倒序 | `HealthKitService.swift`、`HealthKitDataSource.swift` | 无；需真机 | iOS 原生 Swift 插件 | `[start,end)` 查询结果、摘要字段、来源名称、活动中文名和排序与 Swift 基线一致 | 未完成 |
+| HK-01 | HealthKit 可用性、读取授权、隐私说明与 entitlement | `HealthKitService.swift`、`Info.plist`、`HealthWorkoutExport.entitlements` | 无；需真机 | iOS 原生 Swift 插件 | 真机首次授权、拒绝、重新授权和系统设置跳转可用；只申请现有读取类型；非 Apple 平台显示明确不可用/替代入口 | 适配层已实现，未接入 |
+| HK-02 | 严格按开始时间查询训练摘要并按时间倒序 | `HealthKitService.swift`、`HealthKitDataSource.swift` | 无；需真机 | iOS 原生 Swift 插件 | `[start,end)` 查询结果、摘要字段、来源名称、活动中文名和排序与 Swift 基线一致 | 适配层已实现，未接入 |
 | HK-03 | 训练缓存与按 UUID 回查，避免列表后逐条 N+1 | `HealthKitService.swift` | 无 | iOS 原生 Swift 插件 | 同批导出优先命中缓存；缓存缺失可按 UUID 回查；并发导出无竞态或错误复用 | 未完成 |
 | HK-04 | 读取心率、能量、距离、步频/踏频、跑步动态、速度和功率等序列 | `HealthKitService.swift`、`WorkoutBundle.swift` | `FitActivityEncoderTests.swift`（编码侧字段） | iOS 原生 Swift 插件 → Rust 批量模型 | 各 quantity 使用与 Swift 相同单位；关联查询失败时保留现有来源/日期兜底；空序列不伪造数据 | 未完成 |
 | HK-05 | 读取路线、多段 route、海拔/时间/速度、训练事件和 metadata | `HealthKitService.swift`、`WorkoutBundle.swift` | `FitActivityEncoderTests.swift`（事件/JSON/路线编码） | iOS 原生 Swift 插件 → Rust 批量模型 | 多段路线顺序稳定；暂停/恢复等事件名称一致；可选值与 metadata 序列化不崩溃 | 未完成 |
@@ -85,7 +87,7 @@
 | FIT-06 | 合并后事件/lap 排序、距离重基准和 session 范围修正 | `FitMerger.swift` | `FitActivityEncoderTests.swift` | Rust | 事件和 lap 时间单调；分段总距离正确；session 覆盖全部合并记录；数组字段完整 | 未完成 |
 | FIT-07 | GPS 速度尖峰识别与修复 | `FitMerger.swift` 中 `FitSpeedSpikeFixer` | `FitActivityEncoderTests.swift`、`VirtualPowerPhysicsTests.swift` | Rust | 瞬时跳变并回落时修复；持续真实加速/急刹不误修；修复后 FIT 仍有效 | 未完成 |
 | FIT-08 | GCJ-02 → WGS-84 坐标转换和 FIT 重写 | `FitMerger.swift` 中 `Gcj02ToWgs84`、`FitGcjCoordinateRewriter` | `FitActivityEncoderTests.swift` | Rust | 中国境内坐标转换与基线误差在容差内；境外不移动；仅开关开启时改写上传副本 | 未完成 |
-| FIT-09 | Gribble 虚拟功率物理、风/坡度/惯性和滑行规则 | `VirtualPowerPhysics.swift`、`VirtualPowerSettings.swift` | `VirtualPowerPhysicsTests.swift` | Rust | 稳态算例、负功率、踏频 0、空气密度、风向、坡度、加速度钳位逐项通过移植测试 | 未完成 |
+| FIT-09 | Gribble 虚拟功率物理、风/坡度/惯性和滑行规则 | `VirtualPowerPhysics.swift`、`VirtualPowerSettings.swift` | `VirtualPowerPhysicsTests.swift` | Rust | 稳态算例、负功率、踏频 0、空气密度、风向、坡度、加速度钳位逐项通过移植测试 | Rust 已实现，未接入 |
 | FIT-10 | Open-Meteo 数据源分流、Archive 回退和网格/日期缓存 | `OpenMeteoWeatherClient.swift`、`OpenMeteoWeatherCache.swift` | `OpenMeteoWeatherClientTests.swift`、`OpenMeteoWeatherCacheTests.swift` | Rust | 近 7 天/2022 后/更早分流一致；失败回退 Archive；取消不回退；缓存键与过期行为一致 | 未完成 |
 | FIT-11 | 虚拟功率覆盖、失败秒邻值、失败率门槛和活动类型过滤 | `FitVirtualPowerFiller.swift` | `FitVirtualPowerFillerTests.swift` | Rust | 现有全部 filler 测试移植通过；失败率 ≥10% 拒绝整场；非骑行跳过；残留功率不泄漏 | 未完成 |
 | FIT-12 | `powerSource=virtual` 标记、结果徽标与活动描述文案 | `VirtualPowerSourceMark.swift`、`VirtualPowerSocialCopy.swift` | `FitVirtualPowerFillerTests.swift`、`VirtualPowerSocialCopyTests.swift` | Rust | 标记可写可读且不破坏 FIT；仅实际写入虚拟功率时展示徽标并生成确认文案 | 未完成 |
@@ -95,7 +97,7 @@
 | ID | 当前功能 | Swift 实现基线 | 已有测试 | 目标归属 | 对等验收条件 | 状态 |
 |---|---|---|---|---|---|---|
 | SYNC-01 | 当天、历史 7/30/90 天、全部和自定义同步区间 | `AutoSyncEngine.swift`、`WorkoutDataSource.swift` | 无专项测试 | Rust | 当天按本地日历 `[00:00,次日00:00)`；历史与自定义半开区间和 Swift 一致 | 未完成 |
-| SYNC-02 | 主源与一个/两个补源活动匹配 | `ActivityMatcher.swift`、`AutoSyncEngine.swift` | `ActivityMatcherTests.swift` | Rust | IoU ≥50% 优先；否则开始差 ≤15 分钟且时长差 ≤20%；擦边和远距离活动不匹配 | 未完成 |
+| SYNC-02 | 主源与一个/两个补源活动匹配 | `ActivityMatcher.swift`、`AutoSyncEngine.swift` | `ActivityMatcherTests.swift` | Rust | IoU ≥50% 优先；否则开始差 ≤15 分钟且时长差 ≤20%；擦边和远距离活动不匹配 | Rust 已实现，未接入 |
 | SYNC-03 | 拉主源 FIT、缺补源可跳过、匹配补源后合并上传 | `AutoSyncEngine.swift` | FIT/匹配有单测，编排无端到端测试 | Rust 编排 + 原生源适配 | 单条补源失败不拖垮主活动；每条结果、跳过原因和计数准确；批次可取消 | 未完成 |
 | SYNC-04 | SHA-256 同步指纹，补源排序后稳定 | `SyncFingerprint.swift` | `SyncFingerprintTests.swift` | Rust | 相同输入和不同补源顺序得到相同 64 位小写摘要；任一业务字段变化会改变指纹 | 未完成 |
 | SYNC-05 | 跨主源开始时间/距离/时长稳定去重 | `SyncFingerprint.swift` 中 `SyncStableDedupe`、`SyncStateStore.swift`、`StravaActivityLookup.swift` | `SyncFingerprintTests.swift` | Rust | 紧窗、宽窗、距离绝对/相对误差和时长误差全部通过；生产链路改为调用 Rust 后再标完成 | Rust 已实现，未接入 |
@@ -135,7 +137,7 @@
 
 | ID | 当前功能 | Swift 实现基线 | 已有测试 | 目标归属 | 对等验收条件 | 状态 |
 |---|---|---|---|---|---|---|
-| SEC-01 | 行者、顽鹿、Strava 凭证与 Cookie 存系统 Keychain | `KeychainStore.swift`、各 DataSource、`StravaUploading.swift` | 无设备级测试 | iOS Keychain / Android Keystore 封装 / 桌面凭证库 | 普通文件、日志、崩溃信息和 Flutter preferences 中无明文秘密；升级迁移后仍可读取；退出/清除彻底删除 | 未完成 |
+| SEC-01 | 行者、顽鹿、Strava 凭证与 Cookie 存系统 Keychain | `KeychainStore.swift`、各 DataSource、`StravaUploading.swift` | 无设备级测试 | iOS Keychain / Android Keystore 封装 / 桌面凭证库 | 普通文件、日志、崩溃信息和 Flutter preferences 中无明文秘密；升级迁移后仍可读取；退出/清除彻底删除 | iOS 适配层已实现，未接入 |
 | SEC-02 | 顽鹿认证请求只允许可信 HTTPS 主机 | `OnelapClient.swift` | `ActivityMatcherTests.swift` | Rust URL 校验 | HTTPS、精确允许域、重定向后主机均校验；HTTP、子域伪装、用户名主机混淆全部拒绝 | 未完成 |
 | SEC-03 | 行者 RSA 登录与会话 Cookie 边界 | `XingzheClient.swift` | `XingzheRateLimitTests.swift`（非安全专项） | Rust + 原生安全存储 | 密码只在登录请求短暂存在；RSA/随机数失败直接中止；sessionid 不发送给非行者域名 | 未完成 |
 | SEC-04 | OAuth state、回调 scheme、token 刷新和网页 CSRF/Cookie 隔离 | `StravaAPIUploader.swift`、`StravaWebUploader.swift` | 无安全专项测试 | 原生认证/WebView + Rust | 回调必须匹配本次 state 和 scheme；Cookie 仅发 Strava；CSRF 缺失不上传/删除；重定向不可越权 | 未完成 |

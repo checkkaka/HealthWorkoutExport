@@ -9,8 +9,8 @@
 - 最终完成条件升级为现有功能全部对等，且自动化测试、iOS/Android/桌面构建与关键真机流程无已知缺陷。
 
 ## Research Findings
-- 当前仓库是原生 SwiftUI iOS 应用，工作区已有大量用户未提交修改。
-- 已安装 Rust 1.97.1（rustup stable）与 Node 24.15.0（fnm）；Flutter/FVM、Android Studio/SDK 未安装。
+- 当前仓库原始实现是原生 SwiftUI iOS 应用；迁移分支旁路新增 Flutter/Rust，未覆盖原工程。
+- 迁移开始前已安装 Rust 1.97.1（rustup stable）与 Node 24.15.0（fnm）；本次会话补充了 Flutter/FVM 与 Android SDK 工具链。
 - 已安装 Xcode 26.6，可继续承担 iOS 原生插件、签名与构建。
 - FVM 4.1.2 已通过 Homebrew 安装，Flutter stable 3.44.9 / Dart 3.12.2 已缓存完成。
 - Android Studio 2026.1.3.8 已通过 Homebrew Cask 安装；SDK/NDK 正在独立配置。
@@ -30,6 +30,16 @@
 | Issue | Resolution |
 |-------|------------|
 | GitNexus 缺少 `tree-sitter-swift`，52 个 Swift 文件无法解析 | 迁移首批不修改原有 Swift 符号，以源码调用检索补足；后续修改符号前需先恢复 Swift 解析能力 |
+
+## 项目外环境台账
+
+完整只读审计已生成到 `/tmp/healthworkoutexport-environment-audit.md`。最终交付前仍需按当时实际状态复核版本、路径、卸载命令、最早安全卸载时机及全局影响。
+
+有强证据属于本次新增：Android Command-line Tools、`~/Library/Android/sdk` 下 Android 36 / Build Tools 36 / platform-tools / NDK 28.2、Android 构建自动补充的 Platform 33 与 CMake 3.22.1、`~/fvm/versions/stable` 的 Flutter 3.44.9 与 Android engine 缓存、`flutter_rust_bridge_codegen` 2.12.0、`cargo-expand` 1.0.124、Rust Android 目标（含构建时补装的 `i686-linux-android`），以及 Gradle 在 `~/.gradle` 写入的 wrapper/依赖缓存。FVM、CocoaPods、Ruby 仅能确认本日链接操作，无法可靠区分新装/升级；rustup、fnm/Node、Xcode/CLT、OpenJDK 17 可确认原先已有。Flutter 用户级配置已固定 JDK 到 `/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home`；这会影响本机所有 Flutter 项目的 Android 构建，可在不再构建本项目后用 `flutter config --jdk-dir=<其他JDK路径>` 调整。Android SDK 许可仍有部分未接受，本次未代用户接受法律条款。
+
+FRB 采用最小集成：没有运行会覆盖 `lib/main.dart` 的 `integrate`，只复用 Cargokit 四平台构建钩子并生成现有 `is_commute` API 绑定。Flutter 测试会编译并加载真实 Rust 动态库，避免仅验证 Dart mock。
+
+iOS 原生通道已接入 HealthKit 可用性、全量现有读取类型授权、设置跳转、半开区间训练摘要，以及兼容旧 service 的 Keychain 读写删除。Bundle ID、URL scheme、entitlement 和隐私文案与原工程保持一致；最低系统也按原工程统一为 iOS 17。
 
 ## Resources
 - `HealthWorkoutExport/WorkoutDataSource.swift`

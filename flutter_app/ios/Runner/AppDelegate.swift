@@ -12,5 +12,11 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "HealthKitPlugin") {
+      HealthKitPlugin.register(with: registrar)
+    }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "KeychainPlugin") {
+      KeychainPlugin.register(with: registrar)
+    }
   }
 }
