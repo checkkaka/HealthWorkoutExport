@@ -41,6 +41,8 @@ FRB 采用最小集成：没有运行会覆盖 `lib/main.dart` 的 `integrate`�
 
 iOS 原生通道已接入 HealthKit 可用性、全量现有读取类型授权、设置跳转、半开区间训练摘要，以及兼容旧 service 的 Keychain 读写删除。Bundle ID、URL scheme、entitlement 和隐私文案与原工程保持一致；最低系统也按原工程统一为 iOS 17。
 
+Flutter 健康页已调用上述 HealthKit 通道，并覆盖授权、日期查询、加载/空态/错误重试与选择状态。iOS Strava OAuth 原生通道也已注册：只接受官方 HTTPS 授权地址，使用 256 位随机 state，并严格校验 `healthworkoutexport://localhost/callback`；token 交换、刷新和设置页仍留给后续切片。Rust 同步指纹已与 Swift 固定摘要对齐，但尚未替换生产调用。
+
 ## Resources
 - `HealthWorkoutExport/WorkoutDataSource.swift`
 - `HealthWorkoutExport/HealthKitService.swift`

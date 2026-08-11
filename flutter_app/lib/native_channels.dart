@@ -27,6 +27,34 @@ final class KeychainChannel {
   }
 }
 
+/// iOS 系统浏览器中的 Strava OAuth 授权边界；token 交换由 Rust 负责。
+final class StravaOAuthChannel {
+  const StravaOAuthChannel()
+    : _channel = const MethodChannel('health_workout_export/strava_oauth');
+
+  final MethodChannel _channel;
+
+  Future<String> authorize(Uri authorizationUrl) async {
+    if (authorizationUrl.scheme != 'https' ||
+        authorizationUrl.host != 'www.strava.com' ||
+        authorizationUrl.path != '/oauth/mobile/authorize') {
+      throw ArgumentError.value(
+        authorizationUrl,
+        'authorizationUrl',
+        '必须是 Strava 授权地址',
+      );
+    }
+    final code = await _channel.invokeMethod<String>('authorize', {
+      'authorizationUrl': authorizationUrl.toString(),
+      'callbackScheme': 'healthworkoutexport',
+    });
+    if (code == null || code.isEmpty) {
+      throw const FormatException('Strava OAuth 未返回授权码');
+    }
+    return code;
+  }
+}
+
 /// iOS HealthKit 的可用性、授权与轻量训练摘要通道。
 final class HealthKitChannel {
   const HealthKitChannel()

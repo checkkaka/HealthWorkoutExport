@@ -159,4 +159,50 @@ void main() {
       );
     });
   });
+
+  group('StravaOAuthChannel', () {
+    const channel = MethodChannel('health_workout_export/strava_oauth');
+
+    tearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    test('仅把固定 Strava HTTPS 授权地址交给原生并返回授权码', () async {
+      MethodCall? received;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        received = call;
+        return 'authorization-code';
+      });
+      final url = Uri.https('www.strava.com', '/oauth/mobile/authorize', {
+        'client_id': '123',
+        'redirect_uri': 'healthworkoutexport://localhost/callback',
+      });
+
+      expect(
+        await const StravaOAuthChannel().authorize(url),
+        'authorization-code',
+      );
+      expect(received?.method, 'authorize');
+      expect(received?.arguments, {
+        'authorizationUrl': url.toString(),
+        'callbackScheme': 'healthworkoutexport',
+      });
+    });
+
+    test('拒绝非 Strava 地址和空授权码', () async {
+      const oauth = StravaOAuthChannel();
+      expect(
+        () => oauth.authorize(
+          Uri.parse('https://evil.example/oauth/mobile/authorize'),
+        ),
+        throwsArgumentError,
+      );
+
+      messenger.setMockMethodCallHandler(channel, (_) async => '');
+      expect(
+        () => oauth.authorize(
+          Uri.parse('https://www.strava.com/oauth/mobile/authorize'),
+        ),
+        throwsA(isA<FormatException>()),
+      );
+    });
+  });
 }

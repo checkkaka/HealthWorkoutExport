@@ -1,8 +1,8 @@
 import Flutter
 import HealthKit
-@testable import Runner
 import UIKit
 import XCTest
+@testable import Runner
 
 class RunnerTests: XCTestCase {
 
@@ -30,6 +30,39 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(
       HealthKitPlugin.millisecondsSinceEpoch(Date(timeIntervalSince1970: 1)),
       1_000
+    )
+  }
+
+  func testStravaOAuthAddsStateAndRejectsWrongCallback() throws {
+    let state = "expected-state"
+    let url = try StravaOAuthSecurity.authorizationURL(
+      from: "https://www.strava.com/oauth/mobile/authorize?client_id=123",
+      state: state
+    )
+    XCTAssertEqual(
+      URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+        .first(where: { $0.name == "state" })?.value,
+      state
+    )
+    XCTAssertTrue(
+      StravaOAuthSecurity.isValidCallback(
+        URL(string: "healthworkoutexport://localhost/callback?code=abc&state=expected-state")!,
+        callbackScheme: "healthworkoutexport",
+        expectedState: state
+      )
+    )
+    XCTAssertFalse(
+      StravaOAuthSecurity.isValidCallback(
+        URL(string: "healthworkoutexport://evil/callback?code=abc&state=expected-state")!,
+        callbackScheme: "healthworkoutexport",
+        expectedState: state
+      )
+    )
+    XCTAssertThrowsError(
+      try StravaOAuthSecurity.authorizationURL(
+        from: "https://www.strava.com/oauth/mobile/authorize?state=attacker",
+        state: state
+      )
     )
   }
 }

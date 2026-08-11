@@ -37,16 +37,21 @@
 - 生产入口会在渲染 UI 前初始化 FRB；iOS 模拟器安装并启动后持续运行，无动态库加载崩溃。
 - 已兼容 Gradle 9 的 `ExecOperations` 并把 FRB Android 插件 compileSdk 对齐 36；四 ABI Rust 编译及 Debug APK 构建通过。
 - Android 构建新增 CMake 3.22.1 与 `i686-linux-android` Rust target，已补入项目外环境台账。
+- Flutter 健康页已接入 HealthKit 生产通道，覆盖可用性、授权、日期查询、加载/空态/错误重试和批量选择；快速切换日期时会丢弃旧请求结果。
+- iOS 已注册 Strava OAuth 原生通道；授权请求使用随机 state，回调严格校验 scheme/host/path/state，并只把授权码返回 Flutter，尚未接入 token 交换与设置页。
+- Rust 已迁移 SHA-256 同步指纹规则，保持 Swift 的整秒 RFC3339、补源排序和空字段语义；当前尚未接入生产同步链路。
+- 本批次验证已覆盖 iOS、macOS、Android 构建和 iOS 模拟器实际启动；Windows 需在 Windows 主机上验收。
+- 审查发现并修复 HealthKit 首次授权期间切换日期的竞态、非 iOS 平台误调用 HealthKit、拒绝权限后缺少系统设置入口；三项均补了组件回归测试。
 
 ### Test Results
 | Test | Expected | Actual | Status |
 |------|----------|--------|--------|
-| `cargo fmt --check && cargo test` | Rust 格式正确、全部通过 | 12/12 通过 | ✅ |
-| `fvm flutter test` | Flutter 单测/组件测试、原生通道契约及真实 Rust FFI 全部通过 | 12/12 通过 | ✅ |
+| `cargo fmt --check && cargo test` | Rust 格式正确、全部通过 | 14/14 通过 | ✅ |
+| `fvm flutter test` | Flutter 单测/组件测试、原生通道契约及真实 Rust FFI 全部通过 | 20/20 通过 | ✅ |
 | `fvm flutter analyze` | 无静态分析问题 | No issues found | ✅ |
 | `fvm flutter build ios --simulator --debug` | Flutter UI 与 Rust 在 iOS 模拟器链接成功 | Built Runner.app | ✅ |
 | `fvm flutter build macos --debug` | Flutter UI 与 Rust 在 macOS 链接成功 | Built health_workout_export.app | ✅ |
-| `xcodebuild test`（Flutter Runner，iOS 26.5 模拟器） | HealthKit/Keychain 原生边界测试通过 | 3/3 通过 | ✅ |
+| `xcodebuild test`（Flutter Runner，iOS 26.5 模拟器） | HealthKit/Keychain/OAuth 原生边界测试通过 | 4/4 通过 | ✅ |
 | `fvm flutter build apk --debug` | Flutter UI 与四 ABI Rust 在 Android 链接成功 | Built app-debug.apk | ✅ |
 | `xcodebuild test`（iOS 26.5 模拟器） | Swift 基线全部通过 | TEST SUCCEEDED | ✅ |
 | `xcodebuild test`（Mac 运行 iOS App） | 可安装测试宿主 | provisioning/未签名宿主不可安装 | ⚠️ 改用 iOS 模拟器完成验证 |

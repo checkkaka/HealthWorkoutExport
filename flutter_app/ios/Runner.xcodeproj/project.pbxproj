@@ -20,6 +20,7 @@
 		A91DC9DA150C67827DCD98E6 /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F6791349EE7FFCE175BEF928 /* Pods_Runner.framework */; };
 		D41000000000000000000002 /* HealthKitPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = D41000000000000000000001 /* HealthKitPlugin.swift */; };
 		D41000000000000000000004 /* KeychainPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = D41000000000000000000003 /* KeychainPlugin.swift */; };
+		D41000000000000000000007 /* StravaOAuthPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = D41000000000000000000006 /* StravaOAuthPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -74,6 +75,7 @@
 		D41000000000000000000001 /* HealthKitPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthKitPlugin.swift; sourceTree = "<group>"; };
 		D41000000000000000000003 /* KeychainPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainPlugin.swift; sourceTree = "<group>"; };
 		D41000000000000000000005 /* Runner.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Runner.entitlements; sourceTree = "<group>"; };
+		D41000000000000000000006 /* StravaOAuthPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StravaOAuthPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -164,6 +166,7 @@
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				D41000000000000000000001 /* HealthKitPlugin.swift */,
 				D41000000000000000000003 /* KeychainPlugin.swift */,
+				D41000000000000000000006 /* StravaOAuthPlugin.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 				D41000000000000000000005 /* Runner.entitlements */,
@@ -401,6 +404,7 @@
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				D41000000000000000000002 /* HealthKitPlugin.swift in Sources */,
 				D41000000000000000000004 /* KeychainPlugin.swift in Sources */,
+				D41000000000000000000007 /* StravaOAuthPlugin.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 			);

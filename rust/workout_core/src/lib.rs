@@ -4,6 +4,10 @@ mod api;
 #[allow(unsafe_code)]
 mod frb_generated;
 
+use sha2::{Digest, Sha256};
+use std::fmt::Write;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
 const SHORT_DISTANCE_KM: f64 = 5.0;
 const SLOW_SPEED_KMH: f64 = 28.0;
 const SLOW_COMMUTE_MAX_DISTANCE_KM: f64 = 16.0;
@@ -19,6 +23,34 @@ const GRAVITY_MPS2: f64 = 9.8067;
 const MAX_REALISTIC_ACCELERATION_MPS2: f64 = 2.0;
 const GPS_SPEED_JUMP_GLITCH_MPS2: f64 = 8.0 / 3.6;
 const GPS_GLITCH_RECOVERY_MAX_DELTA_MPS: f64 = 5.0 / 3.6;
+
+/// 生成与 Swift `SyncFingerprint.make` 相同的同步幂等指纹。
+pub fn sync_fingerprint(
+    primary_source_id: &str,
+    primary_activity_id: &str,
+    start_date_unix_seconds: f64,
+    supplement_source_ids: &[&str],
+    destination: &str,
+) -> Option<String> {
+    if !start_date_unix_seconds.is_finite() {
+        return None;
+    }
+    let start = OffsetDateTime::from_unix_timestamp(start_date_unix_seconds.floor() as i64)
+        .ok()?
+        .format(&Rfc3339)
+        .ok()?;
+    let mut supplements = supplement_source_ids.to_vec();
+    supplements.sort_unstable();
+    let raw = format!(
+        "{primary_source_id}|{primary_activity_id}|{start}|{}|{destination}",
+        supplements.join(",")
+    );
+    let mut fingerprint = String::with_capacity(64);
+    for byte in Sha256::digest(raw) {
+        write!(&mut fingerprint, "{byte:02x}").ok()?;
+    }
+    Some(fingerprint)
+}
 
 /// 骑手、车辆与装备的总质量及骑行阻力参数。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -300,7 +332,7 @@ mod tests {
         ActivityInterval, VirtualPowerParams, activity_match_score, air_density, bearing_degrees,
         best_activity_match_index, grade_percent, headwind_mps, is_commute, is_gps_speed_glitch,
         replace_glitch_speeds_with_previous, sanitized_acceleration_mps2, stable_dedupe_matches,
-        virtual_power_watts,
+        sync_fingerprint, virtual_power_watts,
     };
 
     #[test]
@@ -479,5 +511,61 @@ mod tests {
             Some(24.0 * 60.0 + 2.0),
             Some(24.0 * 60.0 + 12.0)
         ));
+    }
+
+    #[test]
+    fn sync_fingerprint_matches_swift_sha256_and_sorts_supplements() {
+        let a = sync_fingerprint(
+            "healthkit",
+            "abc",
+            1_700_000_000.0,
+            &["xingzhe", "onelap"],
+            "strava",
+        );
+        let b = sync_fingerprint(
+            "healthkit",
+            "abc",
+            1_700_000_000.999,
+            &["onelap", "xingzhe"],
+            "strava",
+        );
+
+        assert_eq!(
+            a.as_deref(),
+            Some("acf456b5da1096d0b5ef26ed1b77d078d509e37b0c20d55bdf1396414ef7a153")
+        );
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn sync_fingerprint_preserves_empty_fields_and_each_business_field() {
+        let empty = sync_fingerprint("", "", 1_700_000_000.999, &[], "strava");
+        assert_eq!(
+            empty.as_deref(),
+            Some("3ace46d36978a272e0e877ec50739b02ea8476d936cb387d47e00501d2b4d8a7")
+        );
+        assert_eq!(
+            sync_fingerprint(
+                "healthkit",
+                "abc",
+                1_700_000_000.0,
+                &["", "onelap"],
+                "strava"
+            )
+            .as_deref(),
+            Some("2ee38594241d391357fb40cf6a8037f852a719f0e9aa7dc7d336ed6579dbd57d")
+        );
+
+        let base = sync_fingerprint("healthkit", "abc", 1_700_000_000.0, &["onelap"], "strava");
+        for changed in [
+            sync_fingerprint("xingzhe", "abc", 1_700_000_000.0, &["onelap"], "strava"),
+            sync_fingerprint("healthkit", "def", 1_700_000_000.0, &["onelap"], "strava"),
+            sync_fingerprint("healthkit", "abc", 1_700_000_001.0, &["onelap"], "strava"),
+            sync_fingerprint("healthkit", "abc", 1_700_000_000.0, &["xingzhe"], "strava"),
+            sync_fingerprint("healthkit", "abc", 1_700_000_000.0, &["onelap"], "garmin"),
+        ] {
+            assert_ne!(base, changed);
+        }
+        assert_eq!(sync_fingerprint("h", "a", f64::NAN, &[], "strava"), None);
     }
 }
