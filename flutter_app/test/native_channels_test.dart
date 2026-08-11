@@ -37,6 +37,181 @@ void main() {
       expect(() => keychain.write('token', ''), throwsArgumentError);
       expect(() => keychain.delete(''), throwsArgumentError);
     });
+
+    test('一次提交完整 Strava 授权', () async {
+      MethodCall? received;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        received = call;
+        return null;
+      });
+
+      await const KeychainChannel().writeStravaAuthorization(
+        clientId: '123',
+        clientSecret: 'secret',
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        expiresAtSeconds: 42,
+      );
+
+      expect(received?.method, 'writeStravaAuthorization');
+      expect(received?.arguments, {
+        'clientId': '123',
+        'clientSecret': 'secret',
+        'accessToken': 'access',
+        'refreshToken': 'refresh',
+        'expiresAtSeconds': 42.0,
+      });
+    });
+  });
+
+  group('PreferencesChannel', () {
+    const channel = MethodChannel('health_workout_export/preferences');
+
+    tearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    test('通过原生 UserDefaults 读写并删除旧应用键', () async {
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return call.method == 'read' ? true : null;
+      });
+
+      const preferences = PreferencesChannel();
+      expect(await preferences.read('strava.gcjCorrectionEnabled'), isTrue);
+      await preferences.write('strava.uploadMode', 'web');
+      await preferences.delete('strava.expiresAt');
+
+      expect(calls.map((call) => call.method), ['read', 'write', 'delete']);
+      expect(calls[0].arguments, {'key': 'strava.gcjCorrectionEnabled'});
+      expect(calls[1].arguments, {'key': 'strava.uploadMode', 'value': 'web'});
+      expect(calls[2].arguments, {'key': 'strava.expiresAt'});
+    });
+
+    test('拒绝空键、未知键和 UserDefaults 不支持的对象', () async {
+      const preferences = PreferencesChannel();
+
+      expect(() => preferences.read(' '), throwsArgumentError);
+      expect(() => preferences.read('arbitrary.key'), throwsArgumentError);
+      expect(
+        () => preferences.write('strava.uploadMode', const <String, String>{}),
+        throwsArgumentError,
+      );
+    });
+  });
+
+  group('StravaSettingsStore', () {
+    const keychainChannel = MethodChannel('health_workout_export/keychain');
+    const preferencesChannel = MethodChannel(
+      'health_workout_export/preferences',
+    );
+
+    tearDown(() async {
+      messenger.setMockMethodCallHandler(keychainChannel, null);
+      messenger.setMockMethodCallHandler(preferencesChannel, null);
+    });
+
+    test('读取并更新旧应用使用的原始设置键', () async {
+      final secrets = <String, String>{
+        'strava.clientId': '123',
+        'strava.clientSecret': 'secret',
+        'strava.accessToken': 'access',
+        'strava.refreshToken': 'refresh',
+        'strava.webCookie': 'cookie=value',
+      };
+      final preferences = <String, Object>{
+        'strava.uploadMode': 'web',
+        'strava.expiresAt': 42.0,
+        'strava.gcjCorrectionEnabled': true,
+      };
+      messenger.setMockMethodCallHandler(keychainChannel, (call) async {
+        final arguments = call.arguments! as Map<Object?, Object?>;
+        if (call.method == 'writeStravaAuthorization') {
+          secrets['strava.clientId'] = arguments['clientId']! as String;
+          secrets['strava.clientSecret'] = arguments['clientSecret']! as String;
+          secrets['strava.accessToken'] = arguments['accessToken']! as String;
+          secrets['strava.refreshToken'] = arguments['refreshToken']! as String;
+          preferences['strava.expiresAt'] = arguments['expiresAtSeconds']!;
+          return null;
+        }
+        final key = arguments['account']! as String;
+        if (call.method == 'read') return secrets[key];
+        if (call.method == 'write') {
+          secrets[key] = arguments['value']! as String;
+        }
+        if (call.method == 'delete') secrets.remove(key);
+        return null;
+      });
+      messenger.setMockMethodCallHandler(preferencesChannel, (call) async {
+        final arguments = call.arguments! as Map<Object?, Object?>;
+        final key = arguments['key']! as String;
+        if (call.method == 'read') return preferences[key];
+        if (call.method == 'write') preferences[key] = arguments['value']!;
+        if (call.method == 'delete') preferences.remove(key);
+        return null;
+      });
+
+      const store = StravaSettingsStore();
+      final snapshot = await store.load();
+      expect(snapshot.mode, StravaUploadMode.web);
+      expect(snapshot.clientId, '123');
+      expect(snapshot.clientSecret, 'secret');
+      expect(snapshot.accessToken, 'access');
+      expect(snapshot.refreshToken, 'refresh');
+      expect(snapshot.expiresAtSeconds, 42);
+      expect(snapshot.webCookieHeader, 'cookie=value');
+      expect(snapshot.gcjCorrectionEnabled, isTrue);
+      expect(snapshot.isApiReady, isTrue);
+
+      await store.saveAuthorization(
+        clientId: ' 456 ',
+        clientSecret: ' next ',
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+        expiresAtSeconds: 84,
+      );
+      await store.setMode(StravaUploadMode.api);
+      await store.setGcjCorrectionEnabled(false);
+
+      expect(secrets['strava.clientId'], '456');
+      expect(secrets['strava.clientSecret'], 'next');
+      expect(secrets['strava.accessToken'], 'new-access');
+      expect(secrets['strava.refreshToken'], 'new-refresh');
+      expect(secrets['strava.webCookie'], 'cookie=value');
+      expect(preferences['strava.expiresAt'], 84.0);
+      expect(preferences['strava.uploadMode'], 'api');
+      expect(preferences['strava.gcjCorrectionEnabled'], isFalse);
+    });
+
+    test('拒绝空凭据和无效过期时间，非法旧模式回退 API', () async {
+      const store = StravaSettingsStore();
+      expect(
+        () => store.saveAuthorization(
+          clientId: ' ',
+          clientSecret: 'secret',
+          accessToken: 'access',
+          refreshToken: 'refresh',
+          expiresAtSeconds: 42,
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => store.saveAuthorization(
+          clientId: '123',
+          clientSecret: 'secret',
+          accessToken: 'access',
+          refreshToken: 'refresh',
+          expiresAtSeconds: double.nan,
+        ),
+        throwsArgumentError,
+      );
+
+      messenger.setMockMethodCallHandler(keychainChannel, (_) async => null);
+      messenger.setMockMethodCallHandler(preferencesChannel, (call) async {
+        final arguments = call.arguments! as Map<Object?, Object?>;
+        return arguments['key'] == 'strava.uploadMode' ? 'invalid' : null;
+      });
+      expect((await store.load()).mode, StravaUploadMode.api);
+    });
   });
 
   group('HealthKitChannel', () {
@@ -261,6 +436,25 @@ void main() {
     const channel = MethodChannel('health_workout_export/strava_oauth');
 
     tearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    test('生成与旧应用一致且正确编码的 Strava 授权地址', () {
+      final url = StravaOAuthChannel.authorizationUri('123');
+
+      expect(url.scheme, 'https');
+      expect(url.host, 'www.strava.com');
+      expect(url.path, '/oauth/mobile/authorize');
+      expect(url.queryParameters, {
+        'client_id': '123',
+        'redirect_uri': 'healthworkoutexport://localhost/callback',
+        'response_type': 'code',
+        'approval_prompt': 'auto',
+        'scope': 'activity:read_all,activity:write,read',
+      });
+      expect(
+        () => StravaOAuthChannel.authorizationUri(' '),
+        throwsArgumentError,
+      );
+    });
 
     test('仅把固定 Strava HTTPS 授权地址交给原生并返回授权码', () async {
       MethodCall? received;

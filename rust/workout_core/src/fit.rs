@@ -164,7 +164,7 @@ pub fn is_valid_fit(data: &[u8]) -> bool {
     decode_fit(data).is_ok()
 }
 
-/// 当前无修改重编码切片：验证后原样输出，未知消息和数组字段不会丢失。
+/// 当前无修改参数：严格校验后原样输出，未知消息、数组字段和 developer fields 不会丢失。
 pub fn reencode_fit(data: &[u8]) -> Result<Vec<u8>, FitDecodeError> {
     decode_fit(data)?;
     Ok(data.to_vec())
@@ -304,12 +304,64 @@ mod tests {
         assert_eq!(reencode_fit(&input).unwrap(), input);
     }
 
+    #[test]
+    fn accepts_12_byte_header_and_zero_14_byte_header_crc() {
+        let data = [
+            0x40, 0, 0, 20, 0, 1, 3, 1, 0x02, // Record + heart_rate
+            0x00, 140,
+        ];
+        let twelve_byte_header = fit_file_with_header(&data, 12, false);
+        assert_eq!(
+            decode_fit(&twelve_byte_header)
+                .unwrap()
+                .heart_rate_point_count,
+            1
+        );
+        assert_eq!(
+            reencode_fit(&twelve_byte_header).unwrap(),
+            twelve_byte_header
+        );
+
+        let zero_header_crc = fit_file_with_header(&data, 14, true);
+        assert_eq!(
+            decode_fit(&zero_header_crc).unwrap().heart_rate_point_count,
+            1
+        );
+        assert_eq!(reencode_fit(&zero_header_crc).unwrap(), zero_header_crc);
+    }
+
+    #[test]
+    fn replacing_local_definition_changes_following_message_shape() {
+        let input = fit_file(&[
+            0x40, 0, 0, 20, 0, 1, // local 0 = Record
+            3, 1, 0x02, // heart_rate
+            0x00, 140, 0x40, 0, 0, 0x34, 0x12, 1, // local 0 改为未知消息
+            77, 3, 0x0D, // 三字节数组字段
+            0x00, 0xA1, 0xB2, 0xC3,
+        ]);
+        assert_eq!(
+            decode_fit(&input).unwrap(),
+            FitContentSummary {
+                gps_point_count: 0,
+                heart_rate_point_count: 1,
+            }
+        );
+        assert_eq!(reencode_fit(&input).unwrap(), input);
+    }
+
     fn fit_file(data: &[u8]) -> Vec<u8> {
-        let mut bytes = vec![14, 0x20, 0x54, 0x08];
+        fit_file_with_header(data, 14, false)
+    }
+
+    fn fit_file_with_header(data: &[u8], header_size: u8, zero_header_crc: bool) -> Vec<u8> {
+        assert!(matches!(header_size, 12 | 14));
+        let mut bytes = vec![header_size, 0x20, 0x54, 0x08];
         bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
         bytes.extend_from_slice(b".FIT");
-        let header_crc = crc16(&bytes);
-        bytes.extend_from_slice(&header_crc.to_le_bytes());
+        if header_size == 14 {
+            let header_crc = if zero_header_crc { 0 } else { crc16(&bytes) };
+            bytes.extend_from_slice(&header_crc.to_le_bytes());
+        }
         bytes.extend_from_slice(data);
         let file_crc = crc16(&bytes);
         bytes.extend_from_slice(&file_crc.to_le_bytes());

@@ -44,6 +44,9 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
 
   @protected
+  StravaTokenResult dco_decode_strava_token_result(dynamic raw);
+
+  @protected
   int dco_decode_u_32(dynamic raw);
 
   @protected
@@ -75,6 +78,11 @@ abstract class WorkoutCoreRustLibApiImplPlatform
 
   @protected
   double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer);
+
+  @protected
+  StravaTokenResult sse_decode_strava_token_result(
+    SseDeserializer deserializer,
+  );
 
   @protected
   int sse_decode_u_32(SseDeserializer deserializer);
@@ -117,6 +125,12 @@ abstract class WorkoutCoreRustLibApiImplPlatform
 
   @protected
   void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_strava_token_result(
+    StravaTokenResult self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_u_32(int self, SseSerializer serializer);

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'date_range.dart';
 import 'native_channels.dart';
 import 'src/rust/frb_generated.dart';
+import 'strava_settings_page.dart';
 
 Future<void> main() => startApp();
 
@@ -23,9 +24,11 @@ class HealthWorkoutExportApp extends StatelessWidget {
   const HealthWorkoutExportApp({
     super.key,
     this.healthKit,
+    this.stravaSettingsEnabled,
   });
 
   final HealthKitChannel? healthKit;
+  final bool? stravaSettingsEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -40,15 +43,24 @@ class HealthWorkoutExportApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
       ),
-      home: _RootTabsPage(healthKit: platformHealthKit),
+      home: _RootTabsPage(
+        healthKit: platformHealthKit,
+        stravaSettingsEnabled:
+            stravaSettingsEnabled ??
+            defaultTargetPlatform == TargetPlatform.iOS,
+      ),
     );
   }
 }
 
 class _RootTabsPage extends StatefulWidget {
-  const _RootTabsPage({required this.healthKit});
+  const _RootTabsPage({
+    required this.healthKit,
+    required this.stravaSettingsEnabled,
+  });
 
   final HealthKitChannel? healthKit;
+  final bool stravaSettingsEnabled;
 
   @override
   State<_RootTabsPage> createState() => _RootTabsPageState();
@@ -64,14 +76,31 @@ class _RootTabsPageState extends State<_RootTabsPage> {
         title: '健康训练',
         sourceName: '健康',
         healthKit: widget.healthKit,
-        unavailableMessage:
-            widget.healthKit == null ? '此平台不支持 HealthKit' : null,
+        unavailableMessage: widget.healthKit == null
+            ? '此平台不支持 HealthKit'
+            : null,
       ),
       const _SourcePage(title: '行者活动', sourceName: '行者'),
       const _SourcePage(title: '顽鹿活动', sourceName: '顽鹿'),
     ];
     return Scaffold(
-      appBar: AppBar(title: Text(pages[_selectedIndex].title)),
+      appBar: AppBar(
+        title: Text(pages[_selectedIndex].title),
+        actions: [
+          if (widget.stravaSettingsEnabled)
+            IconButton(
+              tooltip: 'Strava 设置',
+              icon: const Icon(Icons.settings),
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const StravaSettingsPage(),
+                  ),
+                );
+              },
+            ),
+        ],
+      ),
       body: IndexedStack(index: _selectedIndex, children: pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,

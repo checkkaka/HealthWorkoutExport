@@ -28,8 +28,49 @@ pub fn is_valid_fit(data: Vec<u8>) -> bool {
     crate::fit::is_valid_fit(&data)
 }
 
-/// 当前重编码保持全部未知消息和数组字段原字节不变。
+/// 严格校验后原样返回 FIT；当前接口没有编辑参数。
 #[flutter_rust_bridge::frb(sync)]
 pub fn reencode_fit(data: Vec<u8>) -> Result<Vec<u8>, String> {
     crate::fit::reencode_fit(&data).map_err(|error| format!("{error:?}"))
+}
+
+#[derive(Clone)]
+pub struct StravaTokenResult {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_at: f64,
+}
+
+pub async fn strava_exchange_code(
+    client_id: String,
+    client_secret: String,
+    code: String,
+) -> Result<StravaTokenResult, String> {
+    let client = crate::strava::StravaTokenClient::new().map_err(|error| error.to_string())?;
+    let token = client
+        .exchange_code(&client_id, &client_secret, &code)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(token_result(token))
+}
+
+pub async fn strava_refresh_token(
+    client_id: String,
+    client_secret: String,
+    refresh_token: String,
+) -> Result<StravaTokenResult, String> {
+    let client = crate::strava::StravaTokenClient::new().map_err(|error| error.to_string())?;
+    let token = client
+        .refresh(&client_id, &client_secret, &refresh_token)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(token_result(token))
+}
+
+fn token_result(token: crate::strava::StravaToken) -> StravaTokenResult {
+    StravaTokenResult {
+        access_token: token.access_token().to_owned(),
+        refresh_token: token.refresh_token().to_owned(),
+        expires_at: token.expires_at(),
+    }
 }

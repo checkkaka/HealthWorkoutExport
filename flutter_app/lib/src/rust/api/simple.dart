@@ -6,7 +6,8 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `token_result`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `fmt`, `fmt`
 
 /// Flutter 调用的最小同步入口，直接复用已测试的核心规则。
 bool isCommute({double? distanceMeters, required double durationSeconds}) =>
@@ -22,9 +23,29 @@ FitProbeSummary fitContentSummary({required List<int> data}) =>
 bool isValidFit({required List<int> data}) =>
     WorkoutCoreRustLib.instance.api.crateApiSimpleIsValidFit(data: data);
 
-/// 当前重编码保持全部未知消息和数组字段原字节不变。
+/// 严格校验后原样返回 FIT；当前接口没有编辑参数。
 Uint8List reencodeFit({required List<int> data}) =>
     WorkoutCoreRustLib.instance.api.crateApiSimpleReencodeFit(data: data);
+
+Future<StravaTokenResult> stravaExchangeCode({
+  required String clientId,
+  required String clientSecret,
+  required String code,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleStravaExchangeCode(
+  clientId: clientId,
+  clientSecret: clientSecret,
+  code: code,
+);
+
+Future<StravaTokenResult> stravaRefreshToken({
+  required String clientId,
+  required String clientSecret,
+  required String refreshToken,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleStravaRefreshToken(
+  clientId: clientId,
+  clientSecret: clientSecret,
+  refreshToken: refreshToken,
+);
 
 class FitProbeSummary {
   final int gpsPointCount;
@@ -51,4 +72,29 @@ class FitProbeSummary {
           gpsPointCount == other.gpsPointCount &&
           heartRatePointCount == other.heartRatePointCount &&
           qualityScore == other.qualityScore;
+}
+
+class StravaTokenResult {
+  final String accessToken;
+  final String refreshToken;
+  final double expiresAt;
+
+  const StravaTokenResult({
+    required this.accessToken,
+    required this.refreshToken,
+    required this.expiresAt,
+  });
+
+  @override
+  int get hashCode =>
+      accessToken.hashCode ^ refreshToken.hashCode ^ expiresAt.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is StravaTokenResult &&
+          runtimeType == other.runtimeType &&
+          accessToken == other.accessToken &&
+          refreshToken == other.refreshToken &&
+          expiresAt == other.expiresAt;
 }

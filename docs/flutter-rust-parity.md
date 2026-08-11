@@ -16,6 +16,7 @@
 - **未完成**：现有 Swift 功能尚未在新架构中通过对等验收。
 - **Rust 已实现，未接入**：纯规则已存在于 `rust/workout_core`，但尚未由 Flutter/原生生产链路调用，不能视为功能完成。
 - **Rust 部分实现，已接桥**：已有可由 Flutter 调用的 Rust 子能力，但本行仍有语义处理或生产流程未迁移，不能视为功能完成。
+- **部分实现，已接入**：生产 UI/调用链已接入一个可用子流程，但本行仍有明确缺口或真机门禁，不能视为功能完成。
 - **适配层已实现，未接入**：平台通道及契约测试已存在，但尚未接入生产 UI/业务链路，不能视为功能完成。
 - **已实现，待平台验收**：代码和最小自动测试已接入，但尚缺真机或其余适用平台验收，不能视为功能完成。
 - **完成**：实现、自动测试和适用平台验收全部通过；本矩阵初始没有此状态。
@@ -50,7 +51,7 @@
 | UI-07 | FIT 导入、训练选择、主源、时间对齐、合并结果 | `FitMergeView.swift` | `FitActivityEncoderTests.swift`（合并系列） | Flutter + Rust | 单文件直接导出；多文件必须选择主源；自动/手动/绝对时间模式和结果提示一致 | 未完成 |
 | UI-08 | 自动同步配置、全局进度、继续/重试/停止和重复活动决策 | `AutoSyncView.swift`、`SyncSession.swift` | 无 UI 自动测试 | Flutter + Rust | 主补源联动、未登录禁选、当天/历史配置、重复弹窗、本批决策、继续/重试/取消均与 Swift 一致 | 未完成 |
 | UI-09 | 同步历史筛选、批次选择、重传、清理、远端 ID 补全和异常速度扫描 | `SyncHistoryView.swift` | `SyncFingerprintTests.swift`、`StravaActivityLookupTests.swift` | Flutter + Rust | 失败/无远端 ID/去重/API/网页筛选正确；全选范围与批次选择正确；扫描与补全结果可追溯 | 未完成 |
-| UI-10 | Strava 模式、OAuth、Cookie、GCJ 与限额设置页 | `StravaSettingsView.swift` | `StravaActivityLookupTests.swift`（限额解析） | Flutter + 原生认证适配 | API/网页模式切换、授权状态、Cookie 清理、GCJ 开关、15 分钟与每日限额展示一致 | 未完成 |
+| UI-10 | Strava 模式、OAuth、Cookie、GCJ 与限额设置页 | `StravaSettingsView.swift` | `StravaActivityLookupTests.swift`（限额解析） | Flutter + 原生认证适配 | API/网页模式切换、授权状态、Cookie 清理、GCJ 开关、15 分钟与每日限额展示一致 | 部分实现，已接入 |
 | UI-11 | 中文文案、动态字体、读屏标签与破坏性操作确认 | 全部 SwiftUI 视图 | 无专项测试 | Flutter | 现有中文含义不丢失；主要操作支持系统字体缩放和读屏；清空、退出、删除均二次确认 | 未完成 |
 
 ## 2. HealthKit
@@ -113,7 +114,7 @@
 | ID | 当前功能 | Swift 实现基线 | 已有测试 | 目标归属 | 对等验收条件 | 状态 |
 |---|---|---|---|---|---|---|
 | STRAVA-01 | API/网页两种上传模式和统一上传契约 | `StravaUploading.swift`、两个 Uploader | `StravaActivityLookupTests.swift`（轮询/错误） | Rust 接口 + 原生认证/WebView | 两模式 readiness、上传结果、错误和重复语义统一；切换模式不丢各自凭证 | 未完成 |
-| STRAVA-02 | OAuth 自定义 scheme、token 保存/刷新与 scope | `StravaAPIUploader.swift`、`StravaUploading.swift`、`Info.plist` | 无真实 OAuth 自动测试 | iOS AuthenticationServices / Android 浏览器认证 + Rust token 客户端 | `healthworkoutexport://localhost/callback` 在 iOS 保持兼容；授权、取消、过期刷新、撤销后重登均通过 | 适配层已实现，未接入 |
+| STRAVA-02 | OAuth 自定义 scheme、token 保存/刷新与 scope | `StravaAPIUploader.swift`、`StravaUploading.swift`、`Info.plist` | 无真实 OAuth 自动测试 | iOS AuthenticationServices / Android 浏览器认证 + Rust token 客户端 | `healthworkoutexport://localhost/callback` 在 iOS 保持兼容；授权、取消、过期刷新、撤销后重登均通过 | 部分实现，已接入 |
 | STRAVA-03 | Uploads API multipart FIT、轮询、错误清洗与远端 ID | `StravaAPIUploader.swift`、`StravaUploading.swift` | `StravaActivityLookupTests.swift` | Rust | 首次立即轮询、总预算约 70 秒、处理中/成功/重复/硬失败分支一致；HTML 错误不会直接展示 | 未完成 |
 | STRAVA-04 | API 活动列表、详情速度、分页和限额响应头 | `StravaAPIUploader.swift`、`StravaActivityLookup.swift` | `StravaActivityLookupTests.swift` | Rust | 活动分页无重复遗漏；ID 类型兼容；15 分钟/每日 read/overall 限额解析与 429 保留 | 未完成 |
 | STRAVA-05 | WebView 登录 Cookie、CSRF 上传、网页活动列表和 Cookie 删除远端 | `StravaWebUploader.swift` | 重复文案有单测；真实网页无自动测试 | 原生 WebView/Cookie + Rust/原生网页客户端 | 登录后 Cookie 可恢复；CSRF 上传可用；Cookie 过期提示明确；覆盖删除只命中目标活动；网页改版失败不损坏本地状态 | 未完成 |
@@ -130,7 +131,7 @@
 | STORE-01 | `sync_state.json` 状态机：pending/uploaded/failed/duplicate/channel | `SyncStateStore.swift` | `SyncFingerprintTests.swift` | Rust 持久化模型 + 原生文件目录 | 冷启动往返不丢字段；uploaded 可被后台硬错误改为 failed；duplicate 可补远端 ID；旧字段兼容 | 未完成 |
 | STORE-02 | 按指纹保存最终同步 FIT，并维护主活动索引/徽标 | `SyncStateStore.swift` | `SyncFingerprintTests.swift` | Rust 索引 + 原生文件存储 | 上传成功原子保存；列表索引只反映真实存在文件；删除记录同步删 FIT；旧记录无文件时正确降级 | 未完成 |
 | STORE-03 | `pending_resync` 覆盖恢复包 | `SyncStateStore.swift` 中 `ResyncRecoveryStore` | `SyncFingerprintTests.swift` | Rust 编解码 + 原生受保护文件 | 仅合法十六进制指纹可成为文件名；保存/读取/删除往返一致；崩溃后可恢复 | 未完成 |
-| STORE-04 | Strava、虚拟功率与界面偏好 | `StravaUploading.swift`、`VirtualPowerSettings.swift`、各 ViewModel | 部分纯规则测试 | Flutter preferences + 原生安全存储 | 模式、GCJ、惯性、质量、车重、CdA 等默认值和持久化一致；凭证绝不进入普通 preferences | 未完成 |
+| STORE-04 | Strava、虚拟功率与界面偏好 | `StravaUploading.swift`、`VirtualPowerSettings.swift`、各 ViewModel | 部分纯规则测试 | Flutter preferences + 原生安全存储 | 模式、GCJ、惯性、质量、车重、CdA 等默认值和持久化一致；凭证绝不进入普通 preferences | 部分实现，已接入 |
 | STORE-05 | Open-Meteo 缓存 | `OpenMeteoWeatherCache.swift` | `OpenMeteoWeatherCacheTests.swift` | Rust | 同网格/同日/同来源命中；跨日或来源变化未命中；容量和生命周期不会无限增长 | 未完成 |
 | STORE-06 | 现有数据迁移与回滚 | 当前 Swift 文件/Keychain/UserDefaults 键 | 无迁移测试 | 原生迁移层 + Rust schema | 首次新版本启动可读取原 App 的凭证、设置、同步记录、最终 FIT 和恢复文件；失败不删除旧数据；可回滚 | 未完成 |
 
@@ -138,10 +139,10 @@
 
 | ID | 当前功能 | Swift 实现基线 | 已有测试 | 目标归属 | 对等验收条件 | 状态 |
 |---|---|---|---|---|---|---|
-| SEC-01 | 行者、顽鹿、Strava 凭证与 Cookie 存系统 Keychain | `KeychainStore.swift`、各 DataSource、`StravaUploading.swift` | 无设备级测试 | iOS Keychain / Android Keystore 封装 / 桌面凭证库 | 普通文件、日志、崩溃信息和 Flutter preferences 中无明文秘密；升级迁移后仍可读取；退出/清除彻底删除 | iOS 适配层已实现，未接入 |
+| SEC-01 | 行者、顽鹿、Strava 凭证与 Cookie 存系统 Keychain | `KeychainStore.swift`、各 DataSource、`StravaUploading.swift` | 无设备级测试 | iOS Keychain / Android Keystore 封装 / 桌面凭证库 | 普通文件、日志、崩溃信息和 Flutter preferences 中无明文秘密；升级迁移后仍可读取；退出/清除彻底删除 | 部分实现，已接入 |
 | SEC-02 | 顽鹿认证请求只允许可信 HTTPS 主机 | `OnelapClient.swift` | `ActivityMatcherTests.swift` | Rust URL 校验 | HTTPS、精确允许域、重定向后主机均校验；HTTP、子域伪装、用户名主机混淆全部拒绝 | 未完成 |
 | SEC-03 | 行者 RSA 登录与会话 Cookie 边界 | `XingzheClient.swift` | `XingzheRateLimitTests.swift`（非安全专项） | Rust + 原生安全存储 | 密码只在登录请求短暂存在；RSA/随机数失败直接中止；sessionid 不发送给非行者域名 | 未完成 |
-| SEC-04 | OAuth state、回调 scheme、token 刷新和网页 CSRF/Cookie 隔离 | `StravaAPIUploader.swift`、`StravaWebUploader.swift` | 无安全专项测试 | 原生认证/WebView + Rust | 回调必须匹配本次 state 和 scheme；Cookie 仅发 Strava；CSRF 缺失不上传/删除；重定向不可越权 | 适配层已实现，未接入 |
+| SEC-04 | OAuth state、回调 scheme、token 刷新和网页 CSRF/Cookie 隔离 | `StravaAPIUploader.swift`、`StravaWebUploader.swift` | 无安全专项测试 | 原生认证/WebView + Rust | 回调必须匹配本次 state 和 scheme；Cookie 仅发 Strava；CSRF 缺失不上传/删除；重定向不可越权 | 部分实现，已接入 |
 | SEC-05 | 同步 FIT/恢复文件完整保护、原子写入、排除备份 | `SyncStateStore.swift` | `SyncFingerprintTests.swift` | iOS 原生文件保护 / Android 加密存储 / 桌面权限 | iOS 维持 complete file protection 与不备份；中断写入不产生半文件；各平台采用等价的最小权限 | 未完成 |
 | SEC-06 | HealthKit 本地处理、最小授权与隐私披露 | `HealthKitService.swift`、`Info.plist`、教程 | 无；需真机/审核 | 原生 | 只读且只请求当前需要类型；未授权数据不上传；隐私文案与实际流向一致 | 未完成 |
 | SEC-07 | 不可信 FIT、JSON、远端响应和文件名输入验证 | FIT/导出/Client/Store 各实现 | 仅部分非 FIT、JSON nil、错误解析测试 | Rust | 畸形/超大输入有上限并返回可诊断错误；路径穿越、zip slip、崩溃、越界和秘密回显测试通过 | 未完成 |

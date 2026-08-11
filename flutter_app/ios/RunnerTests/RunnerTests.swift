@@ -26,6 +26,103 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual((response as? FlutterError)?.code, "invalid_arguments")
   }
 
+  func testKeychainParsesCompleteStravaAuthorization() throws {
+    let authorization = try KeychainPlugin.parseStravaAuthorization(arguments: [
+      "clientId": "123",
+      "clientSecret": "secret",
+      "accessToken": "access",
+      "refreshToken": "refresh",
+      "expiresAtSeconds": 42.0,
+    ])
+    XCTAssertEqual(authorization.clientId, "123")
+    XCTAssertEqual(authorization.clientSecret, "secret")
+    XCTAssertEqual(authorization.accessToken, "access")
+    XCTAssertEqual(authorization.refreshToken, "refresh")
+    XCTAssertEqual(authorization.expiresAtSeconds, 42)
+
+    XCTAssertThrowsError(
+      try KeychainPlugin.parseStravaAuthorization(arguments: [
+        "clientId": "123",
+        "clientSecret": "secret",
+        "accessToken": "",
+        "refreshToken": "refresh",
+        "expiresAtSeconds": 42.0,
+      ])
+    )
+  }
+
+  func testKeychainAuthorizationRestoresEveryPriorValueAfterIntermediateFailure() throws {
+    let authorization = try KeychainPlugin.parseStravaAuthorization(arguments: [
+      "clientId": "new-id",
+      "clientSecret": "new-secret",
+      "accessToken": "new-access",
+      "refreshToken": "new-refresh",
+      "expiresAtSeconds": 42.0,
+    ])
+    let original = [
+      "strava.clientId": "old-id",
+      "strava.clientSecret": "old-secret",
+      "strava.accessToken": "old-access",
+      "strava.refreshToken": "old-refresh",
+    ]
+
+    for failureAt in 2...4 {
+      var stored = original
+      var writeCount = 0
+      let outcome = KeychainPlugin.performStravaAuthorizationTransaction(
+        authorization,
+        read: { (stored[$0], nil) },
+        write: { account, value in
+          writeCount += 1
+          if writeCount == failureAt {
+            return FlutterError(code: "forced_failure", message: nil, details: nil)
+          }
+          stored[account] = value
+          return nil
+        },
+        restore: { value, account in
+          stored[account] = value
+          return true
+        }
+      )
+
+      XCTAssertEqual(outcome.error?.code, "forced_failure")
+      XCTAssertFalse(outcome.rollbackFailed)
+      XCTAssertEqual(stored, original)
+    }
+  }
+
+  func testPreferencesRoundTripsLegacyStravaKeysAndRejectsInvalidArguments() {
+    let suiteName = "RunnerTests.Preferences.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let plugin = PreferencesPlugin(defaults: defaults)
+
+    var response: Any?
+    plugin.handle(
+      FlutterMethodCall(
+        methodName: "write",
+        arguments: ["key": "strava.uploadMode", "value": "web"]
+      )
+    ) { response = $0 }
+    XCTAssertNil(response)
+
+    plugin.handle(
+      FlutterMethodCall(methodName: "read", arguments: ["key": "strava.uploadMode"])
+    ) { response = $0 }
+    XCTAssertEqual(response as? String, "web")
+
+    plugin.handle(
+      FlutterMethodCall(methodName: "read", arguments: ["key": ""])
+    ) { response = $0 }
+    XCTAssertEqual((response as? FlutterError)?.code, "invalid_arguments")
+
+    plugin.handle(
+      FlutterMethodCall(methodName: "read", arguments: ["key": "arbitrary.key"])
+    ) { response = $0 }
+    XCTAssertEqual((response as? FlutterError)?.code, "invalid_arguments")
+  }
+
   func testHealthKitSummaryHelpersMatchSwiftBaseline() {
     XCTAssertEqual(HKWorkoutActivityType.cycling.localizedChineseName, "骑车")
     XCTAssertEqual(

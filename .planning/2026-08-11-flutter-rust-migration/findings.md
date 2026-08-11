@@ -41,11 +41,19 @@ FRB 采用最小集成：没有运行会覆盖 `lib/main.dart` 的 `integrate`�
 
 iOS 原生通道已接入 HealthKit 可用性、全量现有读取类型授权、设置跳转、半开区间训练摘要，以及兼容旧 service 的 Keychain 读写删除。Bundle ID、URL scheme、entitlement 和隐私文案与原工程保持一致；最低系统也按原工程统一为 iOS 17。
 
-Flutter 健康页已调用上述 HealthKit 通道，并覆盖授权、日期查询、加载/空态/错误重试与选择状态。iOS Strava OAuth 原生通道也已注册：只接受官方 HTTPS 授权地址，使用 256 位随机 state，并严格校验 `healthworkoutexport://localhost/callback`；token 交换、刷新和设置页仍留给后续切片。Rust 同步指纹已与 Swift 固定摘要对齐，但尚未替换生产调用。
+Flutter 健康页已调用上述 HealthKit 通道，并覆盖授权、日期查询、加载/空态/错误重试与选择状态。iOS Strava OAuth 原生通道只接受官方 HTTPS 授权地址，使用 256 位随机 state，并严格校验 `healthworkoutexport://localhost/callback`；Rust token 交换和 Flutter 设置页已接入，刷新编排仍留给后续切片。Rust 同步指纹已与 Swift 固定摘要对齐，但尚未替换生产调用。
 
 HealthKit 完整训练包现通过一个 UUID 集合查询回查训练，再以最多 3 条并发读取 quantity、路线、事件和 metadata；Flutter 对返回数量、UUID 顺序及所有嵌套字段做严格解析。Rust FIT 首切片已实现严格完整性探测、内容质量摘要和原字节无损重编码，并生成真实 Flutter FFI；语义级消息编辑、合并与编码仍未完成，不能把 FIT-02 标为完整完成。
 
 当前锁定的 FITSwiftSDK 与 Rust 实现都不支持 compressed timestamp data message；Rust `is_valid_fit` 会做完整 CRC/消息边界校验，而旧 `FitContentProbe.isValidFit` 只检查文件魔数。前者是有意的严格校验，后续若引入压缩时间戳解码，必须同时扩展摘要与重编码测试，不能只放宽入口判断。
+
+Strava 非敏感设置必须继续使用原 `UserDefaults.standard` 键（`strava.uploadMode`、`strava.expiresAt`、`strava.gcjCorrectionEnabled`），否则 Flutter 升级后会看不到旧状态；敏感项继续使用 Keychain service `com.checkkaka.HealthWorkoutExport` 下的原 account。当前采用一个无依赖的原生标量 Preferences 通道，避免 `shared_preferences` 的键前缀造成迁移分叉。
+
+Strava 契约审计报告位于 `/tmp/healthworkoutexport-strava-contract.md`。当前仅完成 API OAuth/token 子闭环：固定 scope、256-bit state、精确回调、标准 form 编码、rustls、响应上限、脱敏错误，以及成功后完整授权事务写入；取消或失败不会覆盖旧授权。并发 refresh 合并、401 强制刷新一次、Uploads/poll、限额、活动查询、Web Cookie/CSRF 与同步状态仍是明确缺口。
+
+Preferences 原生通道只允许 Strava 与 VirtualPower 的既有白名单键，不能让 Flutter 任意访问 `UserDefaults.standard`。本次 Rust HTTPS 依赖只更新 Cargo 项目依赖和 `~/.cargo/registry` 缓存，没有安装新工具或修改全局环境。
+
+FIT 语义物化方案因 sync FFI 极端输入内存放大被撤回；公开摘要/校验继续保持流式 O(input + 16 definitions)，`reencode_fit` 在没有编辑参数时只做严格验证后原字节复制。真正字段编辑应在有明确调用方时实现受限流式重写，不能先保留高开销语义树。
 
 ## Resources
 - `HealthWorkoutExport/WorkoutDataSource.swift`

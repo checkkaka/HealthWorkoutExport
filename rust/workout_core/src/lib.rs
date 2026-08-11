@@ -4,6 +4,7 @@ mod api;
 pub mod fit;
 #[allow(unsafe_code)]
 mod frb_generated;
+pub mod strava;
 
 use sha2::{Digest, Sha256};
 use std::fmt::Write;

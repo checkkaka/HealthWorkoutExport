@@ -25,6 +25,201 @@ final class KeychainChannel {
     _requireText(account, 'account');
     await _channel.invokeMethod<Object?>('delete', {'account': account});
   }
+
+  Future<void> writeStravaAuthorization({
+    required String clientId,
+    required String clientSecret,
+    required String accessToken,
+    required String refreshToken,
+    required double expiresAtSeconds,
+  }) async {
+    _requireText(clientId, 'clientId');
+    _requireText(clientSecret, 'clientSecret');
+    _requireText(accessToken, 'accessToken');
+    _requireText(refreshToken, 'refreshToken');
+    if (!expiresAtSeconds.isFinite || expiresAtSeconds <= 0) {
+      throw ArgumentError.value(
+        expiresAtSeconds,
+        'expiresAtSeconds',
+        '必须是正的有限数值',
+      );
+    }
+    await _channel.invokeMethod<Object?>('writeStravaAuthorization', {
+      'clientId': clientId,
+      'clientSecret': clientSecret,
+      'accessToken': accessToken,
+      'refreshToken': refreshToken,
+      'expiresAtSeconds': expiresAtSeconds,
+    });
+  }
+}
+
+/// 复用旧应用 UserDefaults 键的最小 Flutter 通道。
+final class PreferencesChannel {
+  const PreferencesChannel()
+    : _channel = const MethodChannel('health_workout_export/preferences');
+
+  final MethodChannel _channel;
+
+  Future<Object?> read(String key) {
+    _requirePreferenceKey(key);
+    return _channel.invokeMethod<Object?>('read', {'key': key});
+  }
+
+  Future<void> write(String key, Object value) async {
+    _requirePreferenceKey(key);
+    if (value is! String &&
+        value is! bool &&
+        value is! int &&
+        value is! double) {
+      throw ArgumentError.value(value, 'value', '必须是 UserDefaults 标量');
+    }
+    if (value is double && !value.isFinite) {
+      throw ArgumentError.value(value, 'value', '必须是有限数值');
+    }
+    await _channel.invokeMethod<Object?>('write', {'key': key, 'value': value});
+  }
+
+  Future<void> delete(String key) async {
+    _requirePreferenceKey(key);
+    await _channel.invokeMethod<Object?>('delete', {'key': key});
+  }
+}
+
+enum StravaUploadMode { api, web }
+
+/// 旧 SwiftUI 与 Flutter 共用的 Strava 设置快照。
+final class StravaSettingsSnapshot {
+  const StravaSettingsSnapshot({
+    required this.mode,
+    required this.clientId,
+    required this.clientSecret,
+    required this.accessToken,
+    required this.refreshToken,
+    required this.expiresAtSeconds,
+    required this.webCookieHeader,
+    required this.gcjCorrectionEnabled,
+  });
+
+  final StravaUploadMode mode;
+  final String clientId;
+  final String clientSecret;
+  final String accessToken;
+  final String refreshToken;
+  final double expiresAtSeconds;
+  final String webCookieHeader;
+  final bool gcjCorrectionEnabled;
+
+  bool get isApiReady =>
+      clientId.isNotEmpty && clientSecret.isNotEmpty && refreshToken.isNotEmpty;
+}
+
+/// 使用原始键名读写 Strava Keychain 与 UserDefaults，保留升级前授权。
+final class StravaSettingsStore {
+  const StravaSettingsStore({
+    this.keychain = const KeychainChannel(),
+    this.preferences = const PreferencesChannel(),
+  });
+
+  final KeychainChannel keychain;
+  final PreferencesChannel preferences;
+
+  Future<StravaSettingsSnapshot> load() async {
+    final clientId = await keychain.read(_clientIdKey) ?? '';
+    final clientSecret = await keychain.read(_clientSecretKey) ?? '';
+    final accessToken = await keychain.read(_accessTokenKey) ?? '';
+    final refreshToken = await keychain.read(_refreshTokenKey) ?? '';
+    final webCookie = await keychain.read(_webCookieKey) ?? '';
+    final modeValue = await preferences.read(_modeKey);
+    final expiresValue = await preferences.read(_expiresAtKey);
+    final correctionValue = await preferences.read(_gcjCorrectionKey);
+
+    final mode = switch (modeValue) {
+      'web' => StravaUploadMode.web,
+      _ => StravaUploadMode.api,
+    };
+    if (expiresValue != null && expiresValue is! num) {
+      throw const FormatException('Strava token 过期时间无效');
+    }
+    if (correctionValue != null && correctionValue is! bool) {
+      throw const FormatException('Strava 坐标纠偏设置无效');
+    }
+    final expiresAt = (expiresValue as num?)?.toDouble() ?? 0;
+    if (!expiresAt.isFinite) {
+      throw const FormatException('Strava token 过期时间无效');
+    }
+    return StravaSettingsSnapshot(
+      mode: mode,
+      clientId: clientId,
+      clientSecret: clientSecret,
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+      expiresAtSeconds: expiresAt,
+      webCookieHeader: webCookie,
+      gcjCorrectionEnabled: correctionValue as bool? ?? false,
+    );
+  }
+
+  Future<void> saveAuthorization({
+    required String clientId,
+    required String clientSecret,
+    required String accessToken,
+    required String refreshToken,
+    required double expiresAtSeconds,
+  }) async {
+    final normalizedId = clientId.trim();
+    final normalizedSecret = clientSecret.trim();
+    _requireText(normalizedId, 'clientId');
+    _requireText(normalizedSecret, 'clientSecret');
+    _requireText(accessToken, 'accessToken');
+    _requireText(refreshToken, 'refreshToken');
+    if (!expiresAtSeconds.isFinite || expiresAtSeconds <= 0) {
+      throw ArgumentError.value(
+        expiresAtSeconds,
+        'expiresAtSeconds',
+        '必须是正的有限数值',
+      );
+    }
+    await keychain.writeStravaAuthorization(
+      clientId: normalizedId,
+      clientSecret: normalizedSecret,
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+      expiresAtSeconds: expiresAtSeconds,
+    );
+  }
+
+  Future<void> setMode(StravaUploadMode mode) =>
+      preferences.write(_modeKey, mode.name);
+
+  Future<void> setGcjCorrectionEnabled(bool enabled) =>
+      preferences.write(_gcjCorrectionKey, enabled);
+
+  static const _modeKey = 'strava.uploadMode';
+  static const _clientIdKey = 'strava.clientId';
+  static const _clientSecretKey = 'strava.clientSecret';
+  static const _accessTokenKey = 'strava.accessToken';
+  static const _refreshTokenKey = 'strava.refreshToken';
+  static const _expiresAtKey = 'strava.expiresAt';
+  static const _webCookieKey = 'strava.webCookie';
+  static const _gcjCorrectionKey = 'strava.gcjCorrectionEnabled';
+}
+
+const _allowedPreferenceKeys = <String>{
+  'strava.uploadMode',
+  'strava.expiresAt',
+  'strava.gcjCorrectionEnabled',
+  'virtualPower.enabled',
+  'virtualPower.includeInertia',
+  'virtualPower.riderMassKg',
+  'virtualPower.bikeMassKg',
+  'virtualPower.cda',
+};
+
+void _requirePreferenceKey(String key) {
+  if (!_allowedPreferenceKeys.contains(key)) {
+    throw ArgumentError.value(key, 'key', '不是允许的应用设置键');
+  }
 }
 
 /// iOS 系统浏览器中的 Strava OAuth 授权边界；token 交换由 Rust 负责。
@@ -33,6 +228,18 @@ final class StravaOAuthChannel {
     : _channel = const MethodChannel('health_workout_export/strava_oauth');
 
   final MethodChannel _channel;
+
+  static Uri authorizationUri(String clientId) {
+    final normalizedId = clientId.trim();
+    _requireText(normalizedId, 'clientId');
+    return Uri.https('www.strava.com', '/oauth/mobile/authorize', {
+      'client_id': normalizedId,
+      'redirect_uri': 'healthworkoutexport://localhost/callback',
+      'response_type': 'code',
+      'approval_prompt': 'auto',
+      'scope': 'activity:read_all,activity:write,read',
+    });
+  }
 
   Future<String> authorize(Uri authorizationUrl) async {
     if (authorizationUrl.scheme != 'https' ||

@@ -70,7 +70,7 @@ class WorkoutCoreRustLib
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 1673619233;
+  int get rustContentHash => -1812348702;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -92,6 +92,18 @@ abstract class WorkoutCoreRustLibApi extends BaseApi {
   bool crateApiSimpleIsValidFit({required List<int> data});
 
   Uint8List crateApiSimpleReencodeFit({required List<int> data});
+
+  Future<StravaTokenResult> crateApiSimpleStravaExchangeCode({
+    required String clientId,
+    required String clientSecret,
+    required String code,
+  });
+
+  Future<StravaTokenResult> crateApiSimpleStravaRefreshToken({
+    required String clientId,
+    required String clientSecret,
+    required String refreshToken,
+  });
 }
 
 class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
@@ -201,6 +213,80 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   TaskConstMeta get kCrateApiSimpleReencodeFitConstMeta =>
       const TaskConstMeta(debugName: "reencode_fit", argNames: ["data"]);
 
+  @override
+  Future<StravaTokenResult> crateApiSimpleStravaExchangeCode({
+    required String clientId,
+    required String clientSecret,
+    required String code,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(clientId, serializer);
+          sse_encode_String(clientSecret, serializer);
+          sse_encode_String(code, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 5,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_strava_token_result,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleStravaExchangeCodeConstMeta,
+        argValues: [clientId, clientSecret, code],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleStravaExchangeCodeConstMeta =>
+      const TaskConstMeta(
+        debugName: "strava_exchange_code",
+        argNames: ["clientId", "clientSecret", "code"],
+      );
+
+  @override
+  Future<StravaTokenResult> crateApiSimpleStravaRefreshToken({
+    required String clientId,
+    required String clientSecret,
+    required String refreshToken,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(clientId, serializer);
+          sse_encode_String(clientSecret, serializer);
+          sse_encode_String(refreshToken, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 6,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_strava_token_result,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleStravaRefreshTokenConstMeta,
+        argValues: [clientId, clientSecret, refreshToken],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleStravaRefreshTokenConstMeta =>
+      const TaskConstMeta(
+        debugName: "strava_refresh_token",
+        argNames: ["clientId", "clientSecret", "refreshToken"],
+      );
+
   @protected
   String dco_decode_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -254,6 +340,19 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   double? dco_decode_opt_box_autoadd_f_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_f_64(raw);
+  }
+
+  @protected
+  StravaTokenResult dco_decode_strava_token_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return StravaTokenResult(
+      accessToken: dco_decode_String(arr[0]),
+      refreshToken: dco_decode_String(arr[1]),
+      expiresAt: dco_decode_f_64(arr[2]),
+    );
   }
 
   @protected
@@ -335,6 +434,21 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
     } else {
       return null;
     }
+  }
+
+  @protected
+  StravaTokenResult sse_decode_strava_token_result(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_accessToken = sse_decode_String(deserializer);
+    var var_refreshToken = sse_decode_String(deserializer);
+    var var_expiresAt = sse_decode_f_64(deserializer);
+    return StravaTokenResult(
+      accessToken: var_accessToken,
+      refreshToken: var_refreshToken,
+      expiresAt: var_expiresAt,
+    );
   }
 
   @protected
@@ -425,6 +539,17 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
     if (self != null) {
       sse_encode_box_autoadd_f_64(self, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_strava_token_result(
+    StravaTokenResult self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.accessToken, serializer);
+    sse_encode_String(self.refreshToken, serializer);
+    sse_encode_f_64(self.expiresAt, serializer);
   }
 
   @protected
