@@ -5,6 +5,7 @@ use reqwest::{
 };
 use serde::Deserialize;
 use std::{
+    collections::HashSet,
     fmt,
     future::Future,
     sync::{
@@ -13,16 +14,24 @@ use std::{
     },
     time::Duration,
 };
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::sync::Notify;
 
 const TOKEN_ENDPOINT: &str = "https://www.strava.com/oauth/token";
 const UPLOAD_ENDPOINT: &str = "https://www.strava.com/api/v3/uploads";
+const ACTIVITIES_ENDPOINT: &str = "https://www.strava.com/api/v3/athlete/activities";
+const ACTIVITY_DETAIL_ENDPOINT: &str = "https://www.strava.com/api/v3/activities/";
 const MAX_INPUT_BYTES: usize = 8 * 1024;
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
+/// 列表页最多 200 条；上限足够容纳完整官方响应，同时避免错误页无限占用内存。
+const MAX_ACTIVITY_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_ACTIVITY_PAGES: u32 = 20;
+const ACTIVITY_PAGE_SIZE: u32 = 200;
 const MAX_FIT_BYTES: usize = 64 * 1024 * 1024;
 const UPLOAD_POLL_DELAYS_SECONDS: [u64; 7] = [0, 1, 2, 4, 8, 16, 32];
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const POLL_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+const ACTIVITY_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// OAuth token endpoint client. It never logs or embeds credential values in errors.
 #[derive(Clone)]
@@ -164,6 +173,336 @@ impl StravaCancellation {
             output = future => Ok(output),
         }
     }
+}
+
+/// 远端活动列表条目；时间为 Unix 秒，距离缺失时为 `None`。
+/// 仅保留上传预检所需字段，避免把未经验证的远端 JSON 直接暴露给 Flutter。
+#[derive(Clone, Debug, PartialEq)]
+pub struct StravaRemoteActivity {
+    pub id: String,
+    pub start_time_seconds: f64,
+    pub end_time_seconds: f64,
+    pub distance_meters: Option<f64>,
+}
+
+/// 单条活动的速度摘要。峰值只基于官方摘要和 best_efforts，不读取速度流毛刺。
+#[derive(Clone, Debug, PartialEq)]
+pub struct StravaActivitySpeedInfo {
+    pub id: String,
+    pub name: String,
+    pub start_time_seconds: Option<f64>,
+    pub sport_type: String,
+    pub listed_max_speed_mps: f64,
+    pub best_effort_peak_mps: f64,
+    pub max_speed_mps: f64,
+    pub average_speed_mps: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StravaActivityError {
+    InvalidInput(&'static str),
+    ClientBuild,
+    Transport,
+    Unauthorized,
+    RateLimited,
+    NotFound,
+    ResponseTooLarge,
+    InvalidResponse,
+    HttpStatus(u16),
+    Cancelled,
+}
+
+impl fmt::Display for StravaActivityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::InvalidInput(_) => "Strava 活动请求参数无效",
+            Self::ClientBuild => "Strava 活动客户端初始化失败",
+            Self::Transport => "Strava 活动网络请求失败",
+            Self::Unauthorized => "Strava 授权已失效",
+            Self::RateLimited => "Strava 请求频率受限，请稍后重试",
+            Self::NotFound => "Strava 活动不存在",
+            Self::ResponseTooLarge => "Strava 活动响应过大",
+            Self::InvalidResponse => "Strava 活动响应无效",
+            Self::HttpStatus(status) => {
+                return write!(formatter, "Strava 活动请求失败 (HTTP {status})");
+            }
+            Self::Cancelled => "Strava 活动请求已取消",
+        };
+        formatter.write_str(message)
+    }
+}
+
+impl std::error::Error for StravaActivityError {}
+
+/// 固定读取官方 HTTPS API 的客户端。它没有可配置 endpoint，防止 access token 被导向任意主机。
+#[derive(Clone)]
+pub struct StravaActivityClient {
+    client: Client,
+    activities_endpoint: Url,
+    activity_detail_endpoint: Url,
+}
+
+impl StravaActivityClient {
+    pub fn new() -> Result<Self, StravaActivityError> {
+        let client = Client::builder()
+            .timeout(ACTIVITY_REQUEST_TIMEOUT)
+            .redirect(Policy::none())
+            .user_agent("HealthWorkoutExport/1")
+            .build()
+            .map_err(|_| StravaActivityError::ClientBuild)?;
+        Ok(Self {
+            client,
+            activities_endpoint: fixed_strava_url(ACTIVITIES_ENDPOINT)?,
+            activity_detail_endpoint: fixed_strava_url(ACTIVITY_DETAIL_ENDPOINT)?,
+        })
+    }
+
+    /// 按旧 Swift 契约拉取本人活动：after/before、每页 200 条、最多 20 页。
+    pub async fn list_activities(
+        &self,
+        access_token: &str,
+        after_seconds: i64,
+        before_seconds: i64,
+        cancellation: &StravaCancellation,
+    ) -> Result<Vec<StravaRemoteActivity>, StravaActivityError> {
+        let access_token = valid_upload_input("access_token", access_token)
+            .map_err(|_| StravaActivityError::InvalidInput("access_token"))?;
+        valid_activity_window(after_seconds, before_seconds)?;
+
+        let mut result = Vec::new();
+        let mut ids = HashSet::new();
+        for page in 1..=MAX_ACTIVITY_PAGES {
+            if cancellation.is_cancelled() {
+                return Err(StravaActivityError::Cancelled);
+            }
+            let mut url = self.activities_endpoint.clone();
+            url.query_pairs_mut()
+                .append_pair("after", &after_seconds.to_string())
+                .append_pair("before", &before_seconds.to_string())
+                .append_pair("per_page", &ACTIVITY_PAGE_SIZE.to_string())
+                .append_pair("page", &page.to_string());
+            let mut response = cancellation
+                .run(self.client.get(url).bearer_auth(access_token).send())
+                .await
+                .map_err(|_| StravaActivityError::Cancelled)?
+                .map_err(|_| StravaActivityError::Transport)?;
+            activity_status(response.status(), false)?;
+            let body = read_activity_body(&mut response, cancellation).await?;
+            let entries = serde_json::from_slice::<Vec<serde_json::Value>>(&body)
+                .map_err(|_| StravaActivityError::InvalidResponse)?;
+            let entry_count = entries.len();
+            if entry_count == 0 {
+                break;
+            }
+            for entry in entries {
+                let Some(activity) = parse_remote_activity(&entry) else {
+                    continue;
+                };
+                if ids.insert(activity.id.clone()) {
+                    result.push(activity);
+                }
+            }
+            if entry_count < ACTIVITY_PAGE_SIZE as usize {
+                break;
+            }
+        }
+        Ok(result)
+    }
+
+    /// 拉取单条活动的速度摘要；404 表示活动已删除或当前账号无权查看，返回 `None`。
+    pub async fn activity_speed(
+        &self,
+        access_token: &str,
+        activity_id: &str,
+        cancellation: &StravaCancellation,
+    ) -> Result<Option<StravaActivitySpeedInfo>, StravaActivityError> {
+        let access_token = valid_upload_input("access_token", access_token)
+            .map_err(|_| StravaActivityError::InvalidInput("access_token"))?;
+        let activity_id = valid_remote_activity_id(activity_id)?;
+        if cancellation.is_cancelled() {
+            return Err(StravaActivityError::Cancelled);
+        }
+        let mut url = self.activity_detail_endpoint.clone();
+        url.path_segments_mut()
+            .map_err(|_| StravaActivityError::ClientBuild)?
+            .push(activity_id);
+        let mut response = cancellation
+            .run(self.client.get(url).bearer_auth(access_token).send())
+            .await
+            .map_err(|_| StravaActivityError::Cancelled)?
+            .map_err(|_| StravaActivityError::Transport)?;
+        if !activity_status(response.status(), true)? {
+            return Ok(None);
+        }
+        let body = read_activity_body(&mut response, cancellation).await?;
+        let value = serde_json::from_slice::<serde_json::Value>(&body)
+            .map_err(|_| StravaActivityError::InvalidResponse)?;
+        parse_activity_speed(activity_id, &value)
+            .map(Some)
+            .ok_or(StravaActivityError::InvalidResponse)
+    }
+}
+
+fn fixed_strava_url(value: &str) -> Result<Url, StravaActivityError> {
+    let url = Url::parse(value).map_err(|_| StravaActivityError::ClientBuild)?;
+    if url.scheme() != "https" || url.host_str() != Some("www.strava.com") || url.port().is_some() {
+        return Err(StravaActivityError::ClientBuild);
+    }
+    Ok(url)
+}
+
+fn valid_activity_window(
+    after_seconds: i64,
+    before_seconds: i64,
+) -> Result<(), StravaActivityError> {
+    (after_seconds >= 0 && before_seconds > after_seconds)
+        .then_some(())
+        .ok_or(StravaActivityError::InvalidInput("activity_window"))
+}
+
+fn valid_remote_activity_id(value: &str) -> Result<&str, StravaActivityError> {
+    let value = value.trim();
+    (!value.is_empty() && value.len() <= 32 && value.bytes().all(|byte| byte.is_ascii_digit()))
+        .then_some(value)
+        .ok_or(StravaActivityError::InvalidInput("activity_id"))
+}
+
+fn activity_status(status: StatusCode, detail_request: bool) -> Result<bool, StravaActivityError> {
+    if status.is_success() {
+        return Ok(true);
+    }
+    match status {
+        StatusCode::NOT_FOUND if detail_request => Ok(false),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(StravaActivityError::Unauthorized),
+        StatusCode::TOO_MANY_REQUESTS => Err(StravaActivityError::RateLimited),
+        status => Err(StravaActivityError::HttpStatus(status.as_u16())),
+    }
+}
+
+async fn read_activity_body(
+    response: &mut Response,
+    cancellation: &StravaCancellation,
+) -> Result<Vec<u8>, StravaActivityError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_ACTIVITY_RESPONSE_BYTES as u64)
+    {
+        return Err(StravaActivityError::ResponseTooLarge);
+    }
+    let mut body = Vec::with_capacity(
+        response
+            .content_length()
+            .unwrap_or_default()
+            .min(MAX_ACTIVITY_RESPONSE_BYTES as u64) as usize,
+    );
+    loop {
+        let chunk = cancellation
+            .run(response.chunk())
+            .await
+            .map_err(|_| StravaActivityError::Cancelled)?
+            .map_err(|_| StravaActivityError::Transport)?;
+        let Some(chunk) = chunk else { break };
+        if body.len().saturating_add(chunk.len()) > MAX_ACTIVITY_RESPONSE_BYTES {
+            return Err(StravaActivityError::ResponseTooLarge);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+fn parse_remote_activity(value: &serde_json::Value) -> Option<StravaRemoteActivity> {
+    let id = json_numeric_id(value.get("id"))?;
+    let id = valid_remote_activity_id(&id).ok()?.to_owned();
+    let start_time_seconds = parse_strava_time(value.get("start_date"))
+        .or_else(|| parse_strava_time(value.get("start_date_local")))?;
+    let elapsed = json_positive_number(value.get("elapsed_time"))?;
+    let end_time_seconds = start_time_seconds + elapsed;
+    end_time_seconds
+        .is_finite()
+        .then_some(StravaRemoteActivity {
+            id,
+            start_time_seconds,
+            end_time_seconds,
+            distance_meters: json_positive_number(value.get("distance")),
+        })
+}
+
+fn parse_activity_speed(id: &str, value: &serde_json::Value) -> Option<StravaActivitySpeedInfo> {
+    let object = value.as_object()?;
+    let fallback_name = format!("活动 {id}");
+    let listed_max_speed_mps = json_non_negative_number(object.get("max_speed")).unwrap_or(0.0);
+    let average_speed_mps = json_non_negative_number(object.get("average_speed")).unwrap_or(0.0);
+    let best_effort_peak_mps = object
+        .get("best_efforts")
+        .and_then(serde_json::Value::as_array)
+        .map(|efforts| {
+            efforts.iter().fold(0.0_f64, |peak, effort| {
+                let distance = json_non_negative_number(effort.get("distance")).unwrap_or(0.0);
+                let elapsed = json_positive_number(effort.get("elapsed_time"))
+                    .or_else(|| json_positive_number(effort.get("moving_time")))
+                    .unwrap_or(0.0);
+                if distance >= 200.0 && elapsed > 0.0 {
+                    peak.max(distance / elapsed)
+                } else {
+                    peak
+                }
+            })
+        })
+        .unwrap_or(0.0);
+    Some(StravaActivitySpeedInfo {
+        id: id.to_owned(),
+        name: safe_activity_text(
+            object.get("name").and_then(serde_json::Value::as_str),
+            &fallback_name,
+            256,
+        ),
+        start_time_seconds: parse_strava_time(object.get("start_date"))
+            .or_else(|| parse_strava_time(object.get("start_date_local"))),
+        sport_type: safe_activity_text(
+            object
+                .get("sport_type")
+                .or_else(|| object.get("type"))
+                .or_else(|| object.get("activity_type"))
+                .or_else(|| object.get("activityType"))
+                .and_then(serde_json::Value::as_str),
+            "",
+            128,
+        ),
+        listed_max_speed_mps,
+        best_effort_peak_mps,
+        max_speed_mps: listed_max_speed_mps.max(best_effort_peak_mps),
+        average_speed_mps,
+    })
+}
+
+fn parse_strava_time(value: Option<&serde_json::Value>) -> Option<f64> {
+    let text = value?.as_str()?;
+    let timestamp_nanos = OffsetDateTime::parse(text, &Rfc3339)
+        .ok()?
+        .unix_timestamp_nanos();
+    let seconds = timestamp_nanos as f64 / 1_000_000_000.0;
+    seconds.is_finite().then_some(seconds)
+}
+
+fn json_non_negative_number(value: Option<&serde_json::Value>) -> Option<f64> {
+    let number = match value? {
+        serde_json::Value::Number(number) => number.as_f64(),
+        serde_json::Value::String(text) => text.trim().parse::<f64>().ok(),
+        _ => None,
+    }?;
+    (number.is_finite() && number >= 0.0).then_some(number)
+}
+
+fn json_positive_number(value: Option<&serde_json::Value>) -> Option<f64> {
+    json_non_negative_number(value).filter(|number| *number > 0.0)
+}
+
+fn safe_activity_text(value: Option<&str>, fallback: &str, max_bytes: usize) -> String {
+    let value = value.unwrap_or(fallback).trim();
+    if value.is_empty() || value.len() > max_bytes || value.chars().any(char::is_control) {
+        return fallback.to_owned();
+    }
+    value.to_owned()
 }
 
 /// Strava Uploads API 客户端。凭证只进入 Authorization header，不进入错误或日志。
@@ -792,9 +1131,10 @@ impl std::error::Error for StravaTokenError {}
 #[cfg(test)]
 mod tests {
     use super::{
-        StravaCancellation, StravaPollResume, StravaTokenClient, StravaTokenError,
-        StravaUnauthorizedStage, StravaUploadClient, StravaUploadError, UPLOAD_POLL_DELAYS_SECONDS,
-        cleaned_upload_message, parse_duplicate_activity_id,
+        StravaActivityError, StravaCancellation, StravaPollResume, StravaTokenClient,
+        StravaTokenError, StravaUnauthorizedStage, StravaUploadClient, StravaUploadError,
+        UPLOAD_POLL_DELAYS_SECONDS, activity_status, cleaned_upload_message, fixed_strava_url,
+        parse_activity_speed, parse_duplicate_activity_id, parse_remote_activity,
     };
     use std::{
         io::{Read, Write},
@@ -1522,5 +1862,89 @@ mod tests {
             StravaUploadError::UploadFailed("x".repeat(200))
         );
         server.join().unwrap();
+    }
+
+    #[test]
+    fn remote_list_parser_keeps_swift_interval_and_distance_contract() {
+        let activity = parse_remote_activity(&serde_json::json!({
+            "id": 19643161379_u64,
+            "start_date": "2024-02-03T04:05:06.500Z",
+            "elapsed_time": 5400,
+            "distance": "12040.5"
+        }))
+        .unwrap();
+        assert_eq!(activity.id, "19643161379");
+        assert_eq!(activity.start_time_seconds, 1_706_933_106.5);
+        assert_eq!(activity.end_time_seconds, 1_706_938_506.5);
+        assert_eq!(activity.distance_meters, Some(12_040.5));
+
+        // 缺时长无法做区间重叠，沿用 Swift 的“宁可漏判，不误判”策略。
+        assert!(
+            parse_remote_activity(&serde_json::json!({
+                "id": "9", "start_date": "2024-02-03T04:05:06Z", "elapsed_time": 0
+            }))
+            .is_none()
+        );
+        // 路径参数只接受数字 ID，避免把任意片段带入 URL。
+        assert!(
+            parse_remote_activity(&serde_json::json!({
+                "id": "9/streams", "start_date": "2024-02-03T04:05:06Z", "elapsed_time": 1
+            }))
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn remote_speed_parser_matches_summary_and_best_effort_semantics() {
+        let info = parse_activity_speed(
+            "42",
+            &serde_json::json!({
+                "name": "晨骑",
+                "start_date": "2024-02-03T04:05:06Z",
+                "sport_type": "Ride",
+                "max_speed": 18.0,
+                "average_speed": "7.5",
+                "best_efforts": [
+                    {"distance": 100, "elapsed_time": 1},
+                    {"distance": 400, "elapsed_time": 20},
+                    {"distance": 1000, "moving_time": 100}
+                ]
+            }),
+        )
+        .unwrap();
+        assert_eq!(info.name, "晨骑");
+        assert_eq!(info.sport_type, "Ride");
+        assert_eq!(info.listed_max_speed_mps, 18.0);
+        assert_eq!(info.best_effort_peak_mps, 20.0);
+        assert_eq!(info.max_speed_mps, 20.0);
+        assert_eq!(info.average_speed_mps, 7.5);
+
+        let fallback =
+            parse_activity_speed("42", &serde_json::json!({"name": "bad\nname"})).unwrap();
+        assert_eq!(fallback.name, "活动 42");
+    }
+
+    #[test]
+    fn remote_read_status_and_fixed_host_are_safely_constrained() {
+        assert_eq!(activity_status(reqwest::StatusCode::OK, false), Ok(true));
+        assert_eq!(
+            activity_status(reqwest::StatusCode::CREATED, false),
+            Ok(true)
+        );
+        assert_eq!(
+            activity_status(reqwest::StatusCode::NOT_FOUND, true),
+            Ok(false)
+        );
+        assert_eq!(
+            activity_status(reqwest::StatusCode::TOO_MANY_REQUESTS, false),
+            Err(StravaActivityError::RateLimited)
+        );
+        assert_eq!(
+            activity_status(reqwest::StatusCode::UNAUTHORIZED, false),
+            Err(StravaActivityError::Unauthorized)
+        );
+        assert!(fixed_strava_url("https://www.strava.com/api/v3/activities/").is_ok());
+        assert!(fixed_strava_url("http://www.strava.com/api/v3/activities/").is_err());
+        assert!(fixed_strava_url("https://example.com/api/v3/activities/").is_err());
     }
 }

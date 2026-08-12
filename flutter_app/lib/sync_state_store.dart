@@ -145,6 +145,41 @@ final class SyncStateStore {
   Future<void> markPending(SyncPendingRecord record) =>
       _mutate({'operation': 'markPending', 'record': record.toJson()});
 
+  /// 同步首传先保存最终 FIT，再写 pending 状态；失败时恢复旧文件或删除新文件。
+  Future<void> savePendingFit({
+    required SyncPendingRecord record,
+    required Uint8List fit,
+  }) => _serialized(() async {
+    final previous = await _readSyncedFitOrNull(record.fingerprint);
+    await _files.writeSyncedFit(record.fingerprint, fit);
+    try {
+      await _mutateUnlocked({
+        'operation': 'markPending',
+        'record': record.toJson(),
+      });
+    } catch (_) {
+      try {
+        if (previous == null) {
+          await _files.deleteSyncedFit(record.fingerprint);
+        } else {
+          await _files.writeSyncedFit(record.fingerprint, previous);
+        }
+      } catch (_) {
+        // 原始状态错误优先；后续同步仍会再次校验并写入。
+      }
+      rethrow;
+    }
+  });
+
+  Future<Uint8List?> _readSyncedFitOrNull(String fingerprint) async {
+    try {
+      return await _files.readSyncedFit(fingerprint);
+    } on PlatformException catch (error) {
+      if (error.code == 'sync_file_missing') return null;
+      rethrow;
+    }
+  }
+
   Future<void> markUploaded({
     required String fingerprint,
     required DateTime updatedAt,

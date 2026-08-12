@@ -64,6 +64,8 @@
 - Flutter 健康训练页已接入“选择训练 → 逐条读取完整 HealthKit 包 → JSON/FIT → 单文件分享或多文件 ZIP”；导出在系统分享后保留本次临时文件供再次分享，用户删除/下次导出/七天清理时回收，避免 Android 接收方尚未读取时文件消失。
 - 恢复上传事务新增 prepared → remoteDeleted → uploading 单向状态、稳定 externalId 与 FIT SHA-256；重新 prepare 先读取已落盘恢复包，仅 missing 才生成首份事务，避免崩溃后重复上传。
 - 本批验证：Rust 56/56、Flutter 38/38、Flutter analyze、iOS RunnerTests 19/19、iOS 模拟器 Debug、macOS Debug、Android Debug APK 均通过；Android 构建补装 SDK Platform 35。自动同步控制器、远端预检和真机 HealthKit/分享验收仍未完成。
+- Rust 同步指纹、活动匹配和稳定去重已生成 FRB 桥；HealthKit 首传控制器复用导出 FIT 映射，按“保存 FIT → pending → API 上传 → uploaded/failed”串行执行。远端预检、补源合并、覆盖删除、取消和 UI 仍未接入，不能宣称完整自动同步。
+- Rust 已新增受限 Strava 活动列表与速度详情读取：固定 HTTPS 主机、禁止重定向、分页与 2MiB 响应上限、状态/错误清洗和代际取消句柄均已覆盖；目前只提供桥接能力，尚未进入预检业务流程。
 
 ### Test Results
 | Test | Expected | Actual | Status |

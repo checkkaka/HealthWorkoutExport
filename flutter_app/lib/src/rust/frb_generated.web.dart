@@ -25,10 +25,23 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   String dco_decode_String(dynamic raw);
 
   @protected
+  ActivityIntervalInput dco_decode_activity_interval_input(dynamic raw);
+
+  @protected
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  ActivityIntervalInput dco_decode_box_autoadd_activity_interval_input(
+    dynamic raw,
+  );
+
+  @protected
   double dco_decode_box_autoadd_f_64(dynamic raw);
+
+  @protected
+  StravaActivitySpeedResult dco_decode_box_autoadd_strava_activity_speed_result(
+    dynamic raw,
+  );
 
   @protected
   StravaUploadFfiError dco_decode_box_autoadd_strava_upload_ffi_error(
@@ -51,16 +64,35 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   int dco_decode_i_32(dynamic raw);
 
   @protected
+  PlatformInt64 dco_decode_i_64(dynamic raw);
+
+  @protected
+  List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<ActivityIntervalInput> dco_decode_list_activity_interval_input(
+    dynamic raw,
+  );
+
+  @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
 
   @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  List<StravaRemoteActivityResult>
+  dco_decode_list_strava_remote_activity_result(dynamic raw);
+
+  @protected
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
   double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
+
+  @protected
+  StravaActivitySpeedResult?
+  dco_decode_opt_box_autoadd_strava_activity_speed_result(dynamic raw);
 
   @protected
   StravaUploadFfiError? dco_decode_opt_box_autoadd_strava_upload_ffi_error(
@@ -74,6 +106,16 @@ abstract class WorkoutCoreRustLibApiImplPlatform
 
   @protected
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
+
+  @protected
+  StravaActivitySpeedResult dco_decode_strava_activity_speed_result(
+    dynamic raw,
+  );
+
+  @protected
+  StravaRemoteActivityResult dco_decode_strava_remote_activity_result(
+    dynamic raw,
+  );
 
   @protected
   StravaTokenResult dco_decode_strava_token_result(dynamic raw);
@@ -112,10 +154,25 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
+  ActivityIntervalInput sse_decode_activity_interval_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  ActivityIntervalInput sse_decode_box_autoadd_activity_interval_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   double sse_decode_box_autoadd_f_64(SseDeserializer deserializer);
+
+  @protected
+  StravaActivitySpeedResult sse_decode_box_autoadd_strava_activity_speed_result(
+    SseDeserializer deserializer,
+  );
 
   @protected
   StravaUploadFfiError sse_decode_box_autoadd_strava_upload_ffi_error(
@@ -140,16 +197,37 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
+  PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
+
+  @protected
+  List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<ActivityIntervalInput> sse_decode_list_activity_interval_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
 
   @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
+  List<StravaRemoteActivityResult>
+  sse_decode_list_strava_remote_activity_result(SseDeserializer deserializer);
+
+  @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
 
   @protected
   double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer);
+
+  @protected
+  StravaActivitySpeedResult?
+  sse_decode_opt_box_autoadd_strava_activity_speed_result(
+    SseDeserializer deserializer,
+  );
 
   @protected
   StravaUploadFfiError? sse_decode_opt_box_autoadd_strava_upload_ffi_error(
@@ -163,6 +241,16 @@ abstract class WorkoutCoreRustLibApiImplPlatform
 
   @protected
   int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
+  StravaActivitySpeedResult sse_decode_strava_activity_speed_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  StravaRemoteActivityResult sse_decode_strava_remote_activity_result(
+    SseDeserializer deserializer,
+  );
 
   @protected
   StravaTokenResult sse_decode_strava_token_result(
@@ -217,10 +305,28 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
+  void sse_encode_activity_interval_input(
+    ActivityIntervalInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_activity_interval_input(
+    ActivityIntervalInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_f_64(double self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_strava_activity_speed_result(
+    StravaActivitySpeedResult self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_box_autoadd_strava_upload_ffi_error(
@@ -250,6 +356,18 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
+  void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_activity_interval_input(
+    List<ActivityIntervalInput> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
 
   @protected
@@ -259,10 +377,22 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   );
 
   @protected
+  void sse_encode_list_strava_remote_activity_result(
+    List<StravaRemoteActivityResult> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_strava_activity_speed_result(
+    StravaActivitySpeedResult? self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_opt_box_autoadd_strava_upload_ffi_error(
@@ -278,6 +408,18 @@ abstract class WorkoutCoreRustLibApiImplPlatform
 
   @protected
   void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_strava_activity_speed_result(
+    StravaActivitySpeedResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_strava_remote_activity_result(
+    StravaRemoteActivityResult self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_strava_token_result(

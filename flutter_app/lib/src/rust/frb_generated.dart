@@ -70,7 +70,7 @@ class WorkoutCoreRustLib
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -1144851939;
+  int get rustContentHash => -1754669404;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -82,6 +82,16 @@ class WorkoutCoreRustLib
 }
 
 abstract class WorkoutCoreRustLibApi extends BaseApi {
+  double? crateApiSimpleActivityMatchScore({
+    required ActivityIntervalInput primary,
+    required ActivityIntervalInput candidate,
+  });
+
+  int? crateApiSimpleBestActivityMatchIndex({
+    required ActivityIntervalInput primary,
+    required List<ActivityIntervalInput> candidates,
+  });
+
   Future<Uint8List> crateApiSimpleEncodeHealthWorkoutFit({
     required List<int> bundleJson,
     required int timezoneOffsetSeconds,
@@ -98,6 +108,17 @@ abstract class WorkoutCoreRustLibApi extends BaseApi {
 
   Uint8List crateApiSimpleReencodeFit({required List<int> data});
 
+  bool crateApiSimpleStableDedupeMatches({
+    required double startASeconds,
+    required double distanceAMeters,
+    required double startBSeconds,
+    required double distanceBMeters,
+    double? durationASeconds,
+    double? durationBSeconds,
+  });
+
+  bool crateApiSimpleStravaCancelRemoteRead({required String operationHandle});
+
   bool crateApiSimpleStravaCancelUpload({required String operationHandle});
 
   Future<StravaTokenResult> crateApiSimpleStravaExchangeCode({
@@ -106,13 +127,34 @@ abstract class WorkoutCoreRustLibApi extends BaseApi {
     required String code,
   });
 
+  Future<StravaActivitySpeedResult?>
+  crateApiSimpleStravaFetchRemoteActivitySpeed({
+    required String operationHandle,
+    required String accessToken,
+    required String activityId,
+  });
+
+  Future<List<StravaRemoteActivityResult>>
+  crateApiSimpleStravaListRemoteActivities({
+    required String operationHandle,
+    required String accessToken,
+    required PlatformInt64 afterSeconds,
+    required PlatformInt64 beforeSeconds,
+  });
+
   Future<StravaTokenResult> crateApiSimpleStravaRefreshToken({
     required String clientId,
     required String clientSecret,
     required String refreshToken,
   });
 
+  bool crateApiSimpleStravaReleaseRemoteRead({required String operationHandle});
+
   bool crateApiSimpleStravaReleaseUpload({required String operationHandle});
+
+  StravaUploadReservation crateApiSimpleStravaReserveRemoteRead({
+    required String operationId,
+  });
 
   StravaUploadReservation crateApiSimpleStravaReserveUpload({
     required String operationId,
@@ -146,6 +188,14 @@ abstract class WorkoutCoreRustLibApi extends BaseApi {
     String? description,
   });
 
+  String crateApiSimpleSyncFingerprint({
+    required String primarySourceId,
+    required String primaryActivityId,
+    required double startDateUnixSeconds,
+    required List<String> supplementSourceIds,
+    required String destination,
+  });
+
   Uint8List crateApiSimpleSyncRecoveryApply({
     required List<int> recoveryJson,
     required List<int> commandJson,
@@ -171,6 +221,66 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   });
 
   @override
+  double? crateApiSimpleActivityMatchScore({
+    required ActivityIntervalInput primary,
+    required ActivityIntervalInput candidate,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_box_autoadd_activity_interval_input(primary, serializer);
+          sse_encode_box_autoadd_activity_interval_input(candidate, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 1)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_box_autoadd_f_64,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSimpleActivityMatchScoreConstMeta,
+        argValues: [primary, candidate],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleActivityMatchScoreConstMeta =>
+      const TaskConstMeta(
+        debugName: "activity_match_score",
+        argNames: ["primary", "candidate"],
+      );
+
+  @override
+  int? crateApiSimpleBestActivityMatchIndex({
+    required ActivityIntervalInput primary,
+    required List<ActivityIntervalInput> candidates,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_box_autoadd_activity_interval_input(primary, serializer);
+          sse_encode_list_activity_interval_input(candidates, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_box_autoadd_u_32,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSimpleBestActivityMatchIndexConstMeta,
+        argValues: [primary, candidates],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleBestActivityMatchIndexConstMeta =>
+      const TaskConstMeta(
+        debugName: "best_activity_match_index",
+        argNames: ["primary", "candidates"],
+      );
+
+  @override
   Future<Uint8List> crateApiSimpleEncodeHealthWorkoutFit({
     required List<int> bundleJson,
     required int timezoneOffsetSeconds,
@@ -184,7 +294,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 1,
+            funcId: 3,
             port: port_,
           );
         },
@@ -212,7 +322,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(data, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 4)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_fit_probe_summary,
@@ -239,7 +349,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_opt_box_autoadd_f_64(distanceMeters, serializer);
           sse_encode_f_64(durationSeconds, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -264,7 +374,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(data, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 4)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -287,7 +397,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(data, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
@@ -304,13 +414,91 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
       const TaskConstMeta(debugName: "reencode_fit", argNames: ["data"]);
 
   @override
+  bool crateApiSimpleStableDedupeMatches({
+    required double startASeconds,
+    required double distanceAMeters,
+    required double startBSeconds,
+    required double distanceBMeters,
+    double? durationASeconds,
+    double? durationBSeconds,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_f_64(startASeconds, serializer);
+          sse_encode_f_64(distanceAMeters, serializer);
+          sse_encode_f_64(startBSeconds, serializer);
+          sse_encode_f_64(distanceBMeters, serializer);
+          sse_encode_opt_box_autoadd_f_64(durationASeconds, serializer);
+          sse_encode_opt_box_autoadd_f_64(durationBSeconds, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSimpleStableDedupeMatchesConstMeta,
+        argValues: [
+          startASeconds,
+          distanceAMeters,
+          startBSeconds,
+          distanceBMeters,
+          durationASeconds,
+          durationBSeconds,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleStableDedupeMatchesConstMeta =>
+      const TaskConstMeta(
+        debugName: "stable_dedupe_matches",
+        argNames: [
+          "startASeconds",
+          "distanceAMeters",
+          "startBSeconds",
+          "distanceBMeters",
+          "durationASeconds",
+          "durationBSeconds",
+        ],
+      );
+
+  @override
+  bool crateApiSimpleStravaCancelRemoteRead({required String operationHandle}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(operationHandle, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSimpleStravaCancelRemoteReadConstMeta,
+        argValues: [operationHandle],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleStravaCancelRemoteReadConstMeta =>
+      const TaskConstMeta(
+        debugName: "strava_cancel_remote_read",
+        argNames: ["operationHandle"],
+      );
+
+  @override
   bool crateApiSimpleStravaCancelUpload({required String operationHandle}) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationHandle, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -345,7 +533,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 11,
             port: port_,
           );
         },
@@ -367,6 +555,90 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
       );
 
   @override
+  Future<StravaActivitySpeedResult?>
+  crateApiSimpleStravaFetchRemoteActivitySpeed({
+    required String operationHandle,
+    required String accessToken,
+    required String activityId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(operationHandle, serializer);
+          sse_encode_String(accessToken, serializer);
+          sse_encode_String(activityId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 12,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_opt_box_autoadd_strava_activity_speed_result,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleStravaFetchRemoteActivitySpeedConstMeta,
+        argValues: [operationHandle, accessToken, activityId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleStravaFetchRemoteActivitySpeedConstMeta =>
+      const TaskConstMeta(
+        debugName: "strava_fetch_remote_activity_speed",
+        argNames: ["operationHandle", "accessToken", "activityId"],
+      );
+
+  @override
+  Future<List<StravaRemoteActivityResult>>
+  crateApiSimpleStravaListRemoteActivities({
+    required String operationHandle,
+    required String accessToken,
+    required PlatformInt64 afterSeconds,
+    required PlatformInt64 beforeSeconds,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(operationHandle, serializer);
+          sse_encode_String(accessToken, serializer);
+          sse_encode_i_64(afterSeconds, serializer);
+          sse_encode_i_64(beforeSeconds, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 13,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_strava_remote_activity_result,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleStravaListRemoteActivitiesConstMeta,
+        argValues: [operationHandle, accessToken, afterSeconds, beforeSeconds],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleStravaListRemoteActivitiesConstMeta =>
+      const TaskConstMeta(
+        debugName: "strava_list_remote_activities",
+        argNames: [
+          "operationHandle",
+          "accessToken",
+          "afterSeconds",
+          "beforeSeconds",
+        ],
+      );
+
+  @override
   Future<StravaTokenResult> crateApiSimpleStravaRefreshToken({
     required String clientId,
     required String clientSecret,
@@ -382,7 +654,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 8,
+            funcId: 14,
             port: port_,
           );
         },
@@ -404,13 +676,41 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
       );
 
   @override
+  bool crateApiSimpleStravaReleaseRemoteRead({
+    required String operationHandle,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(operationHandle, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSimpleStravaReleaseRemoteReadConstMeta,
+        argValues: [operationHandle],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleStravaReleaseRemoteReadConstMeta =>
+      const TaskConstMeta(
+        debugName: "strava_release_remote_read",
+        argNames: ["operationHandle"],
+      );
+
+  @override
   bool crateApiSimpleStravaReleaseUpload({required String operationHandle}) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationHandle, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -430,6 +730,34 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
       );
 
   @override
+  StravaUploadReservation crateApiSimpleStravaReserveRemoteRead({
+    required String operationId,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(operationId, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_strava_upload_reservation,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleStravaReserveRemoteReadConstMeta,
+        argValues: [operationId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleStravaReserveRemoteReadConstMeta =>
+      const TaskConstMeta(
+        debugName: "strava_reserve_remote_read",
+        argNames: ["operationId"],
+      );
+
+  @override
   StravaUploadReservation crateApiSimpleStravaReserveUpload({
     required String operationId,
   }) {
@@ -438,7 +766,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationId, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_strava_upload_reservation,
@@ -476,7 +804,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 11,
+            funcId: 19,
             port: port_,
           );
         },
@@ -522,7 +850,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 12,
+            funcId: 20,
             port: port_,
           );
         },
@@ -583,7 +911,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 13,
+            funcId: 21,
             port: port_,
           );
         },
@@ -621,6 +949,54 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
       );
 
   @override
+  String crateApiSimpleSyncFingerprint({
+    required String primarySourceId,
+    required String primaryActivityId,
+    required double startDateUnixSeconds,
+    required List<String> supplementSourceIds,
+    required String destination,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(primarySourceId, serializer);
+          sse_encode_String(primaryActivityId, serializer);
+          sse_encode_f_64(startDateUnixSeconds, serializer);
+          sse_encode_list_String(supplementSourceIds, serializer);
+          sse_encode_String(destination, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleSyncFingerprintConstMeta,
+        argValues: [
+          primarySourceId,
+          primaryActivityId,
+          startDateUnixSeconds,
+          supplementSourceIds,
+          destination,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleSyncFingerprintConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_fingerprint",
+        argNames: [
+          "primarySourceId",
+          "primaryActivityId",
+          "startDateUnixSeconds",
+          "supplementSourceIds",
+          "destination",
+        ],
+      );
+
+  @override
   Uint8List crateApiSimpleSyncRecoveryApply({
     required List<int> recoveryJson,
     required List<int> commandJson,
@@ -631,7 +1007,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(recoveryJson, serializer);
           sse_encode_list_prim_u_8_loose(commandJson, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
@@ -659,7 +1035,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(recoveryJson, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 24)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
@@ -689,7 +1065,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(stateJson, serializer);
           sse_encode_list_prim_u_8_loose(commandJson, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
@@ -715,15 +1091,44 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  ActivityIntervalInput dco_decode_activity_interval_input(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return ActivityIntervalInput(
+      startSeconds: dco_decode_f_64(arr[0]),
+      endSeconds: dco_decode_f_64(arr[1]),
+      durationSeconds: dco_decode_f_64(arr[2]),
+    );
+  }
+
+  @protected
   bool dco_decode_bool(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as bool;
   }
 
   @protected
+  ActivityIntervalInput dco_decode_box_autoadd_activity_interval_input(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_activity_interval_input(raw);
+  }
+
+  @protected
   double dco_decode_box_autoadd_f_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as double;
+  }
+
+  @protected
+  StravaActivitySpeedResult dco_decode_box_autoadd_strava_activity_speed_result(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_strava_activity_speed_result(raw);
   }
 
   @protected
@@ -772,6 +1177,28 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  PlatformInt64 dco_decode_i_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dcoDecodeI64(raw);
+  }
+
+  @protected
+  List<String> dco_decode_list_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_String).toList();
+  }
+
+  @protected
+  List<ActivityIntervalInput> dco_decode_list_activity_interval_input(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_activity_interval_input)
+        .toList();
+  }
+
+  @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as List<int>;
@@ -784,6 +1211,15 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  List<StravaRemoteActivityResult>
+  dco_decode_list_strava_remote_activity_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_strava_remote_activity_result)
+        .toList();
+  }
+
+  @protected
   String? dco_decode_opt_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_String(raw);
@@ -793,6 +1229,15 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   double? dco_decode_opt_box_autoadd_f_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_f_64(raw);
+  }
+
+  @protected
+  StravaActivitySpeedResult?
+  dco_decode_opt_box_autoadd_strava_activity_speed_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_strava_activity_speed_result(raw);
   }
 
   @protected
@@ -817,6 +1262,42 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_u_32(raw);
+  }
+
+  @protected
+  StravaActivitySpeedResult dco_decode_strava_activity_speed_result(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 8)
+      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
+    return StravaActivitySpeedResult(
+      id: dco_decode_String(arr[0]),
+      name: dco_decode_String(arr[1]),
+      startTimeSeconds: dco_decode_opt_box_autoadd_f_64(arr[2]),
+      sportType: dco_decode_String(arr[3]),
+      listedMaxSpeedMps: dco_decode_f_64(arr[4]),
+      bestEffortPeakMps: dco_decode_f_64(arr[5]),
+      maxSpeedMps: dco_decode_f_64(arr[6]),
+      averageSpeedMps: dco_decode_f_64(arr[7]),
+    );
+  }
+
+  @protected
+  StravaRemoteActivityResult dco_decode_strava_remote_activity_result(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return StravaRemoteActivityResult(
+      id: dco_decode_String(arr[0]),
+      startTimeSeconds: dco_decode_f_64(arr[1]),
+      endTimeSeconds: dco_decode_f_64(arr[2]),
+      distanceMeters: dco_decode_opt_box_autoadd_f_64(arr[3]),
+    );
   }
 
   @protected
@@ -927,15 +1408,46 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  ActivityIntervalInput sse_decode_activity_interval_input(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_startSeconds = sse_decode_f_64(deserializer);
+    var var_endSeconds = sse_decode_f_64(deserializer);
+    var var_durationSeconds = sse_decode_f_64(deserializer);
+    return ActivityIntervalInput(
+      startSeconds: var_startSeconds,
+      endSeconds: var_endSeconds,
+      durationSeconds: var_durationSeconds,
+    );
+  }
+
+  @protected
   bool sse_decode_bool(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint8() != 0;
   }
 
   @protected
+  ActivityIntervalInput sse_decode_box_autoadd_activity_interval_input(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_activity_interval_input(deserializer));
+  }
+
+  @protected
   double sse_decode_box_autoadd_f_64(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_f_64(deserializer));
+  }
+
+  @protected
+  StravaActivitySpeedResult sse_decode_box_autoadd_strava_activity_speed_result(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_strava_activity_speed_result(deserializer));
   }
 
   @protected
@@ -986,6 +1498,38 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  PlatformInt64 sse_decode_i_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getPlatformInt64();
+  }
+
+  @protected
+  List<String> sse_decode_list_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <String>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_String(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<ActivityIntervalInput> sse_decode_list_activity_interval_input(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ActivityIntervalInput>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_activity_interval_input(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
@@ -997,6 +1541,19 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
     return deserializer.buffer.getUint8List(len_);
+  }
+
+  @protected
+  List<StravaRemoteActivityResult>
+  sse_decode_list_strava_remote_activity_result(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <StravaRemoteActivityResult>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_strava_remote_activity_result(deserializer));
+    }
+    return ans_;
   }
 
   @protected
@@ -1016,6 +1573,22 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_f_64(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  StravaActivitySpeedResult?
+  sse_decode_opt_box_autoadd_strava_activity_speed_result(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_strava_activity_speed_result(
+        deserializer,
+      ));
     } else {
       return null;
     }
@@ -1056,6 +1629,48 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
     } else {
       return null;
     }
+  }
+
+  @protected
+  StravaActivitySpeedResult sse_decode_strava_activity_speed_result(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_id = sse_decode_String(deserializer);
+    var var_name = sse_decode_String(deserializer);
+    var var_startTimeSeconds = sse_decode_opt_box_autoadd_f_64(deserializer);
+    var var_sportType = sse_decode_String(deserializer);
+    var var_listedMaxSpeedMps = sse_decode_f_64(deserializer);
+    var var_bestEffortPeakMps = sse_decode_f_64(deserializer);
+    var var_maxSpeedMps = sse_decode_f_64(deserializer);
+    var var_averageSpeedMps = sse_decode_f_64(deserializer);
+    return StravaActivitySpeedResult(
+      id: var_id,
+      name: var_name,
+      startTimeSeconds: var_startTimeSeconds,
+      sportType: var_sportType,
+      listedMaxSpeedMps: var_listedMaxSpeedMps,
+      bestEffortPeakMps: var_bestEffortPeakMps,
+      maxSpeedMps: var_maxSpeedMps,
+      averageSpeedMps: var_averageSpeedMps,
+    );
+  }
+
+  @protected
+  StravaRemoteActivityResult sse_decode_strava_remote_activity_result(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_id = sse_decode_String(deserializer);
+    var var_startTimeSeconds = sse_decode_f_64(deserializer);
+    var var_endTimeSeconds = sse_decode_f_64(deserializer);
+    var var_distanceMeters = sse_decode_opt_box_autoadd_f_64(deserializer);
+    return StravaRemoteActivityResult(
+      id: var_id,
+      startTimeSeconds: var_startTimeSeconds,
+      endTimeSeconds: var_endTimeSeconds,
+      distanceMeters: var_distanceMeters,
+    );
   }
 
   @protected
@@ -1181,15 +1796,44 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  void sse_encode_activity_interval_input(
+    ActivityIntervalInput self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_f_64(self.startSeconds, serializer);
+    sse_encode_f_64(self.endSeconds, serializer);
+    sse_encode_f_64(self.durationSeconds, serializer);
+  }
+
+  @protected
   void sse_encode_bool(bool self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint8(self ? 1 : 0);
   }
 
   @protected
+  void sse_encode_box_autoadd_activity_interval_input(
+    ActivityIntervalInput self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_activity_interval_input(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_f_64(double self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_f_64(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_strava_activity_speed_result(
+    StravaActivitySpeedResult self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_strava_activity_speed_result(self, serializer);
   }
 
   @protected
@@ -1240,6 +1884,33 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putPlatformInt64(self);
+  }
+
+  @protected
+  void sse_encode_list_String(List<String> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_String(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_activity_interval_input(
+    List<ActivityIntervalInput> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_activity_interval_input(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_prim_u_8_loose(
     List<int> self,
     SseSerializer serializer,
@@ -1262,6 +1933,18 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  void sse_encode_list_strava_remote_activity_result(
+    List<StravaRemoteActivityResult> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_strava_remote_activity_result(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -1278,6 +1961,19 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_f_64(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_strava_activity_speed_result(
+    StravaActivitySpeedResult? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_strava_activity_speed_result(self, serializer);
     }
   }
 
@@ -1315,6 +2011,34 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
     if (self != null) {
       sse_encode_box_autoadd_u_32(self, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_strava_activity_speed_result(
+    StravaActivitySpeedResult self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.id, serializer);
+    sse_encode_String(self.name, serializer);
+    sse_encode_opt_box_autoadd_f_64(self.startTimeSeconds, serializer);
+    sse_encode_String(self.sportType, serializer);
+    sse_encode_f_64(self.listedMaxSpeedMps, serializer);
+    sse_encode_f_64(self.bestEffortPeakMps, serializer);
+    sse_encode_f_64(self.maxSpeedMps, serializer);
+    sse_encode_f_64(self.averageSpeedMps, serializer);
+  }
+
+  @protected
+  void sse_encode_strava_remote_activity_result(
+    StravaRemoteActivityResult self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.id, serializer);
+    sse_encode_f_64(self.startTimeSeconds, serializer);
+    sse_encode_f_64(self.endTimeSeconds, serializer);
+    sse_encode_opt_box_autoadd_f_64(self.distanceMeters, serializer);
   }
 
   @protected

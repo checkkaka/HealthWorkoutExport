@@ -35,6 +35,54 @@ void main() {
     expect(isCommute(distanceMeters: 4000, durationSeconds: 1200), isTrue);
     expect(isCommute(distanceMeters: 20000, durationSeconds: 2400), isFalse);
 
+    expect(
+      syncFingerprint(
+        primarySourceId: 'healthkit',
+        primaryActivityId: 'abc',
+        startDateUnixSeconds: 1700000000.999,
+        supplementSourceIds: const ['xingzhe', 'onelap'],
+        destination: 'strava',
+      ),
+      'acf456b5da1096d0b5ef26ed1b77d078d509e37b0c20d55bdf1396414ef7a153',
+    );
+    const primary = ActivityIntervalInput(
+      startSeconds: 1700000000,
+      endSeconds: 1700003600,
+      durationSeconds: 3600,
+    );
+    const matched = ActivityIntervalInput(
+      startSeconds: 1700000300,
+      endSeconds: 1700003500,
+      durationSeconds: 3200,
+    );
+    const far = ActivityIntervalInput(
+      startSeconds: 1700100000,
+      endSeconds: 1700103600,
+      durationSeconds: 3600,
+    );
+    expect(
+      activityMatchScore(primary: primary, candidate: matched),
+      closeTo(8 / 9, 0.0001),
+    );
+    expect(
+      bestActivityMatchIndex(
+        primary: primary,
+        candidates: const [far, matched],
+      ),
+      1,
+    );
+    expect(
+      stableDedupeMatches(
+        startASeconds: 1700000000,
+        distanceAMeters: 12040,
+        startBSeconds: 1700001200,
+        distanceBMeters: 11800,
+        durationASeconds: 1442,
+        durationBSeconds: 1452,
+      ),
+      isTrue,
+    );
+
     final fit = Uint8List.fromList(const [
       0x0E,
       0x20,

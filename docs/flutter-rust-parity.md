@@ -99,10 +99,10 @@
 | ID | 当前功能 | Swift 实现基线 | 已有测试 | 目标归属 | 对等验收条件 | 状态 |
 |---|---|---|---|---|---|---|
 | SYNC-01 | 当天、历史 7/30/90 天、全部和自定义同步区间 | `AutoSyncEngine.swift`、`WorkoutDataSource.swift` | 无专项测试 | Rust | 当天按本地日历 `[00:00,次日00:00)`；历史与自定义半开区间和 Swift 一致 | 未完成 |
-| SYNC-02 | 主源与一个/两个补源活动匹配 | `ActivityMatcher.swift`、`AutoSyncEngine.swift` | `ActivityMatcherTests.swift` | Rust | IoU ≥50% 优先；否则开始差 ≤15 分钟且时长差 ≤20%；擦边和远距离活动不匹配 | Rust 已实现，未接入 |
+| SYNC-02 | 主源与一个/两个补源活动匹配 | `ActivityMatcher.swift`、`AutoSyncEngine.swift` | `ActivityMatcherTests.swift` | Rust | IoU ≥50% 优先；否则开始差 ≤15 分钟且时长差 ≤20%；擦边和远距离活动不匹配 | Rust 已接桥，未进入补源编排 |
 | SYNC-03 | 拉主源 FIT、缺补源可跳过、匹配补源后合并上传 | `AutoSyncEngine.swift` | FIT/匹配有单测，编排无端到端测试 | Rust 编排 + 原生源适配 | 单条补源失败不拖垮主活动；每条结果、跳过原因和计数准确；批次可取消 | 未完成 |
-| SYNC-04 | SHA-256 同步指纹，补源排序后稳定 | `SyncFingerprint.swift` | `SyncFingerprintTests.swift` | Rust | 相同输入和不同补源顺序得到相同 64 位小写摘要；任一业务字段变化会改变指纹 | Rust 已实现，未接入 |
-| SYNC-05 | 跨主源开始时间/距离/时长稳定去重 | `SyncFingerprint.swift` 中 `SyncStableDedupe`、`SyncStateStore.swift`、`StravaActivityLookup.swift` | `SyncFingerprintTests.swift` | Rust | 紧窗、宽窗、距离绝对/相对误差和时长误差全部通过；生产链路改为调用 Rust 后再标完成 | Rust 已实现，未接入 |
+| SYNC-04 | SHA-256 同步指纹，补源排序后稳定 | `SyncFingerprint.swift` | `SyncFingerprintTests.swift` | Rust | 相同输入和不同补源顺序得到相同 64 位小写摘要；任一业务字段变化会改变指纹 | Rust 已接桥，HealthKit 首传已使用 |
+| SYNC-05 | 跨主源开始时间/距离/时长稳定去重 | `SyncFingerprint.swift` 中 `SyncStableDedupe`、`SyncStateStore.swift`、`StravaActivityLookup.swift` | `SyncFingerprintTests.swift` | Rust | 紧窗、宽窗、距离绝对/相对误差和时长误差全部通过；生产链路改为调用 Rust 后再标完成 | Rust 已接桥，尚未接入去重决策 |
 | SYNC-06 | 跳过同指纹、同主活动或稳定近似的历史记录，异常速度例外 | `AutoSyncEngine.swift`、`SyncStateStore.swift`、`StravaActivityLookup.swift` | `SyncFingerprintTests.swift`、`StravaActivityLookupTests.swift` | Rust | 开关开启时三层去重准确；被判异常的骑行仍可重传；关闭后交由远端预检决策 | 未完成 |
 | SYNC-07 | 上传前远端预检与重复活动决策 | `AutoSyncEngine.swift`、`StravaActivityLookup.swift`、`SyncSession.swift` | `StravaActivityLookupTests.swift` | Rust + Flutter | IoU/开始+时长/开始+距离匹配一致；支持跳过、整批跳过、打开远端、覆盖、整批覆盖 | 未完成 |
 | SYNC-08 | 同步进度、结果备注、取消、继续上次同步与整批重试 | `SyncSession.swift`、`AutoSyncEngine.swift` | 无编排自动测试 | Flutter + Rust | processed/uploaded/deduped/failed 计数不漂移；取消快速终止；继续只跑剩余；重试按原配置执行 | 未完成 |
@@ -116,20 +116,20 @@
 | STRAVA-01 | API/网页两种上传模式和统一上传契约 | `StravaUploading.swift`、两个 Uploader | `StravaActivityLookupTests.swift`（轮询/错误） | Rust 接口 + 原生认证/WebView | 两模式 readiness、上传结果、错误和重复语义统一；切换模式不丢各自凭证 | 未完成 |
 | STRAVA-02 | OAuth 自定义 scheme、token 保存/刷新与 scope | `StravaAPIUploader.swift`、`StravaUploading.swift`、`Info.plist` | 无真实 OAuth 自动测试 | iOS AuthenticationServices / Android 浏览器认证 + Rust token 客户端 | `healthworkoutexport://localhost/callback` 在 iOS 保持兼容；授权、取消、过期刷新、撤销后重登均通过 | 部分实现，已接入 |
 | STRAVA-03 | Uploads API multipart FIT、轮询、错误清洗与远端 ID | `StravaAPIUploader.swift`、`StravaUploading.swift` | `StravaActivityLookupTests.swift` | Rust | 首次立即轮询、总预算约 70 秒、处理中/成功/重复/硬失败分支一致；HTML 错误不会直接展示 | 未完成 |
-| STRAVA-04 | API 活动列表、详情速度、分页和限额响应头 | `StravaAPIUploader.swift`、`StravaActivityLookup.swift` | `StravaActivityLookupTests.swift` | Rust | 活动分页无重复遗漏；ID 类型兼容；15 分钟/每日 read/overall 限额解析与 429 保留 | 未完成 |
+| STRAVA-04 | API 活动列表、详情速度、分页和限额响应头 | `StravaAPIUploader.swift`、`StravaActivityLookup.swift` | `StravaActivityLookupTests.swift` | Rust | 活动分页无重复遗漏；ID 类型兼容；15 分钟/每日 read/overall 限额解析与 429 保留 | Rust 已接桥，未接预检 UI |
 | STRAVA-05 | WebView 登录 Cookie、CSRF 上传、网页活动列表和 Cookie 删除远端 | `StravaWebUploader.swift` | 重复文案有单测；真实网页无自动测试 | 原生 WebView/Cookie + Rust/原生网页客户端 | 登录后 Cookie 可恢复；CSRF 上传可用；Cookie 过期提示明确；覆盖删除只命中目标活动；网页改版失败不损坏本地状态 | 未完成 |
 | STRAVA-06 | duplicate 文案/HTML 解析与活动 ID 提取 | `StravaActivityLookup.swift` | `StravaActivityLookupTests.swift` | Rust | 大小写、纯文本、HTML 链接、缺失和 NSNull/数字 ID 等现有用例全部通过 | 未完成 |
 | STRAVA-07 | 远端活动匹配、可打开 ID、远端 ID 回填 | `StravaActivityLookup.swift`、`SyncStateStore.swift`、`SyncHistoryView.swift` | `StravaActivityLookupTests.swift`、`SyncFingerprintTests.swift` | Rust + Flutter deep link | 匹配不误伤热身/短段；回填严格小于 2 分钟且 ID 不重复占用；有效 ID 可打开 Strava | 未完成 |
 | STRAVA-08 | 骑行异常速度扫描：摘要、最佳成绩和速度流 | `StravaActivityLookup.swift`、两个 Uploader、`SyncHistoryView.swift` | `StravaActivityLookupTests.swift` | Rust + Flutter | 仅骑行参与；阈值、最佳成绩优先级、占位 ID 与本地记录标记和 Swift 一致 | 未完成 |
-| STRAVA-09 | API 通勤自动标记 | `CommuteClassifier.swift`、`AutoSyncEngine.swift` | `CommuteClassifierTests.swift` | Rust | `<5km` 或“均速 `<28km/h` 且距离 `<16km`”严格边界通过；只在 API 上传写 commute；生产链路接入后再标完成 | Rust 已实现，未接入 |
+| STRAVA-09 | API 通勤自动标记 | `CommuteClassifier.swift`、`AutoSyncEngine.swift` | `CommuteClassifierTests.swift` | Rust | `<5km` 或“均速 `<28km/h` 且距离 `<16km`”严格边界通过；只在 API 上传写 commute；生产链路接入后再标完成 | Rust 已接 HealthKit 首传 |
 | STRAVA-10 | 虚拟功率活动描述仅在可支持的上传路径写入 | `AutoSyncEngine.swift`、`StravaAPIUploader.swift`、`StravaWebUploader.swift` | `VirtualPowerSocialCopyTests.swift` | Rust + 上传适配 | 仅 `powerSource=virtual` 时生成；API 成功携带描述；网页不支持时不谎报已写入 | 未完成 |
 
 ## 7. 存储
 
 | ID | 当前功能 | Swift 实现基线 | 已有测试 | 目标归属 | 对等验收条件 | 状态 |
 |---|---|---|---|---|---|---|
-| STORE-01 | `sync_state.json` 状态机：pending/uploaded/failed/duplicate/channel | `SyncStateStore.swift` | `SyncFingerprintTests.swift` | Rust 持久化模型 + 原生文件目录 | 冷启动往返不丢字段；uploaded 可被后台硬错误改为 failed；duplicate 可补远端 ID；旧字段兼容 | 未完成 |
-| STORE-02 | 按指纹保存最终同步 FIT，并维护主活动索引/徽标 | `SyncStateStore.swift` | `SyncFingerprintTests.swift` | Rust 索引 + 原生文件存储 | 上传成功原子保存；列表索引只反映真实存在文件；删除记录同步删 FIT；旧记录无文件时正确降级 | 未完成 |
+| STORE-01 | `sync_state.json` 状态机：pending/uploaded/failed/duplicate/channel | `SyncStateStore.swift` | `SyncFingerprintTests.swift` | Rust 持久化模型 + 原生文件目录 | 冷启动往返不丢字段；uploaded 可被后台硬错误改为 failed；duplicate 可补远端 ID；旧字段兼容 | 部分已接 HealthKit 首传 |
+| STORE-02 | 按指纹保存最终同步 FIT，并维护主活动索引/徽标 | `SyncStateStore.swift` | `SyncFingerprintTests.swift` | Rust 索引 + 原生文件存储 | 上传成功原子保存；列表索引只反映真实存在文件；删除记录同步删 FIT；旧记录无文件时正确降级 | 部分已接 HealthKit 首传 |
 | STORE-03 | `pending_resync` 覆盖恢复包 | `SyncStateStore.swift` 中 `ResyncRecoveryStore` | `SyncFingerprintTests.swift` | Rust 编解码 + 原生受保护文件 | 仅合法十六进制指纹可成为文件名；保存/读取/删除往返一致；崩溃后可恢复 | 部分实现，未接入 |
 | STORE-04 | Strava、虚拟功率与界面偏好 | `StravaUploading.swift`、`VirtualPowerSettings.swift`、各 ViewModel | 部分纯规则测试 | Flutter preferences + 原生安全存储 | 模式、GCJ、惯性、质量、车重、CdA 等默认值和持久化一致；凭证绝不进入普通 preferences | 部分实现，已接入 |
 | STORE-05 | Open-Meteo 缓存 | `OpenMeteoWeatherCache.swift` | `OpenMeteoWeatherCacheTests.swift` | Rust | 同网格/同日/同来源命中；跨日或来源变化未命中；容量和生命周期不会无限增长 | 未完成 |

@@ -95,6 +95,49 @@ void main() {
     expect(maximumActiveApplies, 1);
   });
 
+  test('pending 状态写入失败时删除刚写入的同步 FIT', () async {
+    final calls = <String>[];
+    messenger.setMockMethodCallHandler(methodChannel, (call) async {
+      calls.add(call.method);
+      if (call.method == 'readSyncedFit') {
+        throw PlatformException(code: 'sync_file_missing');
+      }
+      if (call.method == 'readState') {
+        throw PlatformException(code: 'sync_file_missing');
+      }
+      if (call.method == 'writeState') {
+        throw PlatformException(code: 'sync_file_io');
+      }
+      return null;
+    });
+    final store = SyncStateStore.withDependencies(
+      const SyncFilesChannel.withChannel(methodChannel),
+      ({required stateJson, required commandJson}) =>
+          Uint8List.fromList(utf8.encode('{}')),
+      ({required recoveryJson}) => Uint8List.fromList(recoveryJson),
+    );
+
+    await expectLater(
+      store.savePendingFit(
+        record: SyncPendingRecord(
+          fingerprint: 'e' * 64,
+          primarySourceId: 'healthkit',
+          primaryActivityId: 'activity-1',
+          updatedAt: DateTime.fromMillisecondsSinceEpoch(1700000000000),
+        ),
+        fit: Uint8List.fromList(const [1, 2, 3]),
+      ),
+      throwsA(isA<PlatformException>()),
+    );
+    expect(calls, [
+      'readSyncedFit',
+      'writeSyncedFit',
+      'readState',
+      'writeState',
+      'deleteSyncedFit',
+    ]);
+  });
+
   test('附件删除失败时保留状态清单供下次重试', () async {
     final fingerprint = 'c' * 64;
     var state = Uint8List.fromList(

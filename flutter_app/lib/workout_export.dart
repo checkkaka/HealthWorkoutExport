@@ -137,7 +137,7 @@ final class WorkoutExportService {
             ).convert(_jsonExport(bundle, timeZone)),
           ),
           WorkoutExportFormat.fit => await _fitEncoder(
-            bundleJson: utf8.encode(jsonEncode(_fitInput(bundle))),
+            bundleJson: utf8.encode(jsonEncode(healthWorkoutFitInput(bundle))),
             timezoneOffsetSeconds: end.timeZoneOffset.inSeconds,
           ),
         };
@@ -219,7 +219,8 @@ String _fileBaseName(HealthWorkoutBundle bundle, DateTime start) {
   return '${stamp}_${type.isEmpty ? 'workout' : type}_${bundle.summary.uuid.substring(0, 8)}';
 }
 
-Map<String, Object?> _fitInput(HealthWorkoutBundle bundle) => {
+/// HealthKit 到 Rust FIT 编码器的唯一输入映射，导出与自动同步共用。
+Map<String, Object?> healthWorkoutFitInput(HealthWorkoutBundle bundle) => {
   'uuid': bundle.summary.uuid,
   'startMs': bundle.summary.startMs,
   'endMs': bundle.summary.endMs,

@@ -6,9 +6,9 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `begin`, `operation_error_response`, `reserve_for_refresh`, `reserve`, `token_result`, `upload_ffi_response`, `upload_operations`
+// These functions are ignored because they are not marked as `pub`: `begin`, `operation_error_response`, `remote_activity_error`, `remote_activity_result`, `remote_activity_speed_result`, `remote_operation_error`, `reserve_for_refresh`, `reserve`, `token_result`, `upload_ffi_response`, `upload_operations`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `UploadOperationEntry`, `UploadOperationError`, `UploadOperationRegistry`, `UploadOperationState`, `UploadOperation`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
 
 /// Flutter 调用的最小同步入口，直接复用已测试的核心规则。
 bool isCommute({double? distanceMeters, required double durationSeconds}) =>
@@ -16,6 +16,56 @@ bool isCommute({double? distanceMeters, required double durationSeconds}) =>
       distanceMeters: distanceMeters,
       durationSeconds: durationSeconds,
     );
+
+/// 计算与 Swift 兼容的同步幂等指纹；非法时间戳不会产生可持久化指纹。
+String syncFingerprint({
+  required String primarySourceId,
+  required String primaryActivityId,
+  required double startDateUnixSeconds,
+  required List<String> supplementSourceIds,
+  required String destination,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleSyncFingerprint(
+  primarySourceId: primarySourceId,
+  primaryActivityId: primaryActivityId,
+  startDateUnixSeconds: startDateUnixSeconds,
+  supplementSourceIds: supplementSourceIds,
+  destination: destination,
+);
+
+/// 返回两个活动的匹配分数；不满足时间重叠或兜底容差时为 `null`。
+double? activityMatchScore({
+  required ActivityIntervalInput primary,
+  required ActivityIntervalInput candidate,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleActivityMatchScore(
+  primary: primary,
+  candidate: candidate,
+);
+
+/// 返回候选活动中分数最高的原始下标；并列时保留最先出现者。
+int? bestActivityMatchIndex({
+  required ActivityIntervalInput primary,
+  required List<ActivityIntervalInput> candidates,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleBestActivityMatchIndex(
+  primary: primary,
+  candidates: candidates,
+);
+
+/// 按已有 Swift 容差判断两个跨来源活动是否稳定去重。
+bool stableDedupeMatches({
+  required double startASeconds,
+  required double distanceAMeters,
+  required double startBSeconds,
+  required double distanceBMeters,
+  double? durationASeconds,
+  double? durationBSeconds,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleStableDedupeMatches(
+  startASeconds: startASeconds,
+  distanceAMeters: distanceAMeters,
+  startBSeconds: startBSeconds,
+  distanceBMeters: distanceBMeters,
+  durationASeconds: durationASeconds,
+  durationBSeconds: durationBSeconds,
+);
 
 /// 严格校验 FIT 并返回轨迹/心率内容质量摘要。
 FitProbeSummary fitContentSummary({required List<int> data}) =>
@@ -138,6 +188,52 @@ Future<StravaUploadFfiResponse> stravaResumeUploadPollAfterRefresh({
       pollAttempt: pollAttempt,
     );
 
+/// 拉取 Strava 远端活动列表。调用前先用 `strava_reserve_remote_read` 获取 handle，
+/// 运行中可通过 `strava_cancel_remote_read` 取消；handle 在 Future 结束后自动释放。
+Future<List<StravaRemoteActivityResult>> stravaListRemoteActivities({
+  required String operationHandle,
+  required String accessToken,
+  required PlatformInt64 afterSeconds,
+  required PlatformInt64 beforeSeconds,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleStravaListRemoteActivities(
+  operationHandle: operationHandle,
+  accessToken: accessToken,
+  afterSeconds: afterSeconds,
+  beforeSeconds: beforeSeconds,
+);
+
+/// 拉取单条 Strava 活动的摘要最高速与 best_efforts 峰值；404 返回 `null`。
+/// 调用约束与 `strava_list_remote_activities` 相同，避免读取任务无法中止。
+Future<StravaActivitySpeedResult?> stravaFetchRemoteActivitySpeed({
+  required String operationHandle,
+  required String accessToken,
+  required String activityId,
+}) => WorkoutCoreRustLib.instance.api
+    .crateApiSimpleStravaFetchRemoteActivitySpeed(
+      operationHandle: operationHandle,
+      accessToken: accessToken,
+      activityId: activityId,
+    );
+
+/// 同步预留一个远端读取 handle。底层复用上传操作注册表，使取消代际隔离规则完全一致。
+StravaUploadReservation stravaReserveRemoteRead({
+  required String operationId,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleStravaReserveRemoteRead(
+  operationId: operationId,
+);
+
+/// 取消特定代际的远端读取，不会影响之后为同一 logical ID 新建的读取。
+bool stravaCancelRemoteRead({required String operationHandle}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleStravaCancelRemoteRead(
+      operationHandle: operationHandle,
+    );
+
+/// 释放尚未启动的远端读取预留 handle；已启动任务由 RAII 自动释放。
+bool stravaReleaseRemoteRead({required String operationHandle}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleStravaReleaseRemoteRead(
+      operationHandle: operationHandle,
+    );
+
 /// 同步预留一个不可重用 handle；Dart 必须先 reserve，再启动异步上传或轮询。
 StravaUploadReservation stravaReserveUpload({required String operationId}) =>
     WorkoutCoreRustLib.instance.api.crateApiSimpleStravaReserveUpload(
@@ -155,6 +251,32 @@ bool stravaReleaseUpload({required String operationHandle}) =>
     WorkoutCoreRustLib.instance.api.crateApiSimpleStravaReleaseUpload(
       operationHandle: operationHandle,
     );
+
+/// Flutter 可传输的活动时间区间，供跨来源匹配使用。
+class ActivityIntervalInput {
+  final double startSeconds;
+  final double endSeconds;
+  final double durationSeconds;
+
+  const ActivityIntervalInput({
+    required this.startSeconds,
+    required this.endSeconds,
+    required this.durationSeconds,
+  });
+
+  @override
+  int get hashCode =>
+      startSeconds.hashCode ^ endSeconds.hashCode ^ durationSeconds.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ActivityIntervalInput &&
+          runtimeType == other.runtimeType &&
+          startSeconds == other.startSeconds &&
+          endSeconds == other.endSeconds &&
+          durationSeconds == other.durationSeconds;
+}
 
 class FitProbeSummary {
   final int gpsPointCount;
@@ -181,6 +303,86 @@ class FitProbeSummary {
           gpsPointCount == other.gpsPointCount &&
           heartRatePointCount == other.heartRatePointCount &&
           qualityScore == other.qualityScore;
+}
+
+/// Flutter 侧用于异常速度复查的官方活动摘要。
+class StravaActivitySpeedResult {
+  final String id;
+  final String name;
+  final double? startTimeSeconds;
+  final String sportType;
+  final double listedMaxSpeedMps;
+  final double bestEffortPeakMps;
+  final double maxSpeedMps;
+  final double averageSpeedMps;
+
+  const StravaActivitySpeedResult({
+    required this.id,
+    required this.name,
+    this.startTimeSeconds,
+    required this.sportType,
+    required this.listedMaxSpeedMps,
+    required this.bestEffortPeakMps,
+    required this.maxSpeedMps,
+    required this.averageSpeedMps,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      name.hashCode ^
+      startTimeSeconds.hashCode ^
+      sportType.hashCode ^
+      listedMaxSpeedMps.hashCode ^
+      bestEffortPeakMps.hashCode ^
+      maxSpeedMps.hashCode ^
+      averageSpeedMps.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is StravaActivitySpeedResult &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          name == other.name &&
+          startTimeSeconds == other.startTimeSeconds &&
+          sportType == other.sportType &&
+          listedMaxSpeedMps == other.listedMaxSpeedMps &&
+          bestEffortPeakMps == other.bestEffortPeakMps &&
+          maxSpeedMps == other.maxSpeedMps &&
+          averageSpeedMps == other.averageSpeedMps;
+}
+
+/// Flutter 侧用于上传前远端预检的活动区间；字段语义与旧 Swift `RemoteActivity` 一致。
+class StravaRemoteActivityResult {
+  final String id;
+  final double startTimeSeconds;
+  final double endTimeSeconds;
+  final double? distanceMeters;
+
+  const StravaRemoteActivityResult({
+    required this.id,
+    required this.startTimeSeconds,
+    required this.endTimeSeconds,
+    this.distanceMeters,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      startTimeSeconds.hashCode ^
+      endTimeSeconds.hashCode ^
+      distanceMeters.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is StravaRemoteActivityResult &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          startTimeSeconds == other.startTimeSeconds &&
+          endTimeSeconds == other.endTimeSeconds &&
+          distanceMeters == other.distanceMeters;
 }
 
 class StravaTokenResult {

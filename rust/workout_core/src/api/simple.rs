@@ -4,6 +4,87 @@ pub fn is_commute(distance_meters: Option<f64>, duration_seconds: f64) -> bool {
     crate::is_commute(distance_meters, duration_seconds)
 }
 
+/// Flutter 可传输的活动时间区间，供跨来源匹配使用。
+#[derive(Clone, Copy, Debug)]
+pub struct ActivityIntervalInput {
+    pub start_seconds: f64,
+    pub end_seconds: f64,
+    pub duration_seconds: f64,
+}
+
+impl From<ActivityIntervalInput> for crate::ActivityInterval {
+    fn from(value: ActivityIntervalInput) -> Self {
+        Self::new(
+            value.start_seconds,
+            value.end_seconds,
+            value.duration_seconds,
+        )
+    }
+}
+
+/// 计算与 Swift 兼容的同步幂等指纹；非法时间戳不会产生可持久化指纹。
+#[flutter_rust_bridge::frb(sync)]
+pub fn sync_fingerprint(
+    primary_source_id: String,
+    primary_activity_id: String,
+    start_date_unix_seconds: f64,
+    supplement_source_ids: Vec<String>,
+    destination: String,
+) -> Result<String, String> {
+    let supplements = supplement_source_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    crate::sync_fingerprint(
+        &primary_source_id,
+        &primary_activity_id,
+        start_date_unix_seconds,
+        &supplements,
+        &destination,
+    )
+    .ok_or_else(|| "无效同步开始时间".to_owned())
+}
+
+/// 返回两个活动的匹配分数；不满足时间重叠或兜底容差时为 `null`。
+#[flutter_rust_bridge::frb(sync)]
+pub fn activity_match_score(
+    primary: ActivityIntervalInput,
+    candidate: ActivityIntervalInput,
+) -> Option<f64> {
+    crate::activity_match_score(primary.into(), candidate.into())
+}
+
+/// 返回候选活动中分数最高的原始下标；并列时保留最先出现者。
+#[flutter_rust_bridge::frb(sync)]
+pub fn best_activity_match_index(
+    primary: ActivityIntervalInput,
+    candidates: Vec<ActivityIntervalInput>,
+) -> Option<u32> {
+    let candidates = candidates.into_iter().map(Into::into).collect::<Vec<_>>();
+    crate::best_activity_match_index(primary.into(), &candidates)
+        .and_then(|index| u32::try_from(index).ok())
+}
+
+/// 按已有 Swift 容差判断两个跨来源活动是否稳定去重。
+#[flutter_rust_bridge::frb(sync)]
+pub fn stable_dedupe_matches(
+    start_a_seconds: f64,
+    distance_a_meters: f64,
+    start_b_seconds: f64,
+    distance_b_meters: f64,
+    duration_a_seconds: Option<f64>,
+    duration_b_seconds: Option<f64>,
+) -> bool {
+    crate::stable_dedupe_matches(
+        start_a_seconds,
+        distance_a_meters,
+        start_b_seconds,
+        distance_b_meters,
+        duration_a_seconds,
+        duration_b_seconds,
+    )
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct FitProbeSummary {
     pub gps_point_count: u32,
@@ -270,6 +351,124 @@ pub async fn strava_resume_upload_poll_after_refresh(
 #[derive(Clone, Debug)]
 pub struct StravaUploadReservation {
     pub handle: String,
+}
+
+/// Flutter 侧用于上传前远端预检的活动区间；字段语义与旧 Swift `RemoteActivity` 一致。
+#[derive(Clone, Debug)]
+pub struct StravaRemoteActivityResult {
+    pub id: String,
+    pub start_time_seconds: f64,
+    pub end_time_seconds: f64,
+    pub distance_meters: Option<f64>,
+}
+
+/// Flutter 侧用于异常速度复查的官方活动摘要。
+#[derive(Clone, Debug)]
+pub struct StravaActivitySpeedResult {
+    pub id: String,
+    pub name: String,
+    pub start_time_seconds: Option<f64>,
+    pub sport_type: String,
+    pub listed_max_speed_mps: f64,
+    pub best_effort_peak_mps: f64,
+    pub max_speed_mps: f64,
+    pub average_speed_mps: f64,
+}
+
+/// 拉取 Strava 远端活动列表。调用前先用 `strava_reserve_remote_read` 获取 handle，
+/// 运行中可通过 `strava_cancel_remote_read` 取消；handle 在 Future 结束后自动释放。
+pub async fn strava_list_remote_activities(
+    operation_handle: String,
+    access_token: String,
+    after_seconds: i64,
+    before_seconds: i64,
+) -> Result<Vec<StravaRemoteActivityResult>, String> {
+    let operation = UploadOperation::begin(operation_handle).map_err(remote_operation_error)?;
+    let client = crate::strava::StravaActivityClient::new().map_err(remote_activity_error)?;
+    client
+        .list_activities(
+            &access_token,
+            after_seconds,
+            before_seconds,
+            &operation.cancellation,
+        )
+        .await
+        .map(|activities| activities.into_iter().map(remote_activity_result).collect())
+        .map_err(remote_activity_error)
+}
+
+/// 拉取单条 Strava 活动的摘要最高速与 best_efforts 峰值；404 返回 `null`。
+/// 调用约束与 `strava_list_remote_activities` 相同，避免读取任务无法中止。
+pub async fn strava_fetch_remote_activity_speed(
+    operation_handle: String,
+    access_token: String,
+    activity_id: String,
+) -> Result<Option<StravaActivitySpeedResult>, String> {
+    let operation = UploadOperation::begin(operation_handle).map_err(remote_operation_error)?;
+    let client = crate::strava::StravaActivityClient::new().map_err(remote_activity_error)?;
+    client
+        .activity_speed(&access_token, &activity_id, &operation.cancellation)
+        .await
+        .map(|activity| activity.map(remote_activity_speed_result))
+        .map_err(remote_activity_error)
+}
+
+fn remote_activity_result(
+    activity: crate::strava::StravaRemoteActivity,
+) -> StravaRemoteActivityResult {
+    StravaRemoteActivityResult {
+        id: activity.id,
+        start_time_seconds: activity.start_time_seconds,
+        end_time_seconds: activity.end_time_seconds,
+        distance_meters: activity.distance_meters,
+    }
+}
+
+fn remote_activity_speed_result(
+    activity: crate::strava::StravaActivitySpeedInfo,
+) -> StravaActivitySpeedResult {
+    StravaActivitySpeedResult {
+        id: activity.id,
+        name: activity.name,
+        start_time_seconds: activity.start_time_seconds,
+        sport_type: activity.sport_type,
+        listed_max_speed_mps: activity.listed_max_speed_mps,
+        best_effort_peak_mps: activity.best_effort_peak_mps,
+        max_speed_mps: activity.max_speed_mps,
+        average_speed_mps: activity.average_speed_mps,
+    }
+}
+
+fn remote_operation_error(error: UploadOperationError) -> String {
+    match error {
+        UploadOperationError::Invalid => "Strava 远端读取操作无效或已结束".to_owned(),
+        UploadOperationError::InUse => "Strava 远端读取操作已在运行".to_owned(),
+        UploadOperationError::Exhausted => "Strava 远端读取操作已达上限".to_owned(),
+    }
+}
+
+fn remote_activity_error(error: crate::strava::StravaActivityError) -> String {
+    error.to_string()
+}
+
+/// 同步预留一个远端读取 handle。底层复用上传操作注册表，使取消代际隔离规则完全一致。
+#[flutter_rust_bridge::frb(sync)]
+pub fn strava_reserve_remote_read(operation_id: String) -> Result<StravaUploadReservation, String> {
+    UploadOperation::reserve(operation_id)
+        .map(|handle| StravaUploadReservation { handle })
+        .map_err(remote_operation_error)
+}
+
+/// 取消特定代际的远端读取，不会影响之后为同一 logical ID 新建的读取。
+#[flutter_rust_bridge::frb(sync)]
+pub fn strava_cancel_remote_read(operation_handle: String) -> bool {
+    strava_cancel_upload(operation_handle)
+}
+
+/// 释放尚未启动的远端读取预留 handle；已启动任务由 RAII 自动释放。
+#[flutter_rust_bridge::frb(sync)]
+pub fn strava_release_remote_read(operation_handle: String) -> bool {
+    strava_release_upload(operation_handle)
 }
 
 /// 同步预留一个不可重用 handle；Dart 必须先 reserve，再启动异步上传或轮询。

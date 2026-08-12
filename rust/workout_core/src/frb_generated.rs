@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1144851939;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1754669404;
 
 // Section: executor
 
@@ -46,6 +46,77 @@ flutter_rust_bridge::frb_generated_default_handler!();
 
 // Section: wire_funcs
 
+fn wire__crate__api__simple__activity_match_score_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "activity_match_score",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_primary =
+                <crate::api::simple::ActivityIntervalInput>::sse_decode(&mut deserializer);
+            let api_candidate =
+                <crate::api::simple::ActivityIntervalInput>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok(crate::api::simple::activity_match_score(
+                    api_primary,
+                    api_candidate,
+                ))?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__simple__best_activity_match_index_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "best_activity_match_index",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_primary =
+                <crate::api::simple::ActivityIntervalInput>::sse_decode(&mut deserializer);
+            let api_candidates =
+                <Vec<crate::api::simple::ActivityIntervalInput>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok(
+                    crate::api::simple::best_activity_match_index(api_primary, api_candidates),
+                )?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__simple__encode_health_workout_fit_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -207,6 +278,80 @@ fn wire__crate__api__simple__reencode_fit_impl(
         },
     )
 }
+fn wire__crate__api__simple__stable_dedupe_matches_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "stable_dedupe_matches",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_start_a_seconds = <f64>::sse_decode(&mut deserializer);
+            let api_distance_a_meters = <f64>::sse_decode(&mut deserializer);
+            let api_start_b_seconds = <f64>::sse_decode(&mut deserializer);
+            let api_distance_b_meters = <f64>::sse_decode(&mut deserializer);
+            let api_duration_a_seconds = <Option<f64>>::sse_decode(&mut deserializer);
+            let api_duration_b_seconds = <Option<f64>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok(crate::api::simple::stable_dedupe_matches(
+                    api_start_a_seconds,
+                    api_distance_a_meters,
+                    api_start_b_seconds,
+                    api_distance_b_meters,
+                    api_duration_a_seconds,
+                    api_duration_b_seconds,
+                ))?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__simple__strava_cancel_remote_read_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "strava_cancel_remote_read",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_operation_handle = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok(
+                    crate::api::simple::strava_cancel_remote_read(api_operation_handle),
+                )?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__simple__strava_cancel_upload_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -282,6 +427,94 @@ fn wire__crate__api__simple__strava_exchange_code_impl(
         },
     )
 }
+fn wire__crate__api__simple__strava_fetch_remote_activity_speed_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "strava_fetch_remote_activity_speed",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_operation_handle = <String>::sse_decode(&mut deserializer);
+            let api_access_token = <String>::sse_decode(&mut deserializer);
+            let api_activity_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, String>(
+                    (move || async move {
+                        let output_ok = crate::api::simple::strava_fetch_remote_activity_speed(
+                            api_operation_handle,
+                            api_access_token,
+                            api_activity_id,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__simple__strava_list_remote_activities_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "strava_list_remote_activities",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_operation_handle = <String>::sse_decode(&mut deserializer);
+            let api_access_token = <String>::sse_decode(&mut deserializer);
+            let api_after_seconds = <i64>::sse_decode(&mut deserializer);
+            let api_before_seconds = <i64>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, String>(
+                    (move || async move {
+                        let output_ok = crate::api::simple::strava_list_remote_activities(
+                            api_operation_handle,
+                            api_access_token,
+                            api_after_seconds,
+                            api_before_seconds,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__simple__strava_refresh_token_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -325,6 +558,38 @@ fn wire__crate__api__simple__strava_refresh_token_impl(
         },
     )
 }
+fn wire__crate__api__simple__strava_release_remote_read_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "strava_release_remote_read",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_operation_handle = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok(
+                    crate::api::simple::strava_release_remote_read(api_operation_handle),
+                )?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__simple__strava_release_upload_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -352,6 +617,36 @@ fn wire__crate__api__simple__strava_release_upload_impl(
                 let output_ok = Result::<_, ()>::Ok(crate::api::simple::strava_release_upload(
                     api_operation_handle,
                 ))?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__simple__strava_reserve_remote_read_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "strava_reserve_remote_read",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_operation_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok = crate::api::simple::strava_reserve_remote_read(api_operation_id)?;
                 Ok(output_ok)
             })())
         },
@@ -540,6 +835,46 @@ fn wire__crate__api__simple__strava_upload_fit_impl(
         },
     )
 }
+fn wire__crate__api__simple__sync_fingerprint_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "sync_fingerprint",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_primary_source_id = <String>::sse_decode(&mut deserializer);
+            let api_primary_activity_id = <String>::sse_decode(&mut deserializer);
+            let api_start_date_unix_seconds = <f64>::sse_decode(&mut deserializer);
+            let api_supplement_source_ids = <Vec<String>>::sse_decode(&mut deserializer);
+            let api_destination = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok = crate::api::simple::sync_fingerprint(
+                    api_primary_source_id,
+                    api_primary_activity_id,
+                    api_start_date_unix_seconds,
+                    api_supplement_source_ids,
+                    api_destination,
+                )?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__simple__sync_recovery_apply_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -645,6 +980,20 @@ impl SseDecode for String {
     }
 }
 
+impl SseDecode for crate::api::simple::ActivityIntervalInput {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_startSeconds = <f64>::sse_decode(deserializer);
+        let mut var_endSeconds = <f64>::sse_decode(deserializer);
+        let mut var_durationSeconds = <f64>::sse_decode(deserializer);
+        return crate::api::simple::ActivityIntervalInput {
+            start_seconds: var_startSeconds,
+            end_seconds: var_endSeconds,
+            duration_seconds: var_durationSeconds,
+        };
+    }
+}
+
 impl SseDecode for bool {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -680,6 +1029,39 @@ impl SseDecode for i32 {
     }
 }
 
+impl SseDecode for i64 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_i64::<NativeEndian>().unwrap()
+    }
+}
+
+impl SseDecode for Vec<String> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<String>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::simple::ActivityIntervalInput> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::simple::ActivityIntervalInput>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<u8> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -687,6 +1069,18 @@ impl SseDecode for Vec<u8> {
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
             ans_.push(<u8>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::simple::StravaRemoteActivityResult> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::simple::StravaRemoteActivityResult>::sse_decode(deserializer));
         }
         return ans_;
     }
@@ -708,6 +1102,19 @@ impl SseDecode for Option<f64> {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<f64>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::simple::StravaActivitySpeedResult> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::simple::StravaActivitySpeedResult>::sse_decode(
+                deserializer,
+            ));
         } else {
             return None;
         }
@@ -748,6 +1155,46 @@ impl SseDecode for Option<u32> {
         } else {
             return None;
         }
+    }
+}
+
+impl SseDecode for crate::api::simple::StravaActivitySpeedResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_id = <String>::sse_decode(deserializer);
+        let mut var_name = <String>::sse_decode(deserializer);
+        let mut var_startTimeSeconds = <Option<f64>>::sse_decode(deserializer);
+        let mut var_sportType = <String>::sse_decode(deserializer);
+        let mut var_listedMaxSpeedMps = <f64>::sse_decode(deserializer);
+        let mut var_bestEffortPeakMps = <f64>::sse_decode(deserializer);
+        let mut var_maxSpeedMps = <f64>::sse_decode(deserializer);
+        let mut var_averageSpeedMps = <f64>::sse_decode(deserializer);
+        return crate::api::simple::StravaActivitySpeedResult {
+            id: var_id,
+            name: var_name,
+            start_time_seconds: var_startTimeSeconds,
+            sport_type: var_sportType,
+            listed_max_speed_mps: var_listedMaxSpeedMps,
+            best_effort_peak_mps: var_bestEffortPeakMps,
+            max_speed_mps: var_maxSpeedMps,
+            average_speed_mps: var_averageSpeedMps,
+        };
+    }
+}
+
+impl SseDecode for crate::api::simple::StravaRemoteActivityResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_id = <String>::sse_decode(deserializer);
+        let mut var_startTimeSeconds = <f64>::sse_decode(deserializer);
+        let mut var_endTimeSeconds = <f64>::sse_decode(deserializer);
+        let mut var_distanceMeters = <Option<f64>>::sse_decode(deserializer);
+        return crate::api::simple::StravaRemoteActivityResult {
+            id: var_id,
+            start_time_seconds: var_startTimeSeconds,
+            end_time_seconds: var_endTimeSeconds,
+            distance_meters: var_distanceMeters,
+        };
     }
 }
 
@@ -893,27 +1340,43 @@ fn pde_ffi_dispatcher_primary_impl(
 ) {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        1 => wire__crate__api__simple__encode_health_workout_fit_impl(
+        3 => wire__crate__api__simple__encode_health_workout_fit_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        7 => wire__crate__api__simple__strava_exchange_code_impl(port, ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__simple__strava_refresh_token_impl(port, ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__simple__strava_resume_upload_poll_after_refresh_impl(
+        11 => {
+            wire__crate__api__simple__strava_exchange_code_impl(port, ptr, rust_vec_len, data_len)
+        }
+        12 => wire__crate__api__simple__strava_fetch_remote_activity_speed_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        12 => wire__crate__api__simple__strava_retry_upload_after_refresh_impl(
+        13 => wire__crate__api__simple__strava_list_remote_activities_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        13 => wire__crate__api__simple__strava_upload_fit_impl(port, ptr, rust_vec_len, data_len),
+        14 => {
+            wire__crate__api__simple__strava_refresh_token_impl(port, ptr, rust_vec_len, data_len)
+        }
+        19 => wire__crate__api__simple__strava_resume_upload_poll_after_refresh_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        20 => wire__crate__api__simple__strava_retry_upload_after_refresh_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        21 => wire__crate__api__simple__strava_upload_fit_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -926,22 +1389,55 @@ fn pde_ffi_dispatcher_sync_impl(
 ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        2 => wire__crate__api__simple__fit_content_summary_impl(ptr, rust_vec_len, data_len),
-        3 => wire__crate__api__simple__is_commute_impl(ptr, rust_vec_len, data_len),
-        4 => wire__crate__api__simple__is_valid_fit_impl(ptr, rust_vec_len, data_len),
-        5 => wire__crate__api__simple__reencode_fit_impl(ptr, rust_vec_len, data_len),
-        6 => wire__crate__api__simple__strava_cancel_upload_impl(ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__simple__strava_release_upload_impl(ptr, rust_vec_len, data_len),
-        10 => wire__crate__api__simple__strava_reserve_upload_impl(ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__simple__sync_recovery_apply_impl(ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__simple__sync_recovery_reencode_impl(ptr, rust_vec_len, data_len),
-        16 => wire__crate__api__simple__sync_state_apply_impl(ptr, rust_vec_len, data_len),
+        1 => wire__crate__api__simple__activity_match_score_impl(ptr, rust_vec_len, data_len),
+        2 => wire__crate__api__simple__best_activity_match_index_impl(ptr, rust_vec_len, data_len),
+        4 => wire__crate__api__simple__fit_content_summary_impl(ptr, rust_vec_len, data_len),
+        5 => wire__crate__api__simple__is_commute_impl(ptr, rust_vec_len, data_len),
+        6 => wire__crate__api__simple__is_valid_fit_impl(ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__simple__reencode_fit_impl(ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__simple__stable_dedupe_matches_impl(ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__simple__strava_cancel_remote_read_impl(ptr, rust_vec_len, data_len),
+        10 => wire__crate__api__simple__strava_cancel_upload_impl(ptr, rust_vec_len, data_len),
+        15 => {
+            wire__crate__api__simple__strava_release_remote_read_impl(ptr, rust_vec_len, data_len)
+        }
+        16 => wire__crate__api__simple__strava_release_upload_impl(ptr, rust_vec_len, data_len),
+        17 => {
+            wire__crate__api__simple__strava_reserve_remote_read_impl(ptr, rust_vec_len, data_len)
+        }
+        18 => wire__crate__api__simple__strava_reserve_upload_impl(ptr, rust_vec_len, data_len),
+        22 => wire__crate__api__simple__sync_fingerprint_impl(ptr, rust_vec_len, data_len),
+        23 => wire__crate__api__simple__sync_recovery_apply_impl(ptr, rust_vec_len, data_len),
+        24 => wire__crate__api__simple__sync_recovery_reencode_impl(ptr, rust_vec_len, data_len),
+        25 => wire__crate__api__simple__sync_state_apply_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
 
 // Section: rust2dart
 
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::simple::ActivityIntervalInput {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.start_seconds.into_into_dart().into_dart(),
+            self.end_seconds.into_into_dart().into_dart(),
+            self.duration_seconds.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::simple::ActivityIntervalInput
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::ActivityIntervalInput>
+    for crate::api::simple::ActivityIntervalInput
+{
+    fn into_into_dart(self) -> crate::api::simple::ActivityIntervalInput {
+        self
+    }
+}
 // Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::simple::FitProbeSummary {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
@@ -961,6 +1457,56 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::FitProbeSummary>
     for crate::api::simple::FitProbeSummary
 {
     fn into_into_dart(self) -> crate::api::simple::FitProbeSummary {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::simple::StravaActivitySpeedResult {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.id.into_into_dart().into_dart(),
+            self.name.into_into_dart().into_dart(),
+            self.start_time_seconds.into_into_dart().into_dart(),
+            self.sport_type.into_into_dart().into_dart(),
+            self.listed_max_speed_mps.into_into_dart().into_dart(),
+            self.best_effort_peak_mps.into_into_dart().into_dart(),
+            self.max_speed_mps.into_into_dart().into_dart(),
+            self.average_speed_mps.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::simple::StravaActivitySpeedResult
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::StravaActivitySpeedResult>
+    for crate::api::simple::StravaActivitySpeedResult
+{
+    fn into_into_dart(self) -> crate::api::simple::StravaActivitySpeedResult {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::simple::StravaRemoteActivityResult {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.id.into_into_dart().into_dart(),
+            self.start_time_seconds.into_into_dart().into_dart(),
+            self.end_time_seconds.into_into_dart().into_dart(),
+            self.distance_meters.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::simple::StravaRemoteActivityResult
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::StravaRemoteActivityResult>
+    for crate::api::simple::StravaRemoteActivityResult
+{
+    fn into_into_dart(self) -> crate::api::simple::StravaRemoteActivityResult {
         self
     }
 }
@@ -1151,6 +1697,15 @@ impl SseEncode for String {
     }
 }
 
+impl SseEncode for crate::api::simple::ActivityIntervalInput {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <f64>::sse_encode(self.start_seconds, serializer);
+        <f64>::sse_encode(self.end_seconds, serializer);
+        <f64>::sse_encode(self.duration_seconds, serializer);
+    }
+}
+
 impl SseEncode for bool {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1181,12 +1736,49 @@ impl SseEncode for i32 {
     }
 }
 
+impl SseEncode for i64 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_i64::<NativeEndian>(self).unwrap();
+    }
+}
+
+impl SseEncode for Vec<String> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <String>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::simple::ActivityIntervalInput> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::simple::ActivityIntervalInput>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<u8> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <u8>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::simple::StravaRemoteActivityResult> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::simple::StravaRemoteActivityResult>::sse_encode(item, serializer);
         }
     }
 }
@@ -1207,6 +1799,16 @@ impl SseEncode for Option<f64> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <f64>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::simple::StravaActivitySpeedResult> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::simple::StravaActivitySpeedResult>::sse_encode(value, serializer);
         }
     }
 }
@@ -1238,6 +1840,30 @@ impl SseEncode for Option<u32> {
         if let Some(value) = self {
             <u32>::sse_encode(value, serializer);
         }
+    }
+}
+
+impl SseEncode for crate::api::simple::StravaActivitySpeedResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.id, serializer);
+        <String>::sse_encode(self.name, serializer);
+        <Option<f64>>::sse_encode(self.start_time_seconds, serializer);
+        <String>::sse_encode(self.sport_type, serializer);
+        <f64>::sse_encode(self.listed_max_speed_mps, serializer);
+        <f64>::sse_encode(self.best_effort_peak_mps, serializer);
+        <f64>::sse_encode(self.max_speed_mps, serializer);
+        <f64>::sse_encode(self.average_speed_mps, serializer);
+    }
+}
+
+impl SseEncode for crate::api::simple::StravaRemoteActivityResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.id, serializer);
+        <f64>::sse_encode(self.start_time_seconds, serializer);
+        <f64>::sse_encode(self.end_time_seconds, serializer);
+        <Option<f64>>::sse_encode(self.distance_meters, serializer);
     }
 }
 
