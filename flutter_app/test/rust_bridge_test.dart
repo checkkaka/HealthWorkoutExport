@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -92,6 +93,38 @@ void main() {
     expect(
       isValidFit(data: Uint8List.fromList('{"error":true}'.codeUnits)),
       isFalse,
+    );
+
+    final fingerprint = 'a' * 64;
+    final syncState = syncStateApply(
+      stateJson: Uint8List.fromList('{}'.codeUnits),
+      commandJson: Uint8List.fromList(
+        '''{"operation":"markPending","record":{"fingerprint":"$fingerprint","status":"pending","primarySourceId":"healthkit","primaryActivityId":"activity-1","updatedAt":721692800}}'''
+            .codeUnits,
+      ),
+    );
+    expect(String.fromCharCodes(syncState), contains(fingerprint));
+    final recovery = syncRecoveryReencode(
+      recoveryJson: Uint8List.fromList(
+        utf8.encode(
+          '''{"primarySourceId":"healthkit","primaryActivityId":"activity-1","title":"恢复","startDate":721692800,"endDate":721696400,"supplementSourceIds":[],"durationSeconds":3600,"uploadData":"AQID","filename":"activity.fit","commute":false}''',
+        ),
+      ),
+    );
+    expect(String.fromCharCodes(recovery), contains('"uploadData":"AQID"'));
+    expect(
+      () => syncStateApply(
+        stateJson: syncState,
+        commandJson: Uint8List.fromList(
+          '{"operation":"remove","fingerprint":"secret-invalid-fingerprint"}'
+              .codeUnits,
+        ),
+      ),
+      throwsA(
+        predicate(
+          (error) => !error.toString().contains('secret-invalid-fingerprint'),
+        ),
+      ),
     );
 
     await expectLater(

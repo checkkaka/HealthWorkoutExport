@@ -27,5 +27,8 @@ import UIKit
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "StravaWebPlugin") {
       StravaWebPlugin.register(with: registrar)
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "SyncFilesPlugin") {
+      SyncFilesPlugin.register(with: registrar)
+    }
   }
 }

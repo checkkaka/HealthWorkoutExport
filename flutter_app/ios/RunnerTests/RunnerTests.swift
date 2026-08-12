@@ -7,6 +7,131 @@ import XCTest
 
 class RunnerTests: XCTestCase {
 
+  func testSyncFilesUseLegacyPathsAndStrictFingerprints() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("SyncFilesTests.\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let storage = SyncFilesPlugin.Storage(rootURL: root)
+    let fingerprint = String(repeating: "a", count: 64)
+
+    XCTAssertEqual(try storage.url(for: .state), root.appendingPathComponent("sync_state.json"))
+    XCTAssertEqual(
+      try storage.url(for: .syncedFIT(fingerprint)),
+      root.appendingPathComponent("synced_fits/\(fingerprint).fit")
+    )
+    XCTAssertEqual(
+      try storage.url(for: .recovery(fingerprint)),
+      root.appendingPathComponent("pending_resync/\(fingerprint).json")
+    )
+    XCTAssertTrue(SyncFilesPlugin.isValidFingerprint(fingerprint))
+    XCTAssertFalse(SyncFilesPlugin.isValidFingerprint(String(repeating: "A", count: 64)))
+    XCTAssertFalse(SyncFilesPlugin.isValidFingerprint("abc"))
+  }
+
+  func testSyncFilesRoundTripProtectionBackupAndIdempotentDelete() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("SyncFilesTests.\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let storage = SyncFilesPlugin.Storage(rootURL: root)
+    let fingerprint = String(repeating: "b", count: 64)
+    // 旧磁盘格式是顶层 fingerprint -> record map；适配器必须原样兼容。
+    let state = Data("{}".utf8)
+    let fit = Data([0x0E, 0x10, 0x20, 0x30])
+
+    try storage.write(state, kind: .state)
+    try storage.write(fit, kind: .syncedFIT(fingerprint))
+    XCTAssertEqual(try storage.read(.state), state)
+    XCTAssertEqual(try storage.read(.syncedFIT(fingerprint)), fit)
+
+    let stateURL = try storage.url(for: .state)
+    let fitURL = try storage.url(for: .syncedFIT(fingerprint))
+    #if !targetEnvironment(simulator)
+      XCTAssertEqual(
+        try FileManager.default.attributesOfItem(atPath: stateURL.path)[.protectionKey]
+          as? FileProtectionType,
+        .complete
+      )
+      XCTAssertEqual(
+        try FileManager.default.attributesOfItem(atPath: fitURL.path)[.protectionKey]
+          as? FileProtectionType,
+        .complete
+      )
+    #endif
+    XCTAssertEqual(try stateURL.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup, true)
+    XCTAssertEqual(try fitURL.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup, true)
+    XCTAssertEqual(try root.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup, true)
+
+    try storage.delete(.syncedFIT(fingerprint))
+    try storage.delete(.syncedFIT(fingerprint))
+    XCTAssertThrowsError(try storage.read(.syncedFIT(fingerprint))) {
+      XCTAssertEqual($0 as? SyncFilesPlugin.StorageError, .missing)
+    }
+  }
+
+  func testSyncFilesQuarantineCorruptJSONWithoutUsingTemporaryFallback() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("SyncFilesTests.\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let storage = SyncFilesPlugin.Storage(rootURL: root)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data("not-json".utf8).write(to: storage.url(for: .state))
+
+    XCTAssertThrowsError(try storage.read(.state)) {
+      XCTAssertEqual($0 as? SyncFilesPlugin.StorageError, .corrupt)
+    }
+    XCTAssertFalse(FileManager.default.fileExists(atPath: try storage.url(for: .state).path))
+    let quarantined = try FileManager.default.contentsOfDirectory(atPath: root.path)
+    XCTAssertEqual(quarantined.count, 1)
+    XCTAssertTrue(quarantined[0].contains(".corrupt-"))
+
+    try Data("[]".utf8).write(to: storage.url(for: .state))
+    XCTAssertThrowsError(try storage.read(.state)) {
+      XCTAssertEqual($0 as? SyncFilesPlugin.StorageError, .corrupt)
+    }
+  }
+
+  func testSyncFilesRejectOversizedInputBeforeWriting() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("SyncFilesTests.\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let storage = SyncFilesPlugin.Storage(rootURL: root)
+    let fingerprint = String(repeating: "c", count: 64)
+
+    XCTAssertThrowsError(
+      try storage.write(Data(count: 64 * 1_024 * 1_024 + 1), kind: .syncedFIT(fingerprint))
+    ) {
+      XCTAssertEqual($0 as? SyncFilesPlugin.StorageError, .tooLarge)
+    }
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: try storage.url(for: .syncedFIT(fingerprint)).path)
+    )
+  }
+
+  func testSyncFilesMethodChannelReturnsStableMissingAndInvalidCodes() {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("SyncFilesTests.\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let plugin = SyncFilesPlugin(storage: .init(rootURL: root))
+
+    var response: Any?
+    plugin.handle(FlutterMethodCall(methodName: "readState", arguments: nil)) { response = $0 }
+    XCTAssertEqual((response as? FlutterError)?.code, "sync_file_missing")
+
+    plugin.handle(
+      FlutterMethodCall(methodName: "readSyncedFit", arguments: ["fingerprint": "../escape"])
+    ) { response = $0 }
+    XCTAssertEqual((response as? FlutterError)?.code, "invalid_arguments")
+
+    plugin.handle(
+      FlutterMethodCall(
+        methodName: "writeState",
+        arguments: ["bytes": FlutterStandardTypedData(bytes: Data("[]".utf8))]
+      )
+    ) { response = $0 }
+    XCTAssertEqual((response as? FlutterError)?.code, "invalid_json")
+    XCTAssertEqual((response as? FlutterError)?.message, "写入的同步文件不是 JSON 对象")
+  }
+
   func testHealthKitIntervalRequiresAscendingFiniteMilliseconds() throws {
     let interval = try HealthKitPlugin.parseInterval(arguments: ["startMs": 1_000, "endMs": 2_000])
     XCTAssertEqual(interval.start.timeIntervalSince1970, 1)

@@ -1,3 +1,8 @@
+#[path = "fit_document.rs"]
+mod fit_document;
+
+pub use fit_document::{FitDocument, FitMessage, MAX_FIT_BYTES};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FitDecodeError {
     NotFit,
@@ -5,7 +10,13 @@ pub enum FitDecodeError {
     InvalidCrc,
     InvalidDefinition,
     MissingDefinition(u8),
-    UnsupportedCompressedTimestamp,
+    InvalidCompressedTimestamp,
+    TooLarge,
+    TooManyMessages,
+    TooManyFields,
+    OutputTooLarge,
+    FieldNotFound,
+    InvalidFieldValue,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -20,140 +31,26 @@ impl FitContentSummary {
     }
 }
 
-#[derive(Clone, Debug)]
-struct FieldDefinition {
-    number: u8,
-    size: usize,
-}
-
-#[derive(Clone, Debug)]
-struct MessageDefinition {
-    global_number: u16,
-    big_endian: bool,
-    fields: Vec<FieldDefinition>,
-    data_size: usize,
-}
-
 /// 校验并解码单个 FIT 文件，返回与 Swift `FitContentProbe` 对等的内容摘要。
 pub fn decode_fit(data: &[u8]) -> Result<FitContentSummary, FitDecodeError> {
-    if data.len() < 12 {
-        return Err(FitDecodeError::Truncated);
-    }
-    let header_size = usize::from(data[0]);
-    if !matches!(header_size, 12 | 14) || data[8..12] != *b".FIT" {
-        return Err(FitDecodeError::NotFit);
-    }
-    if data.len() < header_size + 2 {
-        return Err(FitDecodeError::Truncated);
-    }
-    if header_size == 14 {
-        let stored = u16::from_le_bytes([data[12], data[13]]);
-        if stored != 0 && stored != crc16(&data[..12]) {
-            return Err(FitDecodeError::InvalidCrc);
-        }
-    }
-
-    let data_size = u32::from_le_bytes(data[4..8].try_into().unwrap()) as usize;
-    let data_end = header_size
-        .checked_add(data_size)
-        .ok_or(FitDecodeError::Truncated)?;
-    let file_end = data_end.checked_add(2).ok_or(FitDecodeError::Truncated)?;
-    if data.len() < file_end {
-        return Err(FitDecodeError::Truncated);
-    }
-    if data.len() != file_end {
-        return Err(FitDecodeError::InvalidDefinition);
-    }
-    let stored_file_crc = u16::from_le_bytes([data[data_end], data[data_end + 1]]);
-    if stored_file_crc != crc16(&data[..data_end]) {
-        return Err(FitDecodeError::InvalidCrc);
-    }
-
-    let mut definitions: [Option<MessageDefinition>; 16] = std::array::from_fn(|_| None);
-    let mut cursor = header_size;
+    let document = FitDocument::parse(data)?;
     let mut summary = FitContentSummary::default();
-    while cursor < data_end {
-        let record_header = data[cursor];
-        if record_header & 0x80 != 0 {
-            return Err(FitDecodeError::UnsupportedCompressedTimestamp);
-        }
-        if record_header & 0x40 != 0 {
-            cursor += 1;
-            let fixed = take(data, &mut cursor, data_end, 5)?;
-            let big_endian = match fixed[1] {
-                0 => false,
-                1 => true,
-                _ => return Err(FitDecodeError::InvalidDefinition),
-            };
-            let global_number = if big_endian {
-                u16::from_be_bytes([fixed[2], fixed[3]])
-            } else {
-                u16::from_le_bytes([fixed[2], fixed[3]])
-            };
-            let field_count = usize::from(fixed[4]);
-            let raw_fields = take(
-                data,
-                &mut cursor,
-                data_end,
-                field_count
-                    .checked_mul(3)
-                    .ok_or(FitDecodeError::Truncated)?,
-            )?;
-            let mut fields = Vec::with_capacity(field_count);
-            let mut message_size = 0usize;
-            for raw in raw_fields.chunks_exact(3) {
-                let size = usize::from(raw[1]);
-                message_size = message_size
-                    .checked_add(size)
-                    .ok_or(FitDecodeError::InvalidDefinition)?;
-                fields.push(FieldDefinition {
-                    number: raw[0],
-                    size,
-                });
-            }
-            if record_header & 0x20 != 0 {
-                let developer_count =
-                    usize::from(*take(data, &mut cursor, data_end, 1)?.first().unwrap());
-                let raw_developer_fields = take(
-                    data,
-                    &mut cursor,
-                    data_end,
-                    developer_count
-                        .checked_mul(3)
-                        .ok_or(FitDecodeError::Truncated)?,
-                )?;
-                for raw in raw_developer_fields.chunks_exact(3) {
-                    message_size = message_size
-                        .checked_add(usize::from(raw[1]))
-                        .ok_or(FitDecodeError::InvalidDefinition)?;
-                }
-            }
-            definitions[usize::from(record_header & 0x0F)] = Some(MessageDefinition {
-                global_number,
-                big_endian,
-                fields,
-                data_size: message_size,
-            });
+    for (index, message) in document.messages().iter().enumerate() {
+        if message.global_number() != 20 {
             continue;
         }
-
-        cursor += 1;
-        let local_number = record_header & 0x0F;
-        let definition = definitions[usize::from(local_number)]
-            .as_ref()
-            .ok_or(FitDecodeError::MissingDefinition(local_number))?;
-        let message = take(data, &mut cursor, data_end, definition.data_size)?;
-        if definition.global_number == 20 {
-            let latitude = field_i32(definition, message, 0);
-            let longitude = field_i32(definition, message, 1);
-            if latitude.is_some_and(|value| value != i32::MAX)
-                && longitude.is_some_and(|value| value != i32::MAX)
-            {
-                summary.gps_point_count += 1;
-            }
-            if field_u8(definition, message, 3).is_some_and(|value| value != u8::MAX) {
-                summary.heart_rate_point_count += 1;
-            }
+        let latitude = document.read_i32(index, 0);
+        let longitude = document.read_i32(index, 1);
+        if latitude.is_some_and(|value| value != i32::MAX)
+            && longitude.is_some_and(|value| value != i32::MAX)
+        {
+            summary.gps_point_count += 1;
+        }
+        if document
+            .read_u8(index, 3)
+            .is_some_and(|value| value != u8::MAX)
+        {
+            summary.heart_rate_point_count += 1;
         }
     }
     Ok(summary)
@@ -166,55 +63,7 @@ pub fn is_valid_fit(data: &[u8]) -> bool {
 
 /// 当前无修改参数：严格校验后原样输出，未知消息、数组字段和 developer fields 不会丢失。
 pub fn reencode_fit(data: &[u8]) -> Result<Vec<u8>, FitDecodeError> {
-    decode_fit(data)?;
-    Ok(data.to_vec())
-}
-
-fn take<'a>(
-    data: &'a [u8],
-    cursor: &mut usize,
-    end: usize,
-    count: usize,
-) -> Result<&'a [u8], FitDecodeError> {
-    let next = cursor.checked_add(count).ok_or(FitDecodeError::Truncated)?;
-    if next > end {
-        return Err(FitDecodeError::Truncated);
-    }
-    let bytes = &data[*cursor..next];
-    *cursor = next;
-    Ok(bytes)
-}
-
-fn field_bytes<'a>(
-    definition: &MessageDefinition,
-    message: &'a [u8],
-    number: u8,
-) -> Option<&'a [u8]> {
-    let mut offset = 0;
-    for field in &definition.fields {
-        let end = offset + field.size;
-        if field.number == number {
-            return message.get(offset..end);
-        }
-        offset = end;
-    }
-    None
-}
-
-fn field_i32(definition: &MessageDefinition, message: &[u8], number: u8) -> Option<i32> {
-    let bytes: [u8; 4] = field_bytes(definition, message, number)?
-        .get(..4)?
-        .try_into()
-        .ok()?;
-    Some(if definition.big_endian {
-        i32::from_be_bytes(bytes)
-    } else {
-        i32::from_le_bytes(bytes)
-    })
-}
-
-fn field_u8(definition: &MessageDefinition, message: &[u8], number: u8) -> Option<u8> {
-    field_bytes(definition, message, number)?.first().copied()
+    FitDocument::parse(data)?.to_bytes()
 }
 
 fn crc16(bytes: &[u8]) -> u16 {
@@ -230,7 +79,10 @@ fn crc16(bytes: &[u8]) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::{FitContentSummary, FitDecodeError, decode_fit, is_valid_fit, reencode_fit};
+    use super::{
+        FitContentSummary, FitDecodeError, FitDocument, MAX_FIT_BYTES, decode_fit, is_valid_fit,
+        reencode_fit,
+    };
 
     // 当前项目锁定的 FITSwiftSDK Encoder 生成：一个含时间、经纬度和心率的 Record。
     const SWIFT_RECORD_FIT: &[u8] = &[
@@ -347,6 +199,205 @@ mod tests {
             }
         );
         assert_eq!(reencode_fit(&input).unwrap(), input);
+    }
+
+    #[test]
+    fn expands_compressed_timestamp_and_reencodes_canonically_after_edit() {
+        let input = fit_file(&[
+            0x41,
+            0,
+            0,
+            20,
+            0,
+            1, // local 1 = 带完整 timestamp 的 Record
+            253,
+            4,
+            0x86,
+            0x01,
+            0xE8,
+            0x03,
+            0,
+            0, // t=1000
+            0x40,
+            0,
+            0,
+            20,
+            0,
+            1, // local 0 = 省略 timestamp、供压缩头使用的 Record
+            3,
+            1,
+            0x02, // heart_rate
+            0x80 | 9,
+            141, // compressed t=1001 (low five bits = 9)
+        ]);
+        let mut document = FitDocument::parse(&input).unwrap();
+        assert_eq!(document.messages().len(), 2);
+        assert_eq!(document.read_u32(0, 253), Some(1000));
+        assert_eq!(document.read_u32(1, 253), Some(1001));
+        assert_eq!(document.read_u8(1, 3), Some(141));
+
+        document.set_u8(1, 3, 150).unwrap();
+        let output = document.to_bytes().unwrap();
+        assert_ne!(output, input);
+        let reparsed = FitDocument::parse(&output).unwrap();
+        assert_eq!(reparsed.read_u32(1, 253), Some(1001));
+        assert_eq!(reparsed.read_u8(1, 3), Some(150));
+    }
+
+    #[test]
+    fn compressed_timestamp_can_start_from_zero_without_a_full_timestamp() {
+        let input = fit_file(&[
+            0x40,
+            0,
+            0,
+            20,
+            0,
+            1, // local 0 = 省略 timestamp 的 Record
+            3,
+            1,
+            0x02, // heart_rate
+            0x80 | 17,
+            141,
+        ]);
+        let mut document = FitDocument::parse(&input).unwrap();
+        assert_eq!(document.read_u32(0, 253), Some(17));
+        assert_eq!(document.read_u8(0, 3), Some(141));
+
+        document.set_u8(0, 3, 150).unwrap();
+        let reparsed = FitDocument::parse(&document.to_bytes().unwrap()).unwrap();
+        assert_eq!(reparsed.read_u32(0, 253), Some(17));
+        assert_eq!(reparsed.read_u8(0, 3), Some(150));
+    }
+
+    #[test]
+    fn edited_native_field_preserves_unknown_array_and_developer_payload() {
+        let input = fit_file(&[
+            0x60, 0, 0, 0x34, 0x12, 2, // 未知 global message，含 developer definition
+            77, 3, 0x0D, // 未知 byte 数组
+            78, 2, 0x84, // 未知 u16
+            1,    // developer field count
+            9, 4, 7, // field 9, size 4, developer_data_index 7
+            0x00, 0xA1, 0xB2, 0xC3, // native array
+            0x34, 0x12, // native u16
+            0xDE, 0xAD, 0xBE, 0xEF, // developer payload
+        ]);
+        let mut document = FitDocument::parse(&input).unwrap();
+        assert_eq!(document.read_u16(0, 78), Some(0x1234));
+        assert_eq!(document.field_bytes(0, 77), Some(&[0xA1, 0xB2, 0xC3][..]));
+        assert_eq!(
+            document.developer_field_bytes(0, 9, 7),
+            Some(&[0xDE, 0xAD, 0xBE, 0xEF][..])
+        );
+
+        document.set_u16(0, 78, 0x5678).unwrap();
+        let output = document.to_bytes().unwrap();
+        let reparsed = FitDocument::parse(&output).unwrap();
+        assert_eq!(reparsed.read_u16(0, 78), Some(0x5678));
+        assert_eq!(reparsed.field_bytes(0, 77), Some(&[0xA1, 0xB2, 0xC3][..]));
+        assert_eq!(
+            reparsed.developer_field_bytes(0, 9, 7),
+            Some(&[0xDE, 0xAD, 0xBE, 0xEF][..])
+        );
+    }
+
+    #[test]
+    fn typed_read_and_edit_respect_big_endian_definition() {
+        let input = fit_file(&[
+            0x40, 0, 1, 0x12, 0x34, 2, // big-endian unknown message
+            1, 4, 0x85, // sint32
+            2, 2, 0x84, // uint16
+            0x00, 0xFF, 0xFF, 0xFF, 0x9C, 0x12, 0x34,
+        ]);
+        let mut document = FitDocument::parse(&input).unwrap();
+        assert_eq!(document.read_i32(0, 1), Some(-100));
+        assert_eq!(document.read_u16(0, 2), Some(0x1234));
+        document.set_i32(0, 1, -200).unwrap();
+        document.set_u16(0, 2, 0x5678).unwrap();
+        let reparsed = FitDocument::parse(&document.to_bytes().unwrap()).unwrap();
+        assert_eq!(reparsed.read_i32(0, 1), Some(-200));
+        assert_eq!(reparsed.read_u16(0, 2), Some(0x5678));
+    }
+
+    #[test]
+    fn typed_access_rejects_wrong_base_types_and_maps_invalid_sentinels_to_none() {
+        let input = fit_file(&[
+            0x40, 0, 0, 0x34, 0x12, 7, 1, 1, 0x02, // uint8 invalid = 0xFF
+            2, 1, 0x0A, // uint8z invalid = 0
+            3, 2, 0x84, // uint16 invalid = 0xFFFF
+            4, 2, 0x8B, // uint16z invalid = 0
+            5, 4, 0x85, // sint32 invalid = 0x7FFFFFFF
+            6, 4, 0x86, // uint32 invalid = 0xFFFFFFFF
+            7, 4, 0x8C, // uint32z invalid = 0
+            0x00, 0xFF, 0, 0xFF, 0xFF, 0, 0, 0xFF, 0xFF, 0xFF, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0,
+            0, 0,
+        ]);
+        let mut document = FitDocument::parse(&input).unwrap();
+        assert_eq!(document.read_u8(0, 1), None);
+        assert_eq!(document.read_u8(0, 2), None);
+        assert_eq!(document.read_u16(0, 3), None);
+        assert_eq!(document.read_u16(0, 4), None);
+        assert_eq!(document.read_i32(0, 5), None);
+        assert_eq!(document.read_u32(0, 6), None);
+        assert_eq!(document.read_u32(0, 7), None);
+        assert_eq!(document.read_u16(0, 1), None);
+        assert_eq!(
+            document.set_u16(0, 1, 1),
+            Err(FitDecodeError::InvalidFieldValue)
+        );
+        assert_eq!(
+            document.set_u8(0, 1, u8::MAX),
+            Err(FitDecodeError::InvalidFieldValue)
+        );
+        assert_eq!(
+            document.set_u16(0, 3, u16::MAX),
+            Err(FitDecodeError::InvalidFieldValue)
+        );
+        assert_eq!(
+            document.set_i32(0, 5, i32::MAX),
+            Err(FitDecodeError::InvalidFieldValue)
+        );
+        assert_eq!(
+            document.set_u32(0, 7, 0),
+            Err(FitDecodeError::InvalidFieldValue)
+        );
+        document.set_u16(0, 3, 42).unwrap();
+        assert_eq!(document.read_u16(0, 3), Some(42));
+    }
+
+    #[test]
+    fn enforces_input_and_field_shape_limits() {
+        assert!(matches!(
+            FitDocument::parse(&vec![0; MAX_FIT_BYTES + 1]),
+            Err(FitDecodeError::TooLarge)
+        ));
+        let input = fit_file(&[
+            0x40, 0, 0, 20, 0, 1, 3, 1, 0x02, // heart rate
+            0x00, 140,
+        ]);
+        let mut document = FitDocument::parse(&input).unwrap();
+        assert_eq!(
+            document.set_field_bytes(0, 3, &[1, 2]),
+            Err(FitDecodeError::InvalidFieldValue)
+        );
+        assert_eq!(
+            document.set_u8(0, 99, 1),
+            Err(FitDecodeError::FieldNotFound)
+        );
+
+        let zero_native_field = fit_file(&[
+            0x40, 0, 0, 20, 0, 1, 3, 0, 0x02, // 零长度原生字段
+        ]);
+        assert_eq!(
+            FitDocument::parse(&zero_native_field).unwrap_err(),
+            FitDecodeError::InvalidDefinition
+        );
+        let zero_developer_field = fit_file(&[
+            0x60, 0, 0, 20, 0, 0, 1, 3, 0, 0, // 零长度 developer field
+        ]);
+        assert_eq!(
+            FitDocument::parse(&zero_developer_field).unwrap_err(),
+            FitDecodeError::InvalidDefinition
+        );
     }
 
     fn fit_file(data: &[u8]) -> Vec<u8> {

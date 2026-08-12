@@ -56,6 +56,10 @@
 - iOS Strava Web 登录已接入固定 HTTPS/域名/路径探测，Cookie 按 RFC 边界筛选且不向 Dart 暴露明文；彻底清除会同时清 Keychain 与默认 WKWebView Cookie store。
 - 通用 Keychain read/write/delete 已收口为固定用途 Strava Vault；事务 journal 支持失败回滚，损坏 journal 会 fail-closed 清除授权并允许重新授权，旧 `strava.expiresAt` 也不能再绕过 Vault 修改。
 - 本批统一验证：Rust 40/40、Flutter 32/32、RunnerTests 14/14，iOS 模拟器、macOS Debug、Android Debug APK 均成功构建。GitNexus 因生成 FRB 公共调度器报告 CRITICAL，已用真实动态库与三平台构建覆盖；尚未接入完整同步引擎，不能宣称 Strava 端到端完成。
+- Rust 新增旧 Swift 同步状态兼容层：顶层 map、Apple 2001 日期、标准 Base64、未知字段保留、严格指纹与原子状态命令；Flutter `SyncStateStore` 已串联 FRB 与 iOS 受保护文件通道，但完整 AutoSync 引擎/UI 尚未迁移。
+- iOS 同步文件适配器沿用旧 Application Support 路径，后台串行执行原子 I/O，设置 complete protection/no-backup，并区分 missing/corrupt/protected/too-large/invalid-json；损坏 JSON 会隔离而非覆盖。
+- Rust FIT F1 无损文档层已支持官方 compressed timestamp、未知消息/native 数组/developer payload、大小端 typed 字段与 invalid sentinel，按 128MiB AST 预算限制资源放大；尚未进入 F2 编码和 F3-F5 合并。
+- 本批统一验证更新为 Rust 52/52、Flutter 34/34、RunnerTests 19/19，iOS 模拟器、macOS Debug、Android Debug APK 均成功构建。
 
 ### Test Results
 | Test | Expected | Actual | Status |

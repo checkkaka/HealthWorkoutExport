@@ -34,6 +34,20 @@ pub fn reencode_fit(data: Vec<u8>) -> Result<Vec<u8>, String> {
     crate::fit::reencode_fit(&data).map_err(|error| format!("{error:?}"))
 }
 
+/// 原子执行同步状态校验/转换；返回值只有在完整成功后才可写回原生文件。
+#[flutter_rust_bridge::frb(sync)]
+pub fn sync_state_apply(state_json: Vec<u8>, command_json: Vec<u8>) -> Result<Vec<u8>, String> {
+    crate::sync_state::apply(&state_json, &command_json).map_err(|error| error.to_string())
+}
+
+/// 校验旧 Swift 恢复包并按同一 JSON/Base64 协议规范化返回。
+#[flutter_rust_bridge::frb(sync)]
+pub fn sync_recovery_reencode(recovery_json: Vec<u8>) -> Result<Vec<u8>, String> {
+    crate::sync_state::PendingResyncUpload::decode(&recovery_json)
+        .and_then(|upload| upload.encode())
+        .map_err(|error| error.to_string())
+}
+
 #[derive(Clone)]
 pub struct StravaTokenResult {
     pub access_token: String,

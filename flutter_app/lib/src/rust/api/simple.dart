@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `begin`, `operation_error_response`, `reserve`, `token_result`, `upload_ffi_response`, `upload_operations`
+// These functions are ignored because they are not marked as `pub`: `begin`, `operation_error_response`, `reserve_for_refresh`, `reserve`, `token_result`, `upload_ffi_response`, `upload_operations`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `UploadOperationEntry`, `UploadOperationError`, `UploadOperationRegistry`, `UploadOperationState`, `UploadOperation`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
@@ -27,6 +27,21 @@ bool isValidFit({required List<int> data}) =>
 /// 严格校验后原样返回 FIT；当前接口没有编辑参数。
 Uint8List reencodeFit({required List<int> data}) =>
     WorkoutCoreRustLib.instance.api.crateApiSimpleReencodeFit(data: data);
+
+/// 原子执行同步状态校验/转换；返回值只有在完整成功后才可写回原生文件。
+Uint8List syncStateApply({
+  required List<int> stateJson,
+  required List<int> commandJson,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleSyncStateApply(
+  stateJson: stateJson,
+  commandJson: commandJson,
+);
+
+/// 校验旧 Swift 恢复包并按同一 JSON/Base64 协议规范化返回。
+Uint8List syncRecoveryReencode({required List<int> recoveryJson}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleSyncRecoveryReencode(
+      recoveryJson: recoveryJson,
+    );
 
 Future<StravaTokenResult> stravaExchangeCode({
   required String clientId,

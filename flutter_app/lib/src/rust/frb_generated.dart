@@ -70,7 +70,7 @@ class WorkoutCoreRustLib
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -583842597;
+  int get rustContentHash => 1552841457;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -139,6 +139,15 @@ abstract class WorkoutCoreRustLibApi extends BaseApi {
     required String filename,
     required bool commute,
     String? description,
+  });
+
+  Uint8List crateApiSimpleSyncRecoveryReencode({
+    required List<int> recoveryJson,
+  });
+
+  Uint8List crateApiSimpleSyncStateApply({
+    required List<int> stateJson,
+    required List<int> commandJson,
   });
 }
 
@@ -564,6 +573,64 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           "commute",
           "description",
         ],
+      );
+
+  @override
+  Uint8List crateApiSimpleSyncRecoveryReencode({
+    required List<int> recoveryJson,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(recoveryJson, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleSyncRecoveryReencodeConstMeta,
+        argValues: [recoveryJson],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleSyncRecoveryReencodeConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_recovery_reencode",
+        argNames: ["recoveryJson"],
+      );
+
+  @override
+  Uint8List crateApiSimpleSyncStateApply({
+    required List<int> stateJson,
+    required List<int> commandJson,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(stateJson, serializer);
+          sse_encode_list_prim_u_8_loose(commandJson, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleSyncStateApplyConstMeta,
+        argValues: [stateJson, commandJson],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleSyncStateApplyConstMeta =>
+      const TaskConstMeta(
+        debugName: "sync_state_apply",
+        argNames: ["stateJson", "commandJson"],
       );
 
   @protected
