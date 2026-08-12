@@ -151,4 +151,82 @@ void main() {
     expect(recoveryAttempts, 2);
     expect(jsonDecode(utf8.decode(state)), isEmpty);
   });
+
+  test('恢复阶段原子落盘并始终复用首次 externalId', () async {
+    final fingerprint = 'd' * 64;
+    Uint8List? recovery;
+    messenger.setMockMethodCallHandler(methodChannel, (call) async {
+      switch (call.method) {
+        case 'readRecovery':
+          if (recovery == null) {
+            throw PlatformException(code: 'sync_file_missing');
+          }
+          return recovery;
+        case 'writeRecovery':
+          recovery =
+              (call.arguments as Map<Object?, Object?>)['bytes']! as Uint8List;
+          return null;
+      }
+      return null;
+    });
+    Uint8List applyRecovery({
+      required List<int> recoveryJson,
+      required List<int> commandJson,
+    }) {
+      final value =
+          jsonDecode(utf8.decode(recoveryJson)) as Map<String, dynamic>;
+      final command =
+          jsonDecode(utf8.decode(commandJson)) as Map<String, dynamic>;
+      switch (command['operation']) {
+        case 'prepare':
+          value.putIfAbsent('phase', () => 'prepared');
+          value.putIfAbsent('externalId', () => command['externalId']);
+          value.putIfAbsent('fitSha256', () => 'e' * 64);
+          value.putIfAbsent(
+            'remoteIdToReplace',
+            () => command['remoteIdToReplace'],
+          );
+          break;
+        case 'markRemoteDeleted':
+          if (value['phase'] != 'uploading') value['phase'] = 'remoteDeleted';
+          break;
+        case 'markUploading':
+          value['phase'] = 'uploading';
+          break;
+      }
+      return Uint8List.fromList(utf8.encode(jsonEncode(value)));
+    }
+
+    final store = SyncStateStore.withDependencies(
+      const SyncFilesChannel.withChannel(methodChannel),
+      ({required stateJson, required commandJson}) =>
+          Uint8List.fromList(stateJson),
+      ({required recoveryJson}) => Uint8List.fromList(recoveryJson),
+      applyRecovery,
+    );
+    final legacy = Uint8List.fromList(utf8.encode('{"uploadData":"AQID"}'));
+    final prepared = await store.prepareRecovery(
+      fingerprint: fingerprint,
+      recoveryJson: legacy,
+      remoteIdToReplace: '123',
+    );
+    expect(prepared.phase, SyncRecoveryPhase.prepared);
+    final externalId = prepared.externalId;
+    final repeated = await store.prepareRecovery(
+      fingerprint: fingerprint,
+      recoveryJson: Uint8List.fromList(utf8.encode('{"uploadData":"BAUG"}')),
+      remoteIdToReplace: '456',
+    );
+    expect(repeated.externalId, externalId);
+    expect(utf8.decode(recovery!), contains('"uploadData":"AQID"'));
+
+    final deleted = await store.markRecoveryRemoteDeleted(fingerprint);
+    expect(deleted.phase, SyncRecoveryPhase.remoteDeleted);
+    final uploading = await store.markRecoveryUploading(fingerprint);
+    expect(uploading.phase, SyncRecoveryPhase.uploading);
+    expect(uploading.externalId, externalId);
+    final resumed = await store.loadRecoveryTransaction(fingerprint);
+    expect(resumed.externalId, externalId);
+    expect(resumed.fitSha256, 'e' * 64);
+  });
 }

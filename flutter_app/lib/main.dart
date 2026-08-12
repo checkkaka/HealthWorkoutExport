@@ -7,6 +7,7 @@ import 'date_range.dart';
 import 'native_channels.dart';
 import 'src/rust/frb_generated.dart';
 import 'strava_settings_page.dart';
+import 'workout_export.dart';
 
 Future<void> main() => startApp();
 
@@ -144,6 +145,12 @@ class _SourcePageState extends State<_SourcePage> {
   String? _error;
   var _requestId = 0;
   Future<bool>? _authorization;
+  final _exportService = WorkoutExportService();
+  var _exportFormat = WorkoutExportFormat.fit;
+  var _exportTimeZone = WorkoutExportTimeZone.candidates.first;
+  WorkoutExportProgress? _exportProgress;
+  WorkoutExportResult? _exportResult;
+  var _exporting = false;
 
   @override
   void initState() {
@@ -297,6 +304,69 @@ class _SourcePageState extends State<_SourcePage> {
             ),
           ),
         ),
+      const SizedBox(height: 16),
+      DropdownButtonFormField<WorkoutExportFormat>(
+        initialValue: _exportFormat,
+        decoration: const InputDecoration(labelText: '导出格式'),
+        items: [
+          for (final format in WorkoutExportFormat.values)
+            DropdownMenuItem(value: format, child: Text(format.title)),
+        ],
+        onChanged: _exporting
+            ? null
+            : (format) {
+                if (format != null) setState(() => _exportFormat = format);
+              },
+      ),
+      const SizedBox(height: 12),
+      DropdownButtonFormField<WorkoutExportTimeZone>(
+        initialValue: _exportTimeZone,
+        decoration: const InputDecoration(labelText: '导出时区'),
+        items: [
+          for (final zone in WorkoutExportTimeZone.candidates)
+            DropdownMenuItem(value: zone, child: Text(zone.title)),
+        ],
+        onChanged: _exporting
+            ? null
+            : (zone) {
+                if (zone != null) setState(() => _exportTimeZone = zone);
+              },
+      ),
+      const SizedBox(height: 12),
+      FilledButton.icon(
+        onPressed: _selectedWorkoutIds.isEmpty || _exporting
+            ? null
+            : () => unawaited(_exportSelected()),
+        icon: const Icon(Icons.ios_share),
+        label: Text(_exporting ? '正在导出…' : '导出并分享'),
+      ),
+      if (_exportProgress case final progress?) ...[
+        const SizedBox(height: 8),
+        LinearProgressIndicator(value: progress.fraction),
+        const SizedBox(height: 4),
+        Text('已处理 ${progress.completed}/${progress.total} 条训练'),
+      ],
+      if (_exportResult case final result?) ...[
+        const SizedBox(height: 8),
+        Text('导出文件：${result.file.uri.pathSegments.last}'),
+        Row(
+          children: [
+            OutlinedButton(
+              onPressed: _exporting
+                  ? null
+                  : () => unawaited(_shareExport(result)),
+              child: const Text('再次分享'),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: _exporting
+                  ? null
+                  : () => unawaited(_deleteExport(result)),
+              child: const Text('删除本次导出'),
+            ),
+          ],
+        ),
+      ],
     ];
   }
 
@@ -372,6 +442,73 @@ class _SourcePageState extends State<_SourcePage> {
   }
 
   void _clearSelection() => setState(_selectedWorkoutIds.clear);
+
+  Future<void> _exportSelected() async {
+    final healthKit = widget.healthKit;
+    if (healthKit == null || _selectedWorkoutIds.isEmpty || _exporting) return;
+    final selected = _workouts
+        .where((workout) => _selectedWorkoutIds.contains(workout.uuid))
+        .toList(growable: false);
+    if (selected.isEmpty) return;
+    setState(() {
+      _exporting = true;
+      _error = null;
+      _exportProgress = WorkoutExportProgress(
+        completed: 0,
+        total: selected.length,
+      );
+    });
+    try {
+      final timeZone = _exportTimeZone.id == null
+          ? WorkoutExportTimeZone.resolvedCurrent(
+              await healthKit.currentTimeZoneIdentifier(),
+            )
+          : _exportTimeZone;
+      final previous = _exportResult;
+      if (previous != null) {
+        await previous.dispose();
+        if (mounted) setState(() => _exportResult = null);
+      }
+      final result = await _exportService.exportFromLoader(
+        workoutIds: selected
+            .map((workout) => workout.uuid)
+            .toList(growable: false),
+        loadBundle: (uuid) async =>
+            (await healthKit.fetchWorkoutBundles([uuid])).single,
+        format: _exportFormat,
+        timeZone: timeZone,
+        onProgress: (progress) {
+          if (mounted) setState(() => _exportProgress = progress);
+        },
+      );
+      if (mounted) setState(() => _exportResult = result);
+      await _shareExport(result);
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) {
+        setState(() {
+          _exporting = false;
+          _exportProgress = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _shareExport(WorkoutExportResult result) async {
+    try {
+      await _exportService.share(result);
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    }
+  }
+
+  Future<void> _deleteExport(WorkoutExportResult result) async {
+    await result.dispose();
+    if (mounted && identical(_exportResult, result)) {
+      setState(() => _exportResult = null);
+    }
+  }
 
   Future<void> _selectDate({required bool isStart}) async {
     final current = isStart ? _customStart : _customEnd;

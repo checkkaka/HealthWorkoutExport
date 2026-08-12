@@ -94,6 +94,14 @@ void main() {
       isValidFit(data: Uint8List.fromList('{"error":true}'.codeUnits)),
       isFalse,
     );
+    final generatedFit = await encodeHealthWorkoutFit(
+      bundleJson: utf8.encode(
+        '''{"uuid":"123e4567-e89b-12d3-a456-426614174000","startMs":1704067200123,"endMs":1704070800456,"durationSeconds":3600,"activityType":37,"totalDistanceMeters":1000,"events":[{"type":"pause","dateMs":1704069000000},{"type":"resume","dateMs":1704069300000}],"series":{"HKQuantityTypeIdentifierHeartRate":[{"dateMs":1704067200123,"value":140,"unit":"count/min"}]},"route":[{"latitude":31.2,"longitude":121.5,"timestampMs":1704067200123,"speedMetersPerSecond":3.2}]}''',
+      ),
+      timezoneOffsetSeconds: 8 * 3600,
+    );
+    expect(isValidFit(data: generatedFit), isTrue);
+    expect(fitContentSummary(data: generatedFit).heartRatePointCount, 1);
 
     final fingerprint = 'a' * 64;
     final syncState = syncStateApply(
@@ -112,6 +120,22 @@ void main() {
       ),
     );
     expect(String.fromCharCodes(recovery), contains('"uploadData":"AQID"'));
+    final preparedRecovery = syncRecoveryApply(
+      recoveryJson: recovery,
+      commandJson: Uint8List.fromList(
+        utf8.encode(
+          '{"operation":"prepare","externalId":"stable-external-id","remoteIdToReplace":"123"}',
+        ),
+      ),
+    );
+    expect(
+      String.fromCharCodes(preparedRecovery),
+      contains('"phase":"prepared"'),
+    );
+    expect(
+      String.fromCharCodes(preparedRecovery),
+      contains('"externalId":"stable-external-id"'),
+    );
     expect(
       () => syncStateApply(
         stateJson: syncState,

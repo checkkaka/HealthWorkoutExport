@@ -28,6 +28,15 @@ bool isValidFit({required List<int> data}) =>
 Uint8List reencodeFit({required List<int> data}) =>
     WorkoutCoreRustLib.instance.api.crateApiSimpleReencodeFit(data: data);
 
+/// 将一个完整的 HealthKit 训练包直接编码为标准 Activity FIT。
+Future<Uint8List> encodeHealthWorkoutFit({
+  required List<int> bundleJson,
+  required int timezoneOffsetSeconds,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleEncodeHealthWorkoutFit(
+  bundleJson: bundleJson,
+  timezoneOffsetSeconds: timezoneOffsetSeconds,
+);
+
 /// 原子执行同步状态校验/转换；返回值只有在完整成功后才可写回原生文件。
 Uint8List syncStateApply({
   required List<int> stateJson,
@@ -42,6 +51,15 @@ Uint8List syncRecoveryReencode({required List<int> recoveryJson}) =>
     WorkoutCoreRustLib.instance.api.crateApiSimpleSyncRecoveryReencode(
       recoveryJson: recoveryJson,
     );
+
+/// 原子推进崩溃恢复事务；阶段转换和 FIT 哈希验证失败时不产生可写回字节。
+Uint8List syncRecoveryApply({
+  required List<int> recoveryJson,
+  required List<int> commandJson,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleSyncRecoveryApply(
+  recoveryJson: recoveryJson,
+  commandJson: commandJson,
+);
 
 Future<StravaTokenResult> stravaExchangeCode({
   required String clientId,

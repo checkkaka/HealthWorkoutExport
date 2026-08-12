@@ -380,6 +380,17 @@ final class HealthKitChannel {
     await _channel.invokeMethod<Object?>('openSettings');
   }
 
+  /// 返回 iOS 系统当前 IANA 时区标识，供导出保持旧 Swift JSON 契约。
+  Future<String> currentTimeZoneIdentifier() async {
+    final identifier = await _channel.invokeMethod<String>(
+      'currentTimeZoneIdentifier',
+    );
+    if (identifier == null || identifier.trim().isEmpty) {
+      throw const FormatException('系统时区标识为空');
+    }
+    return identifier;
+  }
+
   /// 查询半开区间 [start, endExclusive) 内开始的训练。
   Future<List<HealthWorkoutSummary>> listWorkouts({
     required DateTime start,

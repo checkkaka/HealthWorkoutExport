@@ -122,8 +122,52 @@ pub struct PendingResyncUpload {
     pub commute: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity_description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<RecoveryPhase>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_id_to_replace: Option<String>,
     #[serde(flatten)]
     pub unknown_fields: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RecoveryPhase {
+    Prepared,
+    RemoteDeleted,
+    Uploading,
+    Unknown(String),
+}
+
+impl Serialize for RecoveryPhase {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(match self {
+            Self::Prepared => "prepared",
+            Self::RemoteDeleted => "remoteDeleted",
+            Self::Uploading => "uploading",
+            Self::Unknown(value) => value,
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for RecoveryPhase {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(match String::deserialize(deserializer)? {
+            value if value == "prepared" => Self::Prepared,
+            value if value == "remoteDeleted" => Self::RemoteDeleted,
+            value if value == "uploading" => Self::Uploading,
+            value => Self::Unknown(value),
+        })
+    }
 }
 
 impl PendingResyncUpload {
@@ -143,6 +187,7 @@ impl PendingResyncUpload {
         {
             return Err(SyncStateError::InvalidJson("恢复上传包包含无效数值".into()));
         }
+        upload.validate_transaction()?;
         Ok(upload)
     }
 
@@ -160,7 +205,23 @@ impl PendingResyncUpload {
         {
             return Err(SyncStateError::InvalidJson("恢复上传包包含无效数值".into()));
         }
+        self.validate_transaction()?;
         serde_json::to_vec(self).map_err(|error| SyncStateError::InvalidJson(error.to_string()))
+    }
+
+    fn validate_transaction(&self) -> Result<(), SyncStateError> {
+        if let Some(value) = &self.external_id {
+            validate_bounded_text(value, 8 * 1024, "恢复 externalId 无效")?;
+        }
+        if let Some(value) = &self.remote_id_to_replace {
+            validate_bounded_text(value, 1024, "恢复远端 ID 无效")?;
+        }
+        if let Some(expected) = &self.fit_sha256
+            && (!is_valid_fingerprint(expected) || sha256_hex(&self.upload_data) != *expected)
+        {
+            return Err(SyncStateError::InvalidJson("恢复 FIT 哈希不匹配".into()));
+        }
+        Ok(())
     }
 }
 
@@ -234,6 +295,22 @@ enum SyncStateCommand {
     Clear,
 }
 
+#[derive(Deserialize)]
+#[serde(
+    tag = "operation",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum RecoveryCommand {
+    Validate,
+    Prepare {
+        external_id: String,
+        remote_id_to_replace: Option<String>,
+    },
+    MarkRemoteDeleted,
+    MarkUploading,
+}
+
 /// 单次完成解码、校验、状态转换和重编码；任一步失败都不产生可写回的字节。
 pub fn apply(state_json: &[u8], command_json: &[u8]) -> Result<Vec<u8>, SyncStateError> {
     if command_json.len() > MAX_COMMAND_JSON_BYTES {
@@ -264,6 +341,69 @@ pub fn apply(state_json: &[u8], command_json: &[u8]) -> Result<Vec<u8>, SyncStat
         SyncStateCommand::Clear => records.clear(),
     }
     encode(&records)
+}
+
+/// 原子执行恢复事务迁移；旧 JSON 首次 prepare 后才获得稳定事务元数据。
+pub fn apply_recovery(
+    recovery_json: &[u8],
+    command_json: &[u8],
+) -> Result<Vec<u8>, SyncStateError> {
+    if command_json.len() > MAX_COMMAND_JSON_BYTES {
+        return Err(SyncStateError::InvalidJson("恢复命令超过 1MiB".into()));
+    }
+    let mut recovery = PendingResyncUpload::decode(recovery_json)?;
+    let command: RecoveryCommand = serde_json::from_slice(command_json)
+        .map_err(|error| SyncStateError::InvalidJson(error.to_string()))?;
+    match command {
+        RecoveryCommand::Validate => {}
+        RecoveryCommand::Prepare {
+            external_id,
+            remote_id_to_replace,
+        } => match recovery.phase {
+            None => {
+                validate_bounded_text(&external_id, 8 * 1024, "恢复 externalId 无效")?;
+                if let Some(value) = &remote_id_to_replace {
+                    validate_bounded_text(value, 1024, "恢复远端 ID 无效")?;
+                }
+                recovery.phase = Some(RecoveryPhase::Prepared);
+                recovery.external_id = Some(external_id);
+                recovery.fit_sha256 = Some(sha256_hex(&recovery.upload_data));
+                recovery.remote_id_to_replace = remote_id_to_replace;
+            }
+            Some(
+                RecoveryPhase::Prepared | RecoveryPhase::RemoteDeleted | RecoveryPhase::Uploading,
+            ) => require_complete_transaction(&recovery)?,
+            Some(RecoveryPhase::Unknown(_)) => {
+                return Err(SyncStateError::InvalidJson("未知恢复事务阶段".into()));
+            }
+        },
+        RecoveryCommand::MarkRemoteDeleted => {
+            require_complete_transaction(&recovery)?;
+            recovery.phase = match recovery.phase {
+                Some(RecoveryPhase::Prepared | RecoveryPhase::RemoteDeleted) => {
+                    Some(RecoveryPhase::RemoteDeleted)
+                }
+                Some(RecoveryPhase::Uploading) => Some(RecoveryPhase::Uploading),
+                _ => return Err(SyncStateError::InvalidJson("恢复事务尚未准备".into())),
+            };
+        }
+        RecoveryCommand::MarkUploading => {
+            require_complete_transaction(&recovery)?;
+            recovery.phase = match recovery.phase {
+                Some(RecoveryPhase::Prepared) if recovery.remote_id_to_replace.is_none() => {
+                    Some(RecoveryPhase::Uploading)
+                }
+                Some(RecoveryPhase::RemoteDeleted | RecoveryPhase::Uploading) => {
+                    Some(RecoveryPhase::Uploading)
+                }
+                Some(RecoveryPhase::Prepared) => {
+                    return Err(SyncStateError::InvalidJson("远端删除尚未持久化".into()));
+                }
+                _ => return Err(SyncStateError::InvalidJson("恢复事务尚未准备".into())),
+            };
+        }
+    }
+    recovery.encode()
 }
 
 /// 只有完整解码和校验成功才替换内存状态，损坏文件不会把已有记录变成空库。
@@ -437,6 +577,37 @@ fn validate_date(
         .is_finite()
         .then_some(())
         .ok_or(SyncStateError::InvalidDate { field })
+}
+
+fn require_complete_transaction(recovery: &PendingResyncUpload) -> Result<(), SyncStateError> {
+    if recovery.external_id.is_none() || recovery.fit_sha256.is_none() {
+        return Err(SyncStateError::InvalidJson("恢复事务元数据不完整".into()));
+    }
+    recovery.validate_transaction()
+}
+
+fn validate_bounded_text(
+    value: &str,
+    max_bytes: usize,
+    message: &'static str,
+) -> Result<(), SyncStateError> {
+    if value.trim().is_empty()
+        || value.len() > max_bytes
+        || value.bytes().any(|byte| byte.is_ascii_control())
+    {
+        return Err(SyncStateError::InvalidJson(message.into()));
+    }
+    Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut value = String::with_capacity(64);
+    for byte in Sha256::digest(bytes) {
+        use std::fmt::Write as _;
+        write!(&mut value, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    value
 }
 
 mod bounded_base64 {
@@ -697,5 +868,44 @@ mod tests {
         let error = apply(&state, &serde_json::to_vec(&invalid).unwrap()).unwrap_err();
         assert_eq!(error.to_string(), "同步指纹格式无效");
         assert!(!format!("{error:?}").contains(secret));
+    }
+
+    #[test]
+    fn recovery_transaction_is_monotonic_idempotent_and_keeps_external_id() {
+        let legacy = br#"{
+          "primarySourceId":"healthkit","primaryActivityId":"activity-1","title":"recovery",
+          "startDate":721692800,"endDate":721696400,"supplementSourceIds":[],
+          "durationSeconds":3600,"uploadData":"AQID","filename":"activity.fit","commute":false,
+          "futureField":"kept"
+        }"#;
+        let prepare = br#"{"operation":"prepare","externalId":"stable-external-id","remoteIdToReplace":"123"}"#;
+        let prepared = apply_recovery(legacy, prepare).unwrap();
+        let prepared_again = apply_recovery(&prepared, prepare).unwrap();
+        assert_eq!(prepared_again, prepared);
+        let value: Value = serde_json::from_slice(&prepared).unwrap();
+        assert_eq!(value["phase"], "prepared");
+        assert_eq!(value["externalId"], "stable-external-id");
+        assert_eq!(value["fitSha256"].as_str().unwrap().len(), 64);
+        assert_eq!(value["futureField"], "kept");
+        assert!(apply_recovery(&prepared, br#"{"operation":"markUploading"}"#).is_err());
+
+        let deleted = apply_recovery(&prepared, br#"{"operation":"markRemoteDeleted"}"#).unwrap();
+        let uploading = apply_recovery(&deleted, br#"{"operation":"markUploading"}"#).unwrap();
+        let uploading_again =
+            apply_recovery(&uploading, br#"{"operation":"markUploading"}"#).unwrap();
+        assert_eq!(uploading_again, uploading);
+        let value: Value = serde_json::from_slice(&uploading).unwrap();
+        assert_eq!(value["phase"], "uploading");
+        assert_eq!(value["externalId"], "stable-external-id");
+
+        let mut tampered: Value = serde_json::from_slice(&uploading).unwrap();
+        tampered["uploadData"] = Value::String("BAUG".into());
+        assert!(
+            apply_recovery(
+                &serde_json::to_vec(&tampered).unwrap(),
+                br#"{"operation":"validate"}"#
+            )
+            .is_err()
+        );
     }
 }

@@ -53,6 +53,8 @@ final class HealthKitPlugin: NSObject, FlutterPlugin {
       requestAuthorization(result: result)
     case "openSettings":
       openSettings(result: result)
+    case "currentTimeZoneIdentifier":
+      finish(result, with: TimeZone.current.identifier)
     case "listWorkouts":
       listWorkouts(arguments: call.arguments, result: result)
     case "fetchWorkoutBundles":

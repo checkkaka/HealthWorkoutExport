@@ -281,21 +281,27 @@ void main() {
 
     tearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
-    test('检查可用性、请求授权并打开系统设置', () async {
+    test('检查可用性、请求授权、读取系统时区并打开系统设置', () async {
       final calls = <MethodCall>[];
       messenger.setMockMethodCallHandler(channel, (call) async {
         calls.add(call);
-        return call.method == 'isAvailable';
+        return switch (call.method) {
+          'isAvailable' => true,
+          'currentTimeZoneIdentifier' => 'Asia/Shanghai',
+          _ => null,
+        };
       });
 
       const healthKit = HealthKitChannel();
       expect(await healthKit.isAvailable(), isTrue);
       await healthKit.requestAuthorization();
+      expect(await healthKit.currentTimeZoneIdentifier(), 'Asia/Shanghai');
       await healthKit.openSettings();
 
       expect(calls.map((call) => call.method), [
         'isAvailable',
         'requestAuthorization',
+        'currentTimeZoneIdentifier',
         'openSettings',
       ]);
       expect(calls.every((call) => call.arguments == null), isTrue);

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/services.dart';
 
@@ -12,6 +13,11 @@ typedef SyncStateApply =
     });
 typedef SyncRecoveryCodec =
     Uint8List Function({required List<int> recoveryJson});
+typedef SyncRecoveryApply =
+    Uint8List Function({
+      required List<int> recoveryJson,
+      required List<int> commandJson,
+    });
 
 /// iOS 上复用旧应用的 Application Support 文件；其他平台接入等价插件时复用同一契约。
 final class SyncFilesChannel {
@@ -108,17 +114,20 @@ final class SyncStateStore {
   SyncStateStore()
     : _files = const SyncFilesChannel(),
       _applyRust = rust.syncStateApply,
-      _recoveryCodec = rust.syncRecoveryReencode;
+      _recoveryCodec = rust.syncRecoveryReencode,
+      _applyRecoveryRust = rust.syncRecoveryApply;
 
   SyncStateStore.withDependencies(
     this._files,
     this._applyRust, [
     this._recoveryCodec = rust.syncRecoveryReencode,
+    this._applyRecoveryRust = rust.syncRecoveryApply,
   ]);
 
   final SyncFilesChannel _files;
   final SyncStateApply _applyRust;
   final SyncRecoveryCodec _recoveryCodec;
+  final SyncRecoveryApply _applyRecoveryRust;
   Future<void> _tail = Future<void>.value();
 
   Future<Map<String, Object?>> allRecords() => _serialized(() async {
@@ -228,6 +237,67 @@ final class SyncStateStore {
   Future<void> deleteRecovery(String fingerprint) =>
       _serialized(() => _files.deleteRecovery(fingerprint));
 
+  /// 首次落盘生成一次 externalId；后续重复调用始终保留已落盘值。
+  Future<SyncRecoveryTransaction> prepareRecovery({
+    required String fingerprint,
+    required Uint8List recoveryJson,
+    String? remoteIdToReplace,
+  }) => _serialized(() async {
+    final source = await _readRecoveryOrInitial(fingerprint, recoveryJson);
+    final updated = _applyRecoveryRust(
+      recoveryJson: source,
+      commandJson: _command({
+        'operation': 'prepare',
+        'externalId': '$fingerprint-resync-${_randomHex(16)}',
+        'remoteIdToReplace': remoteIdToReplace,
+      }),
+    );
+    await _files.writeRecovery(fingerprint, updated);
+    return SyncRecoveryTransaction.fromJson(updated);
+  });
+
+  Future<Uint8List> _readRecoveryOrInitial(
+    String fingerprint,
+    Uint8List initial,
+  ) async {
+    try {
+      return await _files.readRecovery(fingerprint);
+    } on PlatformException catch (error) {
+      if (error.code == 'sync_file_missing') return initial;
+      rethrow;
+    }
+  }
+
+  Future<SyncRecoveryTransaction> loadRecoveryTransaction(String fingerprint) =>
+      _serialized(() async {
+        final updated = _applyRecoveryRust(
+          recoveryJson: await _files.readRecovery(fingerprint),
+          commandJson: _command({'operation': 'validate'}),
+        );
+        return SyncRecoveryTransaction.fromJson(updated);
+      });
+
+  /// 远端删除成功后立即持久化；重复执行不会倒退 uploading 阶段。
+  Future<SyncRecoveryTransaction> markRecoveryRemoteDeleted(
+    String fingerprint,
+  ) => _advanceRecovery(fingerprint, 'markRemoteDeleted');
+
+  /// 上传调用前持久化；崩溃恢复必须复用返回的同一个 externalId。
+  Future<SyncRecoveryTransaction> markRecoveryUploading(String fingerprint) =>
+      _advanceRecovery(fingerprint, 'markUploading');
+
+  Future<SyncRecoveryTransaction> _advanceRecovery(
+    String fingerprint,
+    String operation,
+  ) => _serialized(() async {
+    final updated = _applyRecoveryRust(
+      recoveryJson: await _files.readRecovery(fingerprint),
+      commandJson: _command({'operation': operation}),
+    );
+    await _files.writeRecovery(fingerprint, updated);
+    return SyncRecoveryTransaction.fromJson(updated);
+  });
+
   Future<void> _mutate(Map<String, Object?> command) =>
       _serialized(() => _mutateUnlocked(command));
 
@@ -266,6 +336,60 @@ final class SyncStateStore {
 
   static Uint8List _command(Map<String, Object?> value) =>
       Uint8List.fromList(utf8.encode(jsonEncode(value)));
+}
+
+enum SyncRecoveryPhase { prepared, remoteDeleted, uploading }
+
+final class SyncRecoveryTransaction {
+  const SyncRecoveryTransaction({
+    required this.phase,
+    required this.externalId,
+    required this.fitSha256,
+    required this.remoteIdToReplace,
+  });
+
+  factory SyncRecoveryTransaction.fromJson(Uint8List bytes) {
+    final value = jsonDecode(utf8.decode(bytes));
+    if (value is! Map<String, dynamic>) {
+      throw const FormatException('恢复事务不是 JSON 对象');
+    }
+    final phase = switch (value['phase']) {
+      'prepared' => SyncRecoveryPhase.prepared,
+      'remoteDeleted' => SyncRecoveryPhase.remoteDeleted,
+      'uploading' => SyncRecoveryPhase.uploading,
+      _ => throw const FormatException('恢复事务阶段缺失或未知'),
+    };
+    final externalId = value['externalId'];
+    final fitSha256 = value['fitSha256'];
+    final remoteId = value['remoteIdToReplace'];
+    if (externalId is! String ||
+        externalId.isEmpty ||
+        fitSha256 is! String ||
+        fitSha256.length != 64 ||
+        (remoteId != null && remoteId is! String)) {
+      throw const FormatException('恢复事务元数据不完整');
+    }
+    return SyncRecoveryTransaction(
+      phase: phase,
+      externalId: externalId,
+      fitSha256: fitSha256,
+      remoteIdToReplace: remoteId as String?,
+    );
+  }
+
+  final SyncRecoveryPhase phase;
+  final String externalId;
+  final String fitSha256;
+  final String? remoteIdToReplace;
+}
+
+String _randomHex(int byteCount) {
+  final random = Random.secure();
+  return List.generate(
+    byteCount,
+    (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    growable: false,
+  ).join();
 }
 
 double _appleSeconds(DateTime value) =>

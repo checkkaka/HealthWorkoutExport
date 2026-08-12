@@ -34,6 +34,15 @@ pub fn reencode_fit(data: Vec<u8>) -> Result<Vec<u8>, String> {
     crate::fit::reencode_fit(&data).map_err(|error| format!("{error:?}"))
 }
 
+/// 将一个完整的 HealthKit 训练包直接编码为标准 Activity FIT。
+pub fn encode_health_workout_fit(
+    bundle_json: Vec<u8>,
+    timezone_offset_seconds: i32,
+) -> Result<Vec<u8>, String> {
+    crate::fit::encode_health_workout_bundle_json(&bundle_json, timezone_offset_seconds)
+        .map_err(|error| error.to_string())
+}
+
 /// 原子执行同步状态校验/转换；返回值只有在完整成功后才可写回原生文件。
 #[flutter_rust_bridge::frb(sync)]
 pub fn sync_state_apply(state_json: Vec<u8>, command_json: Vec<u8>) -> Result<Vec<u8>, String> {
@@ -45,6 +54,16 @@ pub fn sync_state_apply(state_json: Vec<u8>, command_json: Vec<u8>) -> Result<Ve
 pub fn sync_recovery_reencode(recovery_json: Vec<u8>) -> Result<Vec<u8>, String> {
     crate::sync_state::PendingResyncUpload::decode(&recovery_json)
         .and_then(|upload| upload.encode())
+        .map_err(|error| error.to_string())
+}
+
+/// 原子推进崩溃恢复事务；阶段转换和 FIT 哈希验证失败时不产生可写回字节。
+#[flutter_rust_bridge::frb(sync)]
+pub fn sync_recovery_apply(
+    recovery_json: Vec<u8>,
+    command_json: Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    crate::sync_state::apply_recovery(&recovery_json, &command_json)
         .map_err(|error| error.to_string())
 }
 

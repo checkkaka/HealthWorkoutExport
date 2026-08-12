@@ -1,7 +1,10 @@
 #[path = "fit_document.rs"]
 mod fit_document;
+#[path = "health_fit.rs"]
+mod health_fit;
 
 pub use fit_document::{FitDocument, FitMessage, MAX_FIT_BYTES};
+pub use health_fit::{HealthFitError, encode_health_workout_bundle_json};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FitDecodeError {

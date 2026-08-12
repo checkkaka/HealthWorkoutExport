@@ -60,6 +60,10 @@
 - iOS 同步文件适配器沿用旧 Application Support 路径，后台串行执行原子 I/O，设置 complete protection/no-backup，并区分 missing/corrupt/protected/too-large/invalid-json；损坏 JSON 会隔离而非覆盖。
 - Rust FIT F1 无损文档层已支持官方 compressed timestamp、未知消息/native 数组/developer payload、大小端 typed 字段与 invalid sentinel，按 128MiB AST 预算限制资源放大；尚未进入 F2 编码和 F3-F5 合并。
 - 本批统一验证更新为 Rust 52/52、Flutter 34/34、RunnerTests 19/19，iOS 模拟器、macOS Debug、Android Debug APK 均成功构建。
+- Rust 已实现 HealthKit WorkoutBundle 到标准 Activity FIT：FileId、DeviceInfo、计时事件、路线/传感器记录、Lap、Session、Activity、暂停感知计时、累计距离与本地时区；活动 rawValue 映射已用当前 iOS SDK 与旧 Swift 符号逐项核对。
+- Flutter 健康训练页已接入“选择训练 → 逐条读取完整 HealthKit 包 → JSON/FIT → 单文件分享或多文件 ZIP”；导出在系统分享后保留本次临时文件供再次分享，用户删除/下次导出/七天清理时回收，避免 Android 接收方尚未读取时文件消失。
+- 恢复上传事务新增 prepared → remoteDeleted → uploading 单向状态、稳定 externalId 与 FIT SHA-256；重新 prepare 先读取已落盘恢复包，仅 missing 才生成首份事务，避免崩溃后重复上传。
+- 本批验证：Rust 56/56、Flutter 38/38、Flutter analyze、iOS RunnerTests 19/19、iOS 模拟器 Debug、macOS Debug、Android Debug APK 均通过；Android 构建补装 SDK Platform 35。自动同步控制器、远端预检和真机 HealthKit/分享验收仍未完成。
 
 ### Test Results
 | Test | Expected | Actual | Status |
