@@ -6,9 +6,9 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `begin`, `operation_error_response`, `remote_activity_error`, `remote_activity_result`, `remote_activity_speed_result`, `remote_operation_error`, `reserve_for_refresh`, `reserve`, `token_result`, `upload_ffi_response`, `upload_operations`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `UploadOperationEntry`, `UploadOperationError`, `UploadOperationRegistry`, `UploadOperationState`, `UploadOperation`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
+// These functions are ignored because they are not marked as `pub`: `begin`, `begin`, `operation_error_response`, `remote_activity_error`, `remote_activity_result`, `remote_activity_speed_result`, `remote_operation_error`, `reserve_for_refresh`, `reserve`, `reserve`, `token_result`, `upload_ffi_response`, `upload_operations`, `xingzhe_list_operation_error`, `xingzhe_list_operations`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `UploadOperationEntry`, `UploadOperationError`, `UploadOperationRegistry`, `UploadOperationState`, `UploadOperation`, `XingzheListOperationEntry`, `XingzheListOperationError`, `XingzheListOperationRegistry`, `XingzheListOperationState`, `XingzheListOperation`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
 
 /// Flutter 调用的最小同步入口，直接复用已测试的核心规则。
 bool isCommute({double? distanceMeters, required double durationSeconds}) =>
@@ -95,6 +95,46 @@ Future<String> xingzheLogin({
   account: account,
   password: password,
 );
+
+/// 使用旧 Swift 的顽鹿 MD5 登录契约换取 token 和 uid；调用方负责安全保存返回值。
+Future<OnelapLoginResult> onelapLogin({
+  required String account,
+  required String password,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleOnelapLogin(
+  account: account,
+  password: password,
+);
+
+/// 预留一个不可复用的行者列表读取句柄。调用方可在请求期间精确取消此代操作。
+XingzheListReservation xingzheReserveList({required String operationId}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleXingzheReserveList(
+      operationId: operationId,
+    );
+
+/// 按现有 `sessionid` 读取行者活动。必须先预留句柄，Future 结束时自动释放。
+Future<List<XingzheWorkoutResult>> xingzheListWorkouts({
+  required String operationHandle,
+  required String sessionId,
+  required PlatformInt64 fromSeconds,
+  required PlatformInt64 toSeconds,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleXingzheListWorkouts(
+  operationHandle: operationHandle,
+  sessionId: sessionId,
+  fromSeconds: fromSeconds,
+  toSeconds: toSeconds,
+);
+
+/// 取消特定代际的行者列表读取；旧句柄不会影响后续相同逻辑 ID 的新操作。
+bool xingzheCancelList({required String operationHandle}) => WorkoutCoreRustLib
+    .instance
+    .api
+    .crateApiSimpleXingzheCancelList(operationHandle: operationHandle);
+
+/// 释放尚未启动的行者列表读取预留句柄；运行中的操作由 Future 结束时自动释放。
+bool xingzheReleaseList({required String operationHandle}) => WorkoutCoreRustLib
+    .instance
+    .api
+    .crateApiSimpleXingzheReleaseList(operationHandle: operationHandle);
 
 /// 原子执行同步状态校验/转换；返回值只有在完整成功后才可写回原生文件。
 Uint8List syncStateApply({
@@ -314,6 +354,24 @@ class FitProbeSummary {
           qualityScore == other.qualityScore;
 }
 
+class OnelapLoginResult {
+  final String token;
+  final String uid;
+
+  const OnelapLoginResult({required this.token, required this.uid});
+
+  @override
+  int get hashCode => token.hashCode ^ uid.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OnelapLoginResult &&
+          runtimeType == other.runtimeType &&
+          token == other.token &&
+          uid == other.uid;
+}
+
 /// Flutter 侧用于异常速度复查的官方活动摘要。
 class StravaActivitySpeedResult {
   final String id;
@@ -528,3 +586,59 @@ class StravaUploadRetry {
 }
 
 enum StravaUploadRetryStage { upload, poll }
+
+class XingzheListReservation {
+  final String handle;
+
+  const XingzheListReservation({required this.handle});
+
+  @override
+  int get hashCode => handle.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is XingzheListReservation &&
+          runtimeType == other.runtimeType &&
+          handle == other.handle;
+}
+
+/// Flutter 侧展示行者活动列表所需字段；时间为 Unix 秒，区间按 `[from, to)` 过滤。
+class XingzheWorkoutResult {
+  final String id;
+  final String title;
+  final double startTimeSeconds;
+  final double endTimeSeconds;
+  final double durationSeconds;
+  final double? distanceMeters;
+
+  const XingzheWorkoutResult({
+    required this.id,
+    required this.title,
+    required this.startTimeSeconds,
+    required this.endTimeSeconds,
+    required this.durationSeconds,
+    this.distanceMeters,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      title.hashCode ^
+      startTimeSeconds.hashCode ^
+      endTimeSeconds.hashCode ^
+      durationSeconds.hashCode ^
+      distanceMeters.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is XingzheWorkoutResult &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          title == other.title &&
+          startTimeSeconds == other.startTimeSeconds &&
+          endTimeSeconds == other.endTimeSeconds &&
+          durationSeconds == other.durationSeconds &&
+          distanceMeters == other.distanceMeters;
+}

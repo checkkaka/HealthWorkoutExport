@@ -69,6 +69,8 @@
 - 健康页已接入最小首传同步入口，明确显示其不含远端预检、补源合并、覆盖与取消；实现逐条进度和结果，不伪造完整自动同步能力。
 - Rust 已增加行者 RSA PKCS#1 v1.5 登录及严格 `sessionid` 解析（固定 HTTPS、禁止重定向、64KiB 响应上限），并以 FRB 暴露；凭据持久化、过期重登和 UI 仍待迁移。
 - Rust FIT 最小补源合并只补同秒既有 Record/Session 的缺失心率、踏频、功率和温度，严格保持主源、GPS、距离、事件、lap 与未知字段；尚未接入补源业务流程。
+- 健康首传现会先查本地同指纹，再通过受控 Strava API 读取用 Rust 近似规则预检；命中会标记去重而不上传。覆盖远端、整批决策、补源和取消仍未实现。
+- 顽鹿 Rust 登录（旧 MD5 签名、HTTPS 域/禁重定向、token/uid 严格解析）与行者 Rust 分页列表（半开区间、限流、取消、响应上限）已接 FRB；两者均尚未接入 Keychain 或用户界面。
 
 ### Test Results
 | Test | Expected | Actual | Status |

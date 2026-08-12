@@ -214,10 +214,10 @@ final class StravaUploadSession {
     String? description,
   }) async {
     try {
-      final accessToken = await _validAccessToken();
+      final token = await accessToken();
       final first = await api.upload(
         handle: handle,
-        accessToken: accessToken,
+        accessToken: token,
         fit: fit,
         externalId: externalId,
         filename: filename,
@@ -256,7 +256,8 @@ final class StravaUploadSession {
     }
   }
 
-  Future<String> _validAccessToken() async {
+  /// 仅供同一受控同步链路租用短期 token，调用方不得缓存或写入日志。
+  Future<String> accessToken() async {
     final lease = await vault.lease(StravaLeasePurpose.upload);
     if (lease.expiresAtSeconds >
         DateTime.now().millisecondsSinceEpoch / 1000 + 60) {

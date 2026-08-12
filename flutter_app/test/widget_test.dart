@@ -170,11 +170,14 @@ void main() {
     await tester.drag(find.byType(ListView), const Offset(0, -900));
     await tester.pumpAndSettle();
 
-    expect(find.text('HealthKit → Strava API 首传（无预检/补源/覆盖）'), findsOneWidget);
+    expect(
+      find.text('HealthKit → Strava API 首传（同指纹/近似预检，无补源/覆盖）'),
+      findsOneWidget,
+    );
     await tester.tap(find.text('开始首次同步'));
     await tester.pumpAndSettle();
     expect(find.text('开始首次同步到 Strava？'), findsOneWidget);
-    expect(find.textContaining('不能取消正在进行的上传'), findsOneWidget);
+    expect(find.textContaining('不能取消预检或上传'), findsOneWidget);
   });
 
   testWidgets('健康训练加载失败后可以重试', (tester) async {

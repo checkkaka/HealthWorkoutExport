@@ -85,6 +85,14 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   dco_decode_list_strava_remote_activity_result(dynamic raw);
 
   @protected
+  List<XingzheWorkoutResult> dco_decode_list_xingzhe_workout_result(
+    dynamic raw,
+  );
+
+  @protected
+  OnelapLoginResult dco_decode_onelap_login_result(dynamic raw);
+
+  @protected
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
@@ -149,6 +157,12 @@ abstract class WorkoutCoreRustLibApiImplPlatform
 
   @protected
   void dco_decode_unit(dynamic raw);
+
+  @protected
+  XingzheListReservation dco_decode_xingzhe_list_reservation(dynamic raw);
+
+  @protected
+  XingzheWorkoutResult dco_decode_xingzhe_workout_result(dynamic raw);
 
   @protected
   String sse_decode_String(SseDeserializer deserializer);
@@ -216,6 +230,16 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   @protected
   List<StravaRemoteActivityResult>
   sse_decode_list_strava_remote_activity_result(SseDeserializer deserializer);
+
+  @protected
+  List<XingzheWorkoutResult> sse_decode_list_xingzhe_workout_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  OnelapLoginResult sse_decode_onelap_login_result(
+    SseDeserializer deserializer,
+  );
 
   @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
@@ -302,6 +326,16 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   void sse_decode_unit(SseDeserializer deserializer);
 
   @protected
+  XingzheListReservation sse_decode_xingzhe_list_reservation(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  XingzheWorkoutResult sse_decode_xingzhe_workout_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
@@ -379,6 +413,18 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   @protected
   void sse_encode_list_strava_remote_activity_result(
     List<StravaRemoteActivityResult> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_xingzhe_workout_result(
+    List<XingzheWorkoutResult> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_onelap_login_result(
+    OnelapLoginResult self,
     SseSerializer serializer,
   );
 
@@ -477,6 +523,18 @@ abstract class WorkoutCoreRustLibApiImplPlatform
 
   @protected
   void sse_encode_unit(void self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_xingzhe_list_reservation(
+    XingzheListReservation self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_xingzhe_workout_result(
+    XingzheWorkoutResult self,
+    SseSerializer serializer,
+  );
 }
 
 // Section: wire_class

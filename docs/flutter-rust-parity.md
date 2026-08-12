@@ -72,8 +72,8 @@
 |---|---|---|---|---|---|---|
 | SRC-01 | 统一数据源契约与健康/行者/顽鹿注册 | `WorkoutDataSource.swift`、`HealthKitDataSource.swift`、`XingzheDataSource.swift`、`OnelapDataSource.swift` | `ActivityMatcherTests.swift`（统一活动参与匹配） | Rust 数据模型 + Flutter 注册/调度 | 三源统一支持认证状态、登录/退出、列表和 FIT 获取；源 ID 与活动 ID 保持稳定 | 未完成 |
 | SRC-02 | 行者 RSA 密码登录、`sessionid` 提取与恢复 | `XingzheClient.swift`、`XingzheDataSource.swift` | `XingzheRateLimitTests.swift`（限流解析） | Rust HTTP/RSA + 原生安全存储 | 真实账号登录、Cookie 多头兼容、冷启动恢复、过期重登和退出全部通过 | Rust 已接桥，未接安全存储/UI |
-| SRC-03 | 行者分页活动列表、时间筛选、FIT 下载与限流等待 | `XingzheClient.swift`、`XingzheDataSource.swift` | `XingzheRateLimitTests.swift` | Rust | 7/30/全年/全部/自定义结果与当前客户端一致；限流响应按服务端提示等待；取消可立即生效 | 未完成 |
-| SRC-04 | 顽鹿签名登录、token/uid 会话与恢复 | `OnelapClient.swift`、`OnelapDataSource.swift` | `ActivityMatcherTests.swift`（可信 URL） | Rust HTTP/签名 + 原生安全存储 | 真实账号登录、冷启动恢复、过期重登和退出通过；认证头只发往允许域名 | 未完成 |
+| SRC-03 | 行者分页活动列表、时间筛选、FIT 下载与限流等待 | `XingzheClient.swift`、`XingzheDataSource.swift` | `XingzheRateLimitTests.swift` | Rust | 7/30/全年/全部/自定义结果与当前客户端一致；限流响应按服务端提示等待；取消可立即生效 | 列表 Rust 已接桥，FIT/UI 未完成 |
+| SRC-04 | 顽鹿签名登录、token/uid 会话与恢复 | `OnelapClient.swift`、`OnelapDataSource.swift` | `ActivityMatcherTests.swift`（可信 URL） | Rust HTTP/签名 + 原生安全存储 | 真实账号登录、冷启动恢复、过期重登和退出通过；认证头只发往允许域名 | Rust 已接桥，未接安全存储/UI |
 | SRC-05 | 顽鹿骑行列表、分页、详情与 FIT 下载 | `OnelapClient.swift`、`OnelapDataSource.swift` | 无真实接口自动测试 | Rust | 时间范围、分页终止、活动字段和下载 FIT 与 Swift 基线一致；错误信息不泄露凭证 | 未完成 |
 | SRC-06 | 第三方源错误、空列表、网络超时和取消语义 | `WorkoutDataSource.swift`、两个 Client/DataSource | 仅部分限流测试 | Rust + Flutter | 未认证、登录失败、拉取失败、超时、取消分别呈现；重试不产生重复请求或状态错乱 | 未完成 |
 
@@ -104,7 +104,7 @@
 | SYNC-04 | SHA-256 同步指纹，补源排序后稳定 | `SyncFingerprint.swift` | `SyncFingerprintTests.swift` | Rust | 相同输入和不同补源顺序得到相同 64 位小写摘要；任一业务字段变化会改变指纹 | Rust 已接桥，HealthKit 首传已使用 |
 | SYNC-05 | 跨主源开始时间/距离/时长稳定去重 | `SyncFingerprint.swift` 中 `SyncStableDedupe`、`SyncStateStore.swift`、`StravaActivityLookup.swift` | `SyncFingerprintTests.swift` | Rust | 紧窗、宽窗、距离绝对/相对误差和时长误差全部通过；生产链路改为调用 Rust 后再标完成 | Rust 已接桥，尚未接入去重决策 |
 | SYNC-06 | 跳过同指纹、同主活动或稳定近似的历史记录，异常速度例外 | `AutoSyncEngine.swift`、`SyncStateStore.swift`、`StravaActivityLookup.swift` | `SyncFingerprintTests.swift`、`StravaActivityLookupTests.swift` | Rust | 开关开启时三层去重准确；被判异常的骑行仍可重传；关闭后交由远端预检决策 | 未完成 |
-| SYNC-07 | 上传前远端预检与重复活动决策 | `AutoSyncEngine.swift`、`StravaActivityLookup.swift`、`SyncSession.swift` | `StravaActivityLookupTests.swift` | Rust + Flutter | IoU/开始+时长/开始+距离匹配一致；支持跳过、整批跳过、打开远端、覆盖、整批覆盖 | 未完成 |
+| SYNC-07 | 上传前远端预检与重复活动决策 | `AutoSyncEngine.swift`、`StravaActivityLookup.swift`、`SyncSession.swift` | `StravaActivityLookupTests.swift` | Rust + Flutter | IoU/开始+时长/开始+距离匹配一致；支持跳过、整批跳过、打开远端、覆盖、整批覆盖 | 本地/远端跳过已接，覆盖与决策 UI 未完成 |
 | SYNC-08 | 同步进度、结果备注、取消、继续上次同步与整批重试 | `SyncSession.swift`、`AutoSyncEngine.swift` | 无编排自动测试 | Flutter + Rust | processed/uploaded/deduped/failed 计数不漂移；取消快速终止；继续只跑剩余；重试按原配置执行 | 未完成 |
 | SYNC-09 | 勾选历史记录覆盖重传和删除远端前落盘恢复 | `AutoSyncEngine.swift`、`SyncHistoryView.swift`、`SyncStateStore.swift` | `SyncFingerprintTests.swift`（恢复文件） | Rust + 原生受保护存储 | 删除远端前最终上传包已原子保存；删除后上传失败可再次恢复；成功后清理恢复文件 | 部分实现，未接入 |
 | SYNC-10 | 批次内速度尖峰修复、GCJ、虚拟功率的固定处理顺序 | `AutoSyncEngine.swift` | 各处理器有单测，顺序无端到端测试 | Rust | 首传和重传均严格执行“尖峰 → GCJ → 虚拟功率 → 探测 → 上传”；各开关只影响对应步骤 | 未完成 |

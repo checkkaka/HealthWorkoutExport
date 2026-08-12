@@ -133,6 +133,264 @@ pub async fn xingzhe_login(account: String, password: String) -> Result<String, 
         .map_err(|error| error.to_string())
 }
 
+/// 使用旧 Swift 的顽鹿 MD5 登录契约换取 token 和 uid；调用方负责安全保存返回值。
+pub async fn onelap_login(account: String, password: String) -> Result<OnelapLoginResult, String> {
+    let client = crate::onelap::OnelapLoginClient::new().map_err(|error| error.to_string())?;
+    let session = client
+        .login(&account, &password)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(OnelapLoginResult {
+        token: session.token,
+        uid: session.uid,
+    })
+}
+
+#[derive(Clone)]
+pub struct OnelapLoginResult {
+    pub token: String,
+    pub uid: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct XingzheListReservation {
+    pub handle: String,
+}
+
+/// Flutter 侧展示行者活动列表所需字段；时间为 Unix 秒，区间按 `[from, to)` 过滤。
+#[derive(Clone, Debug)]
+pub struct XingzheWorkoutResult {
+    pub id: String,
+    pub title: String,
+    pub start_time_seconds: f64,
+    pub end_time_seconds: f64,
+    pub duration_seconds: f64,
+    pub distance_meters: Option<f64>,
+}
+
+/// 预留一个不可复用的行者列表读取句柄。调用方可在请求期间精确取消此代操作。
+#[flutter_rust_bridge::frb(sync)]
+pub fn xingzhe_reserve_list(operation_id: String) -> Result<XingzheListReservation, String> {
+    XingzheListOperation::reserve(operation_id)
+        .map(|handle| XingzheListReservation { handle })
+        .map_err(xingzhe_list_operation_error)
+}
+
+/// 按现有 `sessionid` 读取行者活动。必须先预留句柄，Future 结束时自动释放。
+pub async fn xingzhe_list_workouts(
+    operation_handle: String,
+    session_id: String,
+    from_seconds: i64,
+    to_seconds: i64,
+) -> Result<Vec<XingzheWorkoutResult>, String> {
+    let operation =
+        XingzheListOperation::begin(operation_handle).map_err(xingzhe_list_operation_error)?;
+    let client = crate::xingzhe::XingzheActivityClient::new().map_err(|error| error.to_string())?;
+    client
+        .list_workouts(
+            &session_id,
+            from_seconds,
+            to_seconds,
+            &operation.cancellation,
+        )
+        .await
+        .map(|workouts| {
+            workouts
+                .into_iter()
+                .map(|workout| XingzheWorkoutResult {
+                    id: workout.id,
+                    title: workout.title,
+                    start_time_seconds: workout.start_time_seconds,
+                    end_time_seconds: workout.end_time_seconds,
+                    duration_seconds: workout.duration_seconds,
+                    distance_meters: workout.distance_meters,
+                })
+                .collect()
+        })
+        .map_err(|error| error.to_string())
+}
+
+/// 取消特定代际的行者列表读取；旧句柄不会影响后续相同逻辑 ID 的新操作。
+#[flutter_rust_bridge::frb(sync)]
+pub fn xingzhe_cancel_list(operation_handle: String) -> bool {
+    let cancellation = xingzhe_list_operations()
+        .lock()
+        .expect("xingzhe list operation mutex poisoned")
+        .operations
+        .get(&operation_handle)
+        .map(|entry| entry.cancellation.clone());
+    if let Some(cancellation) = cancellation {
+        cancellation.cancel();
+        true
+    } else {
+        false
+    }
+}
+
+/// 释放尚未启动的行者列表读取预留句柄；运行中的操作由 Future 结束时自动释放。
+#[flutter_rust_bridge::frb(sync)]
+pub fn xingzhe_release_list(operation_handle: String) -> bool {
+    let mut registry = xingzhe_list_operations()
+        .lock()
+        .expect("xingzhe list operation mutex poisoned");
+    let Some(entry) = registry.operations.get(&operation_handle) else {
+        return false;
+    };
+    if entry.state != XingzheListOperationState::Reserved {
+        return false;
+    }
+    let logical_id = entry.logical_id.clone();
+    registry.operations.remove(&operation_handle);
+    if registry.active_by_logical.get(&logical_id) == Some(&operation_handle) {
+        registry.active_by_logical.remove(&logical_id);
+    }
+    true
+}
+
+fn xingzhe_list_operations() -> &'static std::sync::Mutex<XingzheListOperationRegistry> {
+    static OPERATIONS: std::sync::OnceLock<std::sync::Mutex<XingzheListOperationRegistry>> =
+        std::sync::OnceLock::new();
+    OPERATIONS.get_or_init(|| {
+        std::sync::Mutex::new(XingzheListOperationRegistry {
+            operations: std::collections::HashMap::new(),
+            active_by_logical: std::collections::HashMap::new(),
+        })
+    })
+}
+
+struct XingzheListOperationRegistry {
+    operations: std::collections::HashMap<String, XingzheListOperationEntry>,
+    active_by_logical: std::collections::HashMap<String, String>,
+}
+
+struct XingzheListOperationEntry {
+    logical_id: String,
+    cancellation: crate::xingzhe::XingzheCancellation,
+    state: XingzheListOperationState,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum XingzheListOperationState {
+    Reserved,
+    Running,
+}
+
+struct XingzheListOperation {
+    handle: String,
+    cancellation: crate::xingzhe::XingzheCancellation,
+}
+
+#[derive(Debug)]
+enum XingzheListOperationError {
+    Invalid,
+    InUse,
+    Exhausted,
+}
+
+impl XingzheListOperation {
+    fn reserve(operation_id: String) -> Result<String, XingzheListOperationError> {
+        const MAX_OPERATIONS: usize = 128;
+        if operation_id.trim().is_empty()
+            || operation_id.len() > 256
+            || operation_id
+                .chars()
+                .any(|character| character.is_ascii_control())
+        {
+            return Err(XingzheListOperationError::Invalid);
+        }
+        static NEXT_HANDLE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let mut registry = xingzhe_list_operations()
+            .lock()
+            .expect("xingzhe list operation mutex poisoned");
+        if registry.active_by_logical.contains_key(&operation_id) {
+            return Err(XingzheListOperationError::InUse);
+        }
+        if registry.operations.len() >= MAX_OPERATIONS {
+            return Err(XingzheListOperationError::Exhausted);
+        }
+        let generation = NEXT_HANDLE
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |value| value.checked_add(1),
+            )
+            .map_err(|_| XingzheListOperationError::Exhausted)?;
+        let handle = format!("xingzhe-list-{generation:016x}");
+        registry
+            .active_by_logical
+            .insert(operation_id.clone(), handle.clone());
+        registry.operations.insert(
+            handle.clone(),
+            XingzheListOperationEntry {
+                logical_id: operation_id,
+                cancellation: crate::xingzhe::XingzheCancellation::new(),
+                state: XingzheListOperationState::Reserved,
+            },
+        );
+        Ok(handle)
+    }
+
+    fn begin(handle: String) -> Result<Self, XingzheListOperationError> {
+        let mut registry = xingzhe_list_operations()
+            .lock()
+            .expect("xingzhe list operation mutex poisoned");
+        let Some(entry) = registry.operations.get_mut(&handle) else {
+            return Err(XingzheListOperationError::Invalid);
+        };
+        if entry.state != XingzheListOperationState::Reserved {
+            return Err(XingzheListOperationError::InUse);
+        }
+        entry.state = XingzheListOperationState::Running;
+        Ok(Self {
+            handle,
+            cancellation: entry.cancellation.clone(),
+        })
+    }
+}
+
+impl Drop for XingzheListOperation {
+    fn drop(&mut self) {
+        let mut registry = xingzhe_list_operations()
+            .lock()
+            .expect("xingzhe list operation mutex poisoned");
+        let Some(entry) = registry.operations.remove(&self.handle) else {
+            return;
+        };
+        if registry.active_by_logical.get(&entry.logical_id) == Some(&self.handle) {
+            registry.active_by_logical.remove(&entry.logical_id);
+        }
+    }
+}
+
+fn xingzhe_list_operation_error(error: XingzheListOperationError) -> String {
+    match error {
+        XingzheListOperationError::Invalid => "行者活动读取操作无效或已结束".to_owned(),
+        XingzheListOperationError::InUse => "行者活动读取操作已在运行".to_owned(),
+        XingzheListOperationError::Exhausted => "行者活动读取操作已达上限".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod xingzhe_list_ffi_tests {
+    use super::{
+        XingzheListOperation, xingzhe_cancel_list, xingzhe_release_list, xingzhe_reserve_list,
+    };
+
+    #[test]
+    fn cancellation_is_generation_scoped_and_cleanup_allows_a_new_read() {
+        let first = xingzhe_reserve_list("xingzhe-list-test".to_owned()).unwrap();
+        assert!(xingzhe_cancel_list(first.handle.clone()));
+        let operation = XingzheListOperation::begin(first.handle.clone()).unwrap();
+        assert!(operation.cancellation.is_cancelled());
+        drop(operation);
+
+        let second = xingzhe_reserve_list("xingzhe-list-test".to_owned()).unwrap();
+        assert_ne!(first.handle, second.handle);
+        assert!(!xingzhe_cancel_list(first.handle));
+        assert!(xingzhe_release_list(second.handle));
+    }
+}
+
 /// 原子执行同步状态校验/转换；返回值只有在完整成功后才可写回原生文件。
 #[flutter_rust_bridge::frb(sync)]
 pub fn sync_state_apply(state_json: Vec<u8>, command_json: Vec<u8>) -> Result<Vec<u8>, String> {

@@ -30,6 +30,9 @@ void main() {
     required Future<void> Function() markUploaded,
     required Future<void> Function() markFailed,
     required rust.StravaUploadFfiResponse response,
+    bool locallyUploaded = false,
+    List<rust.StravaRemoteActivityResult> remoteActivities = const [],
+    Future<void> Function()? markRemoteDuplicate,
   }) => AutoSyncController(
     fingerprint:
         ({
@@ -79,6 +82,25 @@ void main() {
           expect(message, isNot(contains('secret-token')));
           await markFailed();
         },
+    isLocallyUploaded: (_) async => locallyUploaded,
+    remoteActivities: ({required after, required before}) async =>
+        remoteActivities,
+    markRemoteDuplicate: ({required record, required remoteId}) async {
+      order.add('remote-duplicate');
+      expect(record.fingerprint, fingerprint);
+      await markRemoteDuplicate?.call();
+    },
+    stableDedupe:
+        ({
+          required startASeconds,
+          required distanceAMeters,
+          required startBSeconds,
+          required distanceBMeters,
+          durationASeconds,
+          durationBSeconds,
+        }) =>
+            (startASeconds - startBSeconds).abs() <= 300 &&
+            (distanceAMeters - distanceBMeters).abs() <= 100,
     commute: ({distanceMeters, required durationSeconds}) => false,
   );
 
@@ -140,6 +162,52 @@ void main() {
     expect(order, ['fit-pending', 'upload', 'failed']);
     expect(results.single.succeeded, isFalse);
     expect(results.single.message, 'Strava 上传未完成');
+  });
+
+  test('已有同指纹本地记录时不读取远端也不重新上传', () async {
+    final order = <String>[];
+    final results = await controller(
+      order: order,
+      persist: () async {},
+      markUploaded: () async {},
+      markFailed: () async {},
+      locallyUploaded: true,
+      response: const rust.StravaUploadFfiResponse(
+        status: rust.StravaUploadFfiStatus.completed,
+        isDuplicate: false,
+      ),
+    ).sync([_uuid]);
+
+    expect(results.single.succeeded, isTrue);
+    expect(results.single.isDuplicate, isTrue);
+    expect(order, isEmpty);
+  });
+
+  test('Strava 稳定近似活动会落本地去重状态而不上传 FIT', () async {
+    final order = <String>[];
+    final results = await controller(
+      order: order,
+      persist: () async {},
+      markUploaded: () async {},
+      markFailed: () async {},
+      remoteActivities: const [
+        rust.StravaRemoteActivityResult(
+          id: '42',
+          startTimeSeconds: 1704067210,
+          endTimeSeconds: 1704070800,
+          distanceMeters: 1235,
+        ),
+      ],
+      response: const rust.StravaUploadFfiResponse(
+        status: rust.StravaUploadFfiStatus.completed,
+        isDuplicate: false,
+      ),
+    ).sync([_uuid]);
+
+    expect(results.single.succeeded, isTrue);
+    expect(results.single.isDuplicate, isTrue);
+    expect(results.single.remoteId, '42');
+    expect(order, ['remote-duplicate']);
   });
 }
 

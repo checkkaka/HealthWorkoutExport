@@ -378,7 +378,7 @@ class _SourcePageState extends State<_SourcePage> {
       const SizedBox(height: 16),
       Text('同步到 Strava', style: Theme.of(context).textTheme.titleMedium),
       const SizedBox(height: 4),
-      const Text('HealthKit → Strava API 首传（无预检/补源/覆盖）'),
+      const Text('HealthKit → Strava API 首传（同指纹/近似预检，无补源/覆盖）'),
       const SizedBox(height: 12),
       FilledButton.icon(
         onPressed: _selectedWorkoutIds.isEmpty || _syncing || _exporting
@@ -568,7 +568,7 @@ class _SourcePageState extends State<_SourcePage> {
       builder: (context) => AlertDialog(
         title: const Text('开始首次同步到 Strava？'),
         content: const Text(
-          '仅执行 HealthKit → Strava API 首传，不会预检、补源、覆盖或删除远端活动。开始后当前页面不能取消正在进行的上传。',
+          '会先跳过本地已同步和 Strava 稳定近似活动，再执行 HealthKit → Strava API 首传；不会补源、覆盖或删除远端活动。开始后当前页面不能取消预检或上传。',
         ),
         actions: [
           TextButton(
