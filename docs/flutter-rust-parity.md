@@ -74,7 +74,7 @@
 | SRC-02 | 行者 RSA 密码登录、`sessionid` 提取与恢复 | `XingzheClient.swift`、`XingzheDataSource.swift` | `XingzheRateLimitTests.swift`（限流解析） | Rust HTTP/RSA + 原生安全存储 | 真实账号登录、Cookie 多头兼容、冷启动恢复、过期重登和退出全部通过 | Rust 已接桥，未接安全存储/UI |
 | SRC-03 | 行者分页活动列表、时间筛选、FIT 下载与限流等待 | `XingzheClient.swift`、`XingzheDataSource.swift` | `XingzheRateLimitTests.swift` | Rust | 7/30/全年/全部/自定义结果与当前客户端一致；限流响应按服务端提示等待；取消可立即生效 | 列表 Rust 已接桥，FIT/UI 未完成 |
 | SRC-04 | 顽鹿签名登录、token/uid 会话与恢复 | `OnelapClient.swift`、`OnelapDataSource.swift` | `ActivityMatcherTests.swift`（可信 URL） | Rust HTTP/签名 + 原生安全存储 | 真实账号登录、冷启动恢复、过期重登和退出通过；认证头只发往允许域名 | Rust 已接桥，未接安全存储/UI |
-| SRC-05 | 顽鹿骑行列表、分页、详情与 FIT 下载 | `OnelapClient.swift`、`OnelapDataSource.swift` | 无真实接口自动测试 | Rust | 时间范围、分页终止、活动字段和下载 FIT 与 Swift 基线一致；错误信息不泄露凭证 | 未完成 |
+| SRC-05 | 顽鹿骑行列表、分页、详情与 FIT 下载 | `OnelapClient.swift`、`OnelapDataSource.swift` | 无真实接口自动测试 | Rust | 时间范围、分页终止、活动字段和下载 FIT 与 Swift 基线一致；错误信息不泄露凭证 | Rust 已接桥，未接 UI/持久化 |
 | SRC-06 | 第三方源错误、空列表、网络超时和取消语义 | `WorkoutDataSource.swift`、两个 Client/DataSource | 仅部分限流测试 | Rust + Flutter | 未认证、登录失败、拉取失败、超时、取消分别呈现；重试不产生重复请求或状态错乱 | 未完成 |
 
 ## 4. FIT
@@ -87,7 +87,7 @@
 | FIT-04 | 全字段与仅传感器补充模式 | `FitMerger.swift` | `FitActivityEncoderTests.swift` | Rust | 两种模式在记录插入、GPS、事件、lap/session 处理上与 Swift 一致 | 未完成 |
 | FIT-05 | 自动、手动、逐文件和绝对时间对齐 | `FitMerger.swift`、`FitMergeView.swift` | `FitActivityEncoderTests.swift`（时钟偏差、互相关、累计距离兜底） | Rust + Flutter | 同场可估偏移；不同活动拒绝自动对齐；手动偏移和逐文件偏移精确生效；估算失败有明确错误 | 未完成 |
 | FIT-06 | 合并后事件/lap 排序、距离重基准和 session 范围修正 | `FitMerger.swift` | `FitActivityEncoderTests.swift` | Rust | 事件和 lap 时间单调；分段总距离正确；session 覆盖全部合并记录；数组字段完整 | 未完成 |
-| FIT-07 | GPS 速度尖峰识别与修复 | `FitMerger.swift` 中 `FitSpeedSpikeFixer` | `FitActivityEncoderTests.swift`、`VirtualPowerPhysicsTests.swift` | Rust | 瞬时跳变并回落时修复；持续真实加速/急刹不误修；修复后 FIT 仍有效 | 未完成 |
+| FIT-07 | GPS 速度尖峰识别与修复 | `FitMerger.swift` 中 `FitSpeedSpikeFixer` | `FitActivityEncoderTests.swift`、`VirtualPowerPhysicsTests.swift` | Rust | 瞬时跳变并回落时修复；持续真实加速/急刹不误修；修复后 FIT 仍有效 | Rust 已实现，未接同步流程 |
 | FIT-08 | GCJ-02 → WGS-84 坐标转换和 FIT 重写 | `FitMerger.swift` 中 `Gcj02ToWgs84`、`FitGcjCoordinateRewriter` | `FitActivityEncoderTests.swift` | Rust | 中国境内坐标转换与基线误差在容差内；境外不移动；仅开关开启时改写上传副本 | 未完成 |
 | FIT-09 | Gribble 虚拟功率物理、风/坡度/惯性和滑行规则 | `VirtualPowerPhysics.swift`、`VirtualPowerSettings.swift` | `VirtualPowerPhysicsTests.swift` | Rust | 稳态算例、负功率、踏频 0、空气密度、风向、坡度、加速度钳位逐项通过移植测试 | Rust 已实现，未接入 |
 | FIT-10 | Open-Meteo 数据源分流、Archive 回退和网格/日期缓存 | `OpenMeteoWeatherClient.swift`、`OpenMeteoWeatherCache.swift` | `OpenMeteoWeatherClientTests.swift`、`OpenMeteoWeatherCacheTests.swift` | Rust | 近 7 天/2022 后/更早分流一致；失败回退 Archive；取消不回退；缓存键与过期行为一致 | 未完成 |

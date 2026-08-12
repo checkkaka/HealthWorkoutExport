@@ -8,7 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `begin`, `begin`, `operation_error_response`, `remote_activity_error`, `remote_activity_result`, `remote_activity_speed_result`, `remote_operation_error`, `reserve_for_refresh`, `reserve`, `reserve`, `token_result`, `upload_ffi_response`, `upload_operations`, `xingzhe_list_operation_error`, `xingzhe_list_operations`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `UploadOperationEntry`, `UploadOperationError`, `UploadOperationRegistry`, `UploadOperationState`, `UploadOperation`, `XingzheListOperationEntry`, `XingzheListOperationError`, `XingzheListOperationRegistry`, `XingzheListOperationState`, `XingzheListOperation`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
 
 /// Flutter 调用的最小同步入口，直接复用已测试的核心规则。
 bool isCommute({double? distanceMeters, required double durationSeconds}) =>
@@ -103,6 +103,32 @@ Future<OnelapLoginResult> onelapLogin({
 }) => WorkoutCoreRustLib.instance.api.crateApiSimpleOnelapLogin(
   account: account,
   password: password,
+);
+
+/// 按旧 Swift 的 20 条分页、半开区间读取顽鹿骑行；会话只用于本次 Rust 请求。
+Future<List<OnelapWorkoutResult>> onelapListWorkouts({
+  required String token,
+  required String uid,
+  required PlatformInt64 fromSeconds,
+  required PlatformInt64 toSeconds,
+  required int timezoneOffsetSeconds,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleOnelapListWorkouts(
+  token: token,
+  uid: uid,
+  fromSeconds: fromSeconds,
+  toSeconds: toSeconds,
+  timezoneOffsetSeconds: timezoneOffsetSeconds,
+);
+
+/// 读取顽鹿详情的 FIT 候选并仅返回严格校验后、内容质量最佳的一份 FIT。
+Future<Uint8List> onelapDownloadFit({
+  required String token,
+  required String uid,
+  required String activityId,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleOnelapDownloadFit(
+  token: token,
+  uid: uid,
+  activityId: activityId,
 );
 
 /// 预留一个不可复用的行者列表读取句柄。调用方可在请求期间精确取消此代操作。
@@ -370,6 +396,46 @@ class OnelapLoginResult {
           runtimeType == other.runtimeType &&
           token == other.token &&
           uid == other.uid;
+}
+
+/// Flutter 侧展示顽鹿活动列表所需字段；列表时间按调用方传入的 UTC 偏移解析。
+class OnelapWorkoutResult {
+  final String id;
+  final String title;
+  final double startTimeSeconds;
+  final double endTimeSeconds;
+  final double durationSeconds;
+  final double? distanceMeters;
+
+  const OnelapWorkoutResult({
+    required this.id,
+    required this.title,
+    required this.startTimeSeconds,
+    required this.endTimeSeconds,
+    required this.durationSeconds,
+    this.distanceMeters,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      title.hashCode ^
+      startTimeSeconds.hashCode ^
+      endTimeSeconds.hashCode ^
+      durationSeconds.hashCode ^
+      distanceMeters.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OnelapWorkoutResult &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          title == other.title &&
+          startTimeSeconds == other.startTimeSeconds &&
+          endTimeSeconds == other.endTimeSeconds &&
+          durationSeconds == other.durationSeconds &&
+          distanceMeters == other.distanceMeters;
 }
 
 /// Flutter 侧用于异常速度复查的官方活动摘要。

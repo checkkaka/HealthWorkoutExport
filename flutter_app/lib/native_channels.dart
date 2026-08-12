@@ -130,6 +130,176 @@ final class StravaVaultChannel {
   }
 }
 
+/// 行者会话租约；仅短暂用于恢复会话或重新登录，字符串表示不会泄漏凭据。
+final class XingzheVaultLease {
+  const XingzheVaultLease({
+    required this.account,
+    required this.password,
+    required this.sessionId,
+  });
+
+  factory XingzheVaultLease.fromObject(Object? value) {
+    final map = _objectMap(value, '行者凭据租约');
+    return XingzheVaultLease(
+      account: _requiredText(map, 'account'),
+      password: _requiredText(map, 'password'),
+      sessionId: _optionalText(map, 'sessionId'),
+    );
+  }
+
+  final String account;
+  final String password;
+  final String? sessionId;
+
+  @override
+  String toString() => 'XingzheVaultLease(credentials: <redacted>)';
+}
+
+final class OnelapVaultLease {
+  const OnelapVaultLease({
+    required this.account,
+    required this.password,
+    required this.token,
+    required this.uid,
+  });
+
+  factory OnelapVaultLease.fromObject(Object? value) {
+    final map = _objectMap(value, '顽鹿凭据租约');
+    return OnelapVaultLease(
+      account: _requiredText(map, 'account'),
+      password: _requiredText(map, 'password'),
+      token: _optionalText(map, 'token'),
+      uid: _optionalText(map, 'uid'),
+    );
+  }
+
+  final String account;
+  final String password;
+  final String? token;
+  final String? uid;
+
+  @override
+  String toString() => 'OnelapVaultLease(credentials: <redacted>)';
+}
+
+final class XingzheVaultStatus {
+  const XingzheVaultStatus({
+    required this.hasAccount,
+    required this.hasPassword,
+    required this.hasSessionId,
+  });
+
+  factory XingzheVaultStatus.fromObject(Object? value) {
+    final map = _objectMap(value, '行者凭据状态');
+    return XingzheVaultStatus(
+      hasAccount: _requiredBool(map, 'hasAccount'),
+      hasPassword: _requiredBool(map, 'hasPassword'),
+      hasSessionId: _requiredBool(map, 'hasSessionId'),
+    );
+  }
+
+  final bool hasAccount;
+  final bool hasPassword;
+  final bool hasSessionId;
+  bool get isConfigured => hasAccount && hasPassword && hasSessionId;
+}
+
+final class OnelapVaultStatus {
+  const OnelapVaultStatus({
+    required this.hasAccount,
+    required this.hasPassword,
+    required this.hasToken,
+    required this.hasUid,
+  });
+
+  factory OnelapVaultStatus.fromObject(Object? value) {
+    final map = _objectMap(value, '顽鹿凭据状态');
+    return OnelapVaultStatus(
+      hasAccount: _requiredBool(map, 'hasAccount'),
+      hasPassword: _requiredBool(map, 'hasPassword'),
+      hasToken: _requiredBool(map, 'hasToken'),
+      hasUid: _requiredBool(map, 'hasUid'),
+    );
+  }
+
+  final bool hasAccount;
+  final bool hasPassword;
+  final bool hasToken;
+  final bool hasUid;
+  bool get isConfigured => hasAccount && hasPassword && hasToken && hasUid;
+}
+
+/// 固定用途的行者 Keychain vault；没有任意账户读写 API。
+final class XingzheVaultChannel {
+  const XingzheVaultChannel()
+    : _channel = const MethodChannel('health_workout_export/third_party_vault');
+
+  final MethodChannel _channel;
+
+  Future<XingzheVaultStatus> status() async => XingzheVaultStatus.fromObject(
+    await _channel.invokeMethod<Object?>('xingzheStatus'),
+  );
+
+  Future<XingzheVaultLease> lease() async => XingzheVaultLease.fromObject(
+    await _channel.invokeMethod<Object?>('xingzheLease'),
+  );
+
+  Future<void> commitAuthorization({
+    required String account,
+    required String password,
+    required String sessionId,
+  }) async {
+    _requireText(account, 'account');
+    _requireSecret(password, 'password');
+    _requireSecret(sessionId, 'sessionId');
+    await _channel.invokeMethod<Object?>('writeXingzheAuthorization', {
+      'account': account,
+      'password': password,
+      'sessionId': sessionId,
+    });
+  }
+
+  Future<void> clearAuthorization() =>
+      _channel.invokeMethod<Object?>('clearXingzheAuthorization');
+}
+
+/// 固定用途的顽鹿 Keychain vault；没有任意账户读写 API。
+final class OnelapVaultChannel {
+  const OnelapVaultChannel()
+    : _channel = const MethodChannel('health_workout_export/third_party_vault');
+
+  final MethodChannel _channel;
+
+  Future<OnelapVaultStatus> status() async => OnelapVaultStatus.fromObject(
+    await _channel.invokeMethod<Object?>('onelapStatus'),
+  );
+
+  Future<OnelapVaultLease> lease() async => OnelapVaultLease.fromObject(
+    await _channel.invokeMethod<Object?>('onelapLease'),
+  );
+
+  Future<void> commitAuthorization({
+    required String account,
+    required String password,
+    required String token,
+    required String uid,
+  }) async {
+    _requireText(account, 'account');
+    _requireSecret(password, 'password');
+    _requireSecret(token, 'token');
+    _requireSecret(uid, 'uid');
+    await _channel.invokeMethod<Object?>('writeOnelapAuthorization', {
+      'account': account,
+      'password': password,
+      'token': token,
+      'uid': uid,
+    });
+  }
+
+  Future<void> clearAuthorization() =>
+      _channel.invokeMethod<Object?>('clearOnelapAuthorization');
+}
+
 /// 复用旧应用 UserDefaults 键的最小 Flutter 通道。
 final class PreferencesChannel {
   const PreferencesChannel()

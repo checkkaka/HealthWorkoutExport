@@ -107,6 +107,117 @@ void main() {
     });
   });
 
+  group('ThirdPartyVaultChannel', () {
+    const channel = MethodChannel('health_workout_export/third_party_vault');
+
+    tearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    test('行者和顽鹿只通过固定 typed 方法读写凭据', () async {
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return switch (call.method) {
+          'xingzheStatus' => <String, Object?>{
+            'hasAccount': true,
+            'hasPassword': true,
+            'hasSessionId': true,
+          },
+          'xingzheLease' => <String, Object?>{
+            'account': 'xingzhe-account',
+            'password': 'xingzhe-password',
+            'sessionId': 'xingzhe-session',
+          },
+          'onelapStatus' => <String, Object?>{
+            'hasAccount': true,
+            'hasPassword': true,
+            'hasToken': true,
+            'hasUid': true,
+          },
+          'onelapLease' => <String, Object?>{
+            'account': 'onelap-account',
+            'password': 'onelap-password',
+            'token': 'onelap-token',
+            'uid': '42',
+          },
+          _ => null,
+        };
+      });
+
+      const xingzhe = XingzheVaultChannel();
+      expect((await xingzhe.status()).isConfigured, isTrue);
+      expect(
+        (await xingzhe.lease()).toString(),
+        isNot(contains('xingzhe-password')),
+      );
+      await xingzhe.commitAuthorization(
+        account: 'xingzhe-account',
+        password: 'xingzhe-password',
+        sessionId: 'xingzhe-session',
+      );
+      await xingzhe.clearAuthorization();
+
+      const onelap = OnelapVaultChannel();
+      expect((await onelap.status()).isConfigured, isTrue);
+      expect(
+        (await onelap.lease()).toString(),
+        isNot(contains('onelap-token')),
+      );
+      await onelap.commitAuthorization(
+        account: 'onelap-account',
+        password: 'onelap-password',
+        token: 'onelap-token',
+        uid: '42',
+      );
+      await onelap.clearAuthorization();
+
+      expect(calls.map((call) => call.method), [
+        'xingzheStatus',
+        'xingzheLease',
+        'writeXingzheAuthorization',
+        'clearXingzheAuthorization',
+        'onelapStatus',
+        'onelapLease',
+        'writeOnelapAuthorization',
+        'clearOnelapAuthorization',
+      ]);
+      expect(calls[2].arguments, {
+        'account': 'xingzhe-account',
+        'password': 'xingzhe-password',
+        'sessionId': 'xingzhe-session',
+      });
+      expect(calls[6].arguments, {
+        'account': 'onelap-account',
+        'password': 'onelap-password',
+        'token': 'onelap-token',
+        'uid': '42',
+      });
+    });
+
+    test('typed 凭据校验和字符串表示不泄漏秘密', () {
+      expect(
+        () => const XingzheVaultChannel().commitAuthorization(
+          account: 'account',
+          password: '',
+          sessionId: 'sensitive-session',
+        ),
+        throwsA(
+          predicate((error) => !error.toString().contains('sensitive-session')),
+        ),
+      );
+      expect(
+        () => const OnelapVaultChannel().commitAuthorization(
+          account: 'account',
+          password: 'password',
+          token: '',
+          uid: 'sensitive-uid',
+        ),
+        throwsA(
+          predicate((error) => !error.toString().contains('sensitive-uid')),
+        ),
+      );
+    });
+  });
+
   group('PreferencesChannel', () {
     const channel = MethodChannel('health_workout_export/preferences');
 

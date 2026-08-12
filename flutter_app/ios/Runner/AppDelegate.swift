@@ -18,6 +18,9 @@ import UIKit
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "KeychainPlugin") {
       KeychainPlugin.register(with: registrar)
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "ThirdPartyVaultPlugin") {
+      ThirdPartyVaultPlugin.register(with: registrar)
+    }
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "PreferencesPlugin") {
       PreferencesPlugin.register(with: registrar)
     }

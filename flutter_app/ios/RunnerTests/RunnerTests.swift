@@ -153,6 +153,106 @@ class RunnerTests: XCTestCase {
     }
   }
 
+  func testThirdPartyVaultExposesOnlyFixedSourceMethodsAndRedactsStatus() {
+    for method in ["read", "write", "delete", "lease"] {
+      var response: Any?
+      ThirdPartyVaultPlugin().handle(
+        FlutterMethodCall(methodName: method, arguments: ["account": "strava.webCookie"])
+      ) { response = $0 }
+      XCTAssertTrue((response as? NSObject) === FlutterMethodNotImplemented)
+    }
+
+    let xingzhe = ThirdPartyVaultPlugin.statusPayload(
+      for: .xingzhe,
+      values: [
+        "xingzhe.account": "account",
+        "xingzhe.password": "password-secret",
+        "xingzhe.session": "session-secret",
+      ]
+    )
+    XCTAssertEqual(xingzhe["hasAccount"] as? Bool, true)
+    XCTAssertEqual(xingzhe["hasPassword"] as? Bool, true)
+    XCTAssertEqual(xingzhe["hasSessionId"] as? Bool, true)
+    XCTAssertNil(xingzhe["password"])
+    XCTAssertNil(xingzhe["sessionId"])
+
+    let onelap = ThirdPartyVaultPlugin.leasePayload(
+      for: .onelap,
+      values: [
+        "onelap.account": "account",
+        "onelap.password": "password-secret",
+        "onelap.token": "token-secret",
+        "onelap.uid": "uid",
+      ]
+    )
+    XCTAssertEqual(onelap?["uid"] as? String, "uid")
+    XCTAssertNil(onelap?["sessionId"])
+
+    // 旧应用允许只保留账号密码并在冷启动重新登录；适配器不能把该恢复路径锁死。
+    let legacyXingzhe = ThirdPartyVaultPlugin.leasePayload(
+      for: .xingzhe,
+      values: ["xingzhe.account": "account", "xingzhe.password": "password-secret"]
+    )
+    XCTAssertEqual(legacyXingzhe?["account"] as? String, "account")
+    XCTAssertNil(legacyXingzhe?["sessionId"])
+  }
+
+  func testThirdPartyVaultParsesCompleteFixedCredentials() throws {
+    let xingzhe = try ThirdPartyVaultPlugin.parseXingzheAuthorization(arguments: [
+      "account": "account", "password": "password", "sessionId": "session",
+    ])
+    XCTAssertEqual(xingzhe.sessionId, "session")
+    XCTAssertThrowsError(
+      try ThirdPartyVaultPlugin.parseXingzheAuthorization(arguments: [
+        "account": "account", "password": "", "sessionId": "session",
+      ])
+    )
+
+    let onelap = try ThirdPartyVaultPlugin.parseOnelapAuthorization(arguments: [
+      "account": "account", "password": "password", "token": "token", "uid": "uid",
+    ])
+    XCTAssertEqual(onelap.token, "token")
+    XCTAssertThrowsError(
+      try ThirdPartyVaultPlugin.parseOnelapAuthorization(arguments: [
+        "account": "account", "password": "password", "token": "token", "uid": "",
+      ])
+    )
+  }
+
+  func testThirdPartyVaultClearRollsBackEveryChangedValueAfterPartialFailure() {
+    let entries = [
+      ThirdPartyVaultPlugin.StateEntry(account: "xingzhe.account", value: nil),
+      ThirdPartyVaultPlugin.StateEntry(account: "xingzhe.password", value: nil),
+      ThirdPartyVaultPlugin.StateEntry(account: "xingzhe.session", value: nil),
+    ]
+    let original = [
+      "xingzhe.account": "account",
+      "xingzhe.password": "password-secret",
+      "xingzhe.session": "session-secret",
+    ]
+    var stored = original
+    var mutateCount = 0
+    let result = ThirdPartyVaultPlugin.performFixedTransaction(
+      entries: entries,
+      read: { (stored[$0], nil) },
+      mutate: { account, _ in
+        mutateCount += 1
+        if mutateCount == 3 {
+          return FlutterError(code: "forced_failure", message: nil, details: nil)
+        }
+        stored.removeValue(forKey: account)
+        return nil
+      },
+      restore: { value, account in
+        stored[account] = value
+        return true
+      }
+    )
+    XCTAssertEqual(result.error?.code, "forced_failure")
+    XCTAssertFalse(result.rollbackFailed)
+    XCTAssertEqual(stored, original)
+  }
+
   func testStravaVaultStatusAndPurposeLeasesExposeLeastPrivilegeShapes() {
     let state = KeychainPlugin.StravaVaultState(
       clientId: "123",

@@ -70,7 +70,7 @@ class WorkoutCoreRustLib
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -2093368324;
+  int get rustContentHash => 2138426051;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -105,6 +105,20 @@ abstract class WorkoutCoreRustLibApi extends BaseApi {
   });
 
   bool crateApiSimpleIsValidFit({required List<int> data});
+
+  Future<Uint8List> crateApiSimpleOnelapDownloadFit({
+    required String token,
+    required String uid,
+    required String activityId,
+  });
+
+  Future<List<OnelapWorkoutResult>> crateApiSimpleOnelapListWorkouts({
+    required String token,
+    required String uid,
+    required PlatformInt64 fromSeconds,
+    required PlatformInt64 toSeconds,
+    required int timezoneOffsetSeconds,
+  });
 
   Future<OnelapLoginResult> crateApiSimpleOnelapLogin({
     required String account,
@@ -416,6 +430,90 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
       const TaskConstMeta(debugName: "is_valid_fit", argNames: ["data"]);
 
   @override
+  Future<Uint8List> crateApiSimpleOnelapDownloadFit({
+    required String token,
+    required String uid,
+    required String activityId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(token, serializer);
+          sse_encode_String(uid, serializer);
+          sse_encode_String(activityId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 7,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleOnelapDownloadFitConstMeta,
+        argValues: [token, uid, activityId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleOnelapDownloadFitConstMeta =>
+      const TaskConstMeta(
+        debugName: "onelap_download_fit",
+        argNames: ["token", "uid", "activityId"],
+      );
+
+  @override
+  Future<List<OnelapWorkoutResult>> crateApiSimpleOnelapListWorkouts({
+    required String token,
+    required String uid,
+    required PlatformInt64 fromSeconds,
+    required PlatformInt64 toSeconds,
+    required int timezoneOffsetSeconds,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(token, serializer);
+          sse_encode_String(uid, serializer);
+          sse_encode_i_64(fromSeconds, serializer);
+          sse_encode_i_64(toSeconds, serializer);
+          sse_encode_i_32(timezoneOffsetSeconds, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 8,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_onelap_workout_result,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleOnelapListWorkoutsConstMeta,
+        argValues: [token, uid, fromSeconds, toSeconds, timezoneOffsetSeconds],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleOnelapListWorkoutsConstMeta =>
+      const TaskConstMeta(
+        debugName: "onelap_list_workouts",
+        argNames: [
+          "token",
+          "uid",
+          "fromSeconds",
+          "toSeconds",
+          "timezoneOffsetSeconds",
+        ],
+      );
+
+  @override
   Future<OnelapLoginResult> crateApiSimpleOnelapLogin({
     required String account,
     required String password,
@@ -429,7 +527,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 9,
             port: port_,
           );
         },
@@ -456,7 +554,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(data, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
@@ -491,7 +589,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           sse_encode_f_64(distanceBMeters, serializer);
           sse_encode_opt_box_autoadd_f_64(durationASeconds, serializer);
           sse_encode_opt_box_autoadd_f_64(durationBSeconds, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -531,7 +629,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationHandle, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -557,7 +655,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationHandle, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -592,7 +690,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 12,
+            funcId: 14,
             port: port_,
           );
         },
@@ -630,7 +728,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 13,
+            funcId: 15,
             port: port_,
           );
         },
@@ -671,7 +769,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 14,
+            funcId: 16,
             port: port_,
           );
         },
@@ -713,7 +811,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 15,
+            funcId: 17,
             port: port_,
           );
         },
@@ -743,7 +841,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationHandle, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -769,7 +867,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationHandle, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -797,7 +895,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationId, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_strava_upload_reservation,
@@ -825,7 +923,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationId, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_strava_upload_reservation,
@@ -863,7 +961,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 20,
+            funcId: 22,
             port: port_,
           );
         },
@@ -909,7 +1007,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 21,
+            funcId: 23,
             port: port_,
           );
         },
@@ -970,7 +1068,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 22,
+            funcId: 24,
             port: port_,
           );
         },
@@ -1024,7 +1122,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           sse_encode_f_64(startDateUnixSeconds, serializer);
           sse_encode_list_String(supplementSourceIds, serializer);
           sse_encode_String(destination, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -1066,7 +1164,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(recoveryJson, serializer);
           sse_encode_list_prim_u_8_loose(commandJson, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 24)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 26)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
@@ -1094,7 +1192,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(recoveryJson, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 27)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
@@ -1124,7 +1222,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(stateJson, serializer);
           sse_encode_list_prim_u_8_loose(commandJson, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 26)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 28)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
@@ -1150,7 +1248,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationHandle, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 27)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 29)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -1187,7 +1285,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 28,
+            funcId: 30,
             port: port_,
           );
         },
@@ -1222,7 +1320,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 29,
+            funcId: 31,
             port: port_,
           );
         },
@@ -1249,7 +1347,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationHandle, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 30)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 32)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -1277,7 +1375,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationId, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 31)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_xingzhe_list_reservation,
@@ -1411,6 +1509,14 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  List<OnelapWorkoutResult> dco_decode_list_onelap_workout_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_onelap_workout_result)
+        .toList();
+  }
+
+  @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as List<int>;
@@ -1450,6 +1556,22 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
     return OnelapLoginResult(
       token: dco_decode_String(arr[0]),
       uid: dco_decode_String(arr[1]),
+    );
+  }
+
+  @protected
+  OnelapWorkoutResult dco_decode_onelap_workout_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return OnelapWorkoutResult(
+      id: dco_decode_String(arr[0]),
+      title: dco_decode_String(arr[1]),
+      startTimeSeconds: dco_decode_f_64(arr[2]),
+      endTimeSeconds: dco_decode_f_64(arr[3]),
+      durationSeconds: dco_decode_f_64(arr[4]),
+      distanceMeters: dco_decode_opt_box_autoadd_f_64(arr[5]),
     );
   }
 
@@ -1789,6 +1911,20 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  List<OnelapWorkoutResult> sse_decode_list_onelap_workout_result(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <OnelapWorkoutResult>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_onelap_workout_result(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
@@ -1837,6 +1973,27 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
     var var_token = sse_decode_String(deserializer);
     var var_uid = sse_decode_String(deserializer);
     return OnelapLoginResult(token: var_token, uid: var_uid);
+  }
+
+  @protected
+  OnelapWorkoutResult sse_decode_onelap_workout_result(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_id = sse_decode_String(deserializer);
+    var var_title = sse_decode_String(deserializer);
+    var var_startTimeSeconds = sse_decode_f_64(deserializer);
+    var var_endTimeSeconds = sse_decode_f_64(deserializer);
+    var var_durationSeconds = sse_decode_f_64(deserializer);
+    var var_distanceMeters = sse_decode_opt_box_autoadd_f_64(deserializer);
+    return OnelapWorkoutResult(
+      id: var_id,
+      title: var_title,
+      startTimeSeconds: var_startTimeSeconds,
+      endTimeSeconds: var_endTimeSeconds,
+      durationSeconds: var_durationSeconds,
+      distanceMeters: var_distanceMeters,
+    );
   }
 
   @protected
@@ -2224,6 +2381,18 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  void sse_encode_list_onelap_workout_result(
+    List<OnelapWorkoutResult> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_onelap_workout_result(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_prim_u_8_loose(
     List<int> self,
     SseSerializer serializer,
@@ -2277,6 +2446,20 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.token, serializer);
     sse_encode_String(self.uid, serializer);
+  }
+
+  @protected
+  void sse_encode_onelap_workout_result(
+    OnelapWorkoutResult self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.id, serializer);
+    sse_encode_String(self.title, serializer);
+    sse_encode_f_64(self.startTimeSeconds, serializer);
+    sse_encode_f_64(self.endTimeSeconds, serializer);
+    sse_encode_f_64(self.durationSeconds, serializer);
+    sse_encode_opt_box_autoadd_f_64(self.distanceMeters, serializer);
   }
 
   @protected

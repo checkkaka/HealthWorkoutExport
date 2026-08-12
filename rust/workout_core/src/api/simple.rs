@@ -152,6 +152,64 @@ pub struct OnelapLoginResult {
     pub uid: String,
 }
 
+/// Flutter 侧展示顽鹿活动列表所需字段；列表时间按调用方传入的 UTC 偏移解析。
+#[derive(Clone, Debug)]
+pub struct OnelapWorkoutResult {
+    pub id: String,
+    pub title: String,
+    pub start_time_seconds: f64,
+    pub end_time_seconds: f64,
+    pub duration_seconds: f64,
+    pub distance_meters: Option<f64>,
+}
+
+/// 按旧 Swift 的 20 条分页、半开区间读取顽鹿骑行；会话只用于本次 Rust 请求。
+pub async fn onelap_list_workouts(
+    token: String,
+    uid: String,
+    from_seconds: i64,
+    to_seconds: i64,
+    timezone_offset_seconds: i32,
+) -> Result<Vec<OnelapWorkoutResult>, String> {
+    let client = crate::onelap::OnelapActivityClient::new().map_err(|error| error.to_string())?;
+    client
+        .list_rides(
+            &token,
+            &uid,
+            from_seconds,
+            to_seconds,
+            timezone_offset_seconds,
+        )
+        .await
+        .map(|rides| {
+            rides
+                .into_iter()
+                .map(|ride| OnelapWorkoutResult {
+                    id: ride.id,
+                    title: "顽鹿骑行".to_owned(),
+                    start_time_seconds: ride.start_time_seconds,
+                    end_time_seconds: ride.end_time_seconds,
+                    duration_seconds: ride.duration_seconds,
+                    distance_meters: ride.distance_meters,
+                })
+                .collect()
+        })
+        .map_err(|error| error.to_string())
+}
+
+/// 读取顽鹿详情的 FIT 候选并仅返回严格校验后、内容质量最佳的一份 FIT。
+pub async fn onelap_download_fit(
+    token: String,
+    uid: String,
+    activity_id: String,
+) -> Result<Vec<u8>, String> {
+    let client = crate::onelap::OnelapActivityClient::new().map_err(|error| error.to_string())?;
+    client
+        .download_best_fit(&token, &uid, &activity_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 #[derive(Clone, Debug)]
 pub struct XingzheListReservation {
     pub handle: String,

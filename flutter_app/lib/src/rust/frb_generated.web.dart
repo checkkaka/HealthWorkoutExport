@@ -75,6 +75,9 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   );
 
   @protected
+  List<OnelapWorkoutResult> dco_decode_list_onelap_workout_result(dynamic raw);
+
+  @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
 
   @protected
@@ -91,6 +94,9 @@ abstract class WorkoutCoreRustLibApiImplPlatform
 
   @protected
   OnelapLoginResult dco_decode_onelap_login_result(dynamic raw);
+
+  @protected
+  OnelapWorkoutResult dco_decode_onelap_workout_result(dynamic raw);
 
   @protected
   String? dco_decode_opt_String(dynamic raw);
@@ -222,6 +228,11 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   );
 
   @protected
+  List<OnelapWorkoutResult> sse_decode_list_onelap_workout_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
 
   @protected
@@ -238,6 +249,11 @@ abstract class WorkoutCoreRustLibApiImplPlatform
 
   @protected
   OnelapLoginResult sse_decode_onelap_login_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  OnelapWorkoutResult sse_decode_onelap_workout_result(
     SseDeserializer deserializer,
   );
 
@@ -402,6 +418,12 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   );
 
   @protected
+  void sse_encode_list_onelap_workout_result(
+    List<OnelapWorkoutResult> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
 
   @protected
@@ -425,6 +447,12 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   @protected
   void sse_encode_onelap_login_result(
     OnelapLoginResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_onelap_workout_result(
+    OnelapWorkoutResult self,
     SseSerializer serializer,
   );
 
