@@ -124,6 +124,15 @@ pub fn encode_health_workout_fit(
         .map_err(|error| error.to_string())
 }
 
+/// 使用行者网页登录契约换取短期 sessionid；凭据只用于本次请求，调用方负责安全保存返回值。
+pub async fn xingzhe_login(account: String, password: String) -> Result<String, String> {
+    let client = crate::xingzhe::XingzheLoginClient::new().map_err(|error| error.to_string())?;
+    client
+        .login(&account, &password)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// 原子执行同步状态校验/转换；返回值只有在完整成功后才可写回原生文件。
 #[flutter_rust_bridge::frb(sync)]
 pub fn sync_state_apply(state_json: Vec<u8>, command_json: Vec<u8>) -> Result<Vec<u8>, String> {

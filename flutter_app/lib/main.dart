@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'auto_sync_controller.dart';
 import 'date_range.dart';
 import 'native_channels.dart';
 import 'src/rust/frb_generated.dart';
@@ -151,6 +152,11 @@ class _SourcePageState extends State<_SourcePage> {
   WorkoutExportProgress? _exportProgress;
   WorkoutExportResult? _exportResult;
   var _exporting = false;
+  var _syncing = false;
+  var _syncCompleted = 0;
+  var _syncTotal = 0;
+  var _syncResults = const <AutoSyncResult>[];
+  String? _syncError;
 
   @override
   void initState() {
@@ -334,7 +340,7 @@ class _SourcePageState extends State<_SourcePage> {
       ),
       const SizedBox(height: 12),
       FilledButton.icon(
-        onPressed: _selectedWorkoutIds.isEmpty || _exporting
+        onPressed: _selectedWorkoutIds.isEmpty || _exporting || _syncing
             ? null
             : () => unawaited(_exportSelected()),
         icon: const Icon(Icons.ios_share),
@@ -365,6 +371,52 @@ class _SourcePageState extends State<_SourcePage> {
               child: const Text('删除本次导出'),
             ),
           ],
+        ),
+      ],
+      const SizedBox(height: 24),
+      const Divider(),
+      const SizedBox(height: 16),
+      Text('同步到 Strava', style: Theme.of(context).textTheme.titleMedium),
+      const SizedBox(height: 4),
+      const Text('HealthKit → Strava API 首传（无预检/补源/覆盖）'),
+      const SizedBox(height: 12),
+      FilledButton.icon(
+        onPressed: _selectedWorkoutIds.isEmpty || _syncing || _exporting
+            ? null
+            : () => unawaited(_confirmAndSync()),
+        icon: const Icon(Icons.sync),
+        label: Text(_syncing ? '正在首次同步…' : '开始首次同步'),
+      ),
+      if (_syncing || _syncTotal > 0) ...[
+        const SizedBox(height: 8),
+        LinearProgressIndicator(
+          value: _syncTotal == 0 ? null : _syncCompleted / _syncTotal,
+        ),
+        const SizedBox(height: 4),
+        Text('已处理 $_syncCompleted/$_syncTotal 条训练'),
+      ],
+      if (_syncError case final error?) ...[
+        const SizedBox(height: 8),
+        Text('同步异常：$error'),
+      ],
+      for (final result in _syncResults) ...[
+        const SizedBox(height: 8),
+        Card(
+          child: ListTile(
+            leading: Icon(
+              result.succeeded
+                  ? Icons.check_circle_outline
+                  : Icons.error_outline,
+            ),
+            title: Text(_syncResultTitle(result.workoutId)),
+            subtitle: Text(
+              result.succeeded
+                  ? result.isDuplicate
+                        ? 'Strava 已接收（重复）'
+                        : 'Strava 已上传'
+                  : '失败：${result.message}',
+            ),
+          ),
         ),
       ],
     ];
@@ -508,6 +560,68 @@ class _SourcePageState extends State<_SourcePage> {
     if (mounted && identical(_exportResult, result)) {
       setState(() => _exportResult = null);
     }
+  }
+
+  Future<void> _confirmAndSync() async {
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('开始首次同步到 Strava？'),
+        content: const Text(
+          '仅执行 HealthKit → Strava API 首传，不会预检、补源、覆盖或删除远端活动。开始后当前页面不能取消正在进行的上传。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('返回'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('开始同步'),
+          ),
+        ],
+      ),
+    );
+    if (accepted == true && mounted) unawaited(_syncSelected());
+  }
+
+  Future<void> _syncSelected() async {
+    final healthKit = widget.healthKit;
+    if (healthKit == null || _selectedWorkoutIds.isEmpty || _syncing) return;
+    final selected = _workouts
+        .where((workout) => _selectedWorkoutIds.contains(workout.uuid))
+        .map((workout) => workout.uuid)
+        .toList(growable: false);
+    if (selected.isEmpty) return;
+    setState(() {
+      _syncing = true;
+      _syncCompleted = 0;
+      _syncTotal = selected.length;
+      _syncResults = const [];
+      _syncError = null;
+    });
+    final controller = AutoSyncController(healthKit: healthKit);
+    try {
+      for (final workoutId in selected) {
+        final result = (await controller.sync([workoutId])).single;
+        if (!mounted) return;
+        setState(() {
+          _syncCompleted += 1;
+          _syncResults = [..._syncResults, result];
+        });
+      }
+    } catch (error) {
+      if (mounted) setState(() => _syncError = error.toString());
+    } finally {
+      if (mounted) setState(() => _syncing = false);
+    }
+  }
+
+  String _syncResultTitle(String workoutId) {
+    for (final workout in _workouts) {
+      if (workout.uuid == workoutId) return workout.activityName;
+    }
+    return workoutId;
   }
 
   Future<void> _selectDate({required bool isStart}) async {

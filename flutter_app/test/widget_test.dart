@@ -151,6 +151,32 @@ void main() {
     expect(_workoutTile(tester, 'workout-2').value, isFalse);
   });
 
+  testWidgets('首次同步明确展示范围并在启动前提示不可取消', (tester) async {
+    messenger.setMockMethodCallHandler(healthKitChannel, (call) async {
+      return switch (call.method) {
+        'isAvailable' => true,
+        'requestAuthorization' => null,
+        'listWorkouts' => <Object?>[_workout('workout-1', '骑车')],
+        _ => throw MissingPluginException(),
+      };
+    });
+
+    await tester.pumpWidget(
+      const HealthWorkoutExportApp(healthKit: HealthKitChannel()),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('workout-1')));
+    await tester.pump();
+    await tester.drag(find.byType(ListView), const Offset(0, -900));
+    await tester.pumpAndSettle();
+
+    expect(find.text('HealthKit → Strava API 首传（无预检/补源/覆盖）'), findsOneWidget);
+    await tester.tap(find.text('开始首次同步'));
+    await tester.pumpAndSettle();
+    expect(find.text('开始首次同步到 Strava？'), findsOneWidget);
+    expect(find.textContaining('不能取消正在进行的上传'), findsOneWidget);
+  });
+
   testWidgets('健康训练加载失败后可以重试', (tester) async {
     var attempts = 0;
     messenger.setMockMethodCallHandler(healthKitChannel, (call) async {

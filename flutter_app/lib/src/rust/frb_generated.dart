@@ -70,7 +70,7 @@ class WorkoutCoreRustLib
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -1754669404;
+  int get rustContentHash => 27942472;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -208,6 +208,11 @@ abstract class WorkoutCoreRustLibApi extends BaseApi {
   Uint8List crateApiSimpleSyncStateApply({
     required List<int> stateJson,
     required List<int> commandJson,
+  });
+
+  Future<String> crateApiSimpleXingzheLogin({
+    required String account,
+    required String password,
   });
 }
 
@@ -1083,6 +1088,40 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         debugName: "sync_state_apply",
         argNames: ["stateJson", "commandJson"],
       );
+
+  @override
+  Future<String> crateApiSimpleXingzheLogin({
+    required String account,
+    required String password,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(account, serializer);
+          sse_encode_String(password, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 26,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleXingzheLoginConstMeta,
+        argValues: [account, password],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleXingzheLoginConstMeta => const TaskConstMeta(
+    debugName: "xingzhe_login",
+    argNames: ["account", "password"],
+  );
 
   @protected
   String dco_decode_String(dynamic raw) {

@@ -66,6 +66,9 @@
 - 本批验证：Rust 56/56、Flutter 38/38、Flutter analyze、iOS RunnerTests 19/19、iOS 模拟器 Debug、macOS Debug、Android Debug APK 均通过；Android 构建补装 SDK Platform 35。自动同步控制器、远端预检和真机 HealthKit/分享验收仍未完成。
 - Rust 同步指纹、活动匹配和稳定去重已生成 FRB 桥；HealthKit 首传控制器复用导出 FIT 映射，按“保存 FIT → pending → API 上传 → uploaded/failed”串行执行。远端预检、补源合并、覆盖删除、取消和 UI 仍未接入，不能宣称完整自动同步。
 - Rust 已新增受限 Strava 活动列表与速度详情读取：固定 HTTPS 主机、禁止重定向、分页与 2MiB 响应上限、状态/错误清洗和代际取消句柄均已覆盖；目前只提供桥接能力，尚未进入预检业务流程。
+- 健康页已接入最小首传同步入口，明确显示其不含远端预检、补源合并、覆盖与取消；实现逐条进度和结果，不伪造完整自动同步能力。
+- Rust 已增加行者 RSA PKCS#1 v1.5 登录及严格 `sessionid` 解析（固定 HTTPS、禁止重定向、64KiB 响应上限），并以 FRB 暴露；凭据持久化、过期重登和 UI 仍待迁移。
+- Rust FIT 最小补源合并只补同秒既有 Record/Session 的缺失心率、踏频、功率和温度，严格保持主源、GPS、距离、事件、lap 与未知字段；尚未接入补源业务流程。
 
 ### Test Results
 | Test | Expected | Actual | Status |

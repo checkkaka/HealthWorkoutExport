@@ -1,9 +1,14 @@
 #[path = "fit_document.rs"]
 mod fit_document;
+#[path = "fit_merge.rs"]
+mod fit_merge;
 #[path = "health_fit.rs"]
 mod health_fit;
 
 pub use fit_document::{FitDocument, FitMessage, MAX_FIT_BYTES};
+pub use fit_merge::{
+    FitMergeError, MAX_MERGE_INPUT_BYTES, MAX_MERGE_SUPPLEMENTS, merge_fit_sensors,
+};
 pub use health_fit::{HealthFitError, encode_health_workout_bundle_json};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

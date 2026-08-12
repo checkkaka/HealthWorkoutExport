@@ -87,6 +87,15 @@ Future<Uint8List> encodeHealthWorkoutFit({
   timezoneOffsetSeconds: timezoneOffsetSeconds,
 );
 
+/// 使用行者网页登录契约换取短期 sessionid；凭据只用于本次请求，调用方负责安全保存返回值。
+Future<String> xingzheLogin({
+  required String account,
+  required String password,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleXingzheLogin(
+  account: account,
+  password: password,
+);
+
 /// 原子执行同步状态校验/转换；返回值只有在完整成功后才可写回原生文件。
 Uint8List syncStateApply({
   required List<int> stateJson,

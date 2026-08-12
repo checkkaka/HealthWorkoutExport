@@ -71,7 +71,7 @@
 | ID | 当前功能 | Swift 实现基线 | 已有测试 | 目标归属 | 对等验收条件 | 状态 |
 |---|---|---|---|---|---|---|
 | SRC-01 | 统一数据源契约与健康/行者/顽鹿注册 | `WorkoutDataSource.swift`、`HealthKitDataSource.swift`、`XingzheDataSource.swift`、`OnelapDataSource.swift` | `ActivityMatcherTests.swift`（统一活动参与匹配） | Rust 数据模型 + Flutter 注册/调度 | 三源统一支持认证状态、登录/退出、列表和 FIT 获取；源 ID 与活动 ID 保持稳定 | 未完成 |
-| SRC-02 | 行者 RSA 密码登录、`sessionid` 提取与恢复 | `XingzheClient.swift`、`XingzheDataSource.swift` | `XingzheRateLimitTests.swift`（限流解析） | Rust HTTP/RSA + 原生安全存储 | 真实账号登录、Cookie 多头兼容、冷启动恢复、过期重登和退出全部通过 | 未完成 |
+| SRC-02 | 行者 RSA 密码登录、`sessionid` 提取与恢复 | `XingzheClient.swift`、`XingzheDataSource.swift` | `XingzheRateLimitTests.swift`（限流解析） | Rust HTTP/RSA + 原生安全存储 | 真实账号登录、Cookie 多头兼容、冷启动恢复、过期重登和退出全部通过 | Rust 已接桥，未接安全存储/UI |
 | SRC-03 | 行者分页活动列表、时间筛选、FIT 下载与限流等待 | `XingzheClient.swift`、`XingzheDataSource.swift` | `XingzheRateLimitTests.swift` | Rust | 7/30/全年/全部/自定义结果与当前客户端一致；限流响应按服务端提示等待；取消可立即生效 | 未完成 |
 | SRC-04 | 顽鹿签名登录、token/uid 会话与恢复 | `OnelapClient.swift`、`OnelapDataSource.swift` | `ActivityMatcherTests.swift`（可信 URL） | Rust HTTP/签名 + 原生安全存储 | 真实账号登录、冷启动恢复、过期重登和退出通过；认证头只发往允许域名 | 未完成 |
 | SRC-05 | 顽鹿骑行列表、分页、详情与 FIT 下载 | `OnelapClient.swift`、`OnelapDataSource.swift` | 无真实接口自动测试 | Rust | 时间范围、分页终止、活动字段和下载 FIT 与 Swift 基线一致；错误信息不泄露凭证 | 未完成 |
@@ -83,7 +83,7 @@
 |---|---|---|---|---|---|---|
 | FIT-01 | WorkoutBundle 编码 Garmin FIT | `FitActivityEncoder.swift` | `FitActivityEncoderTests.swift`（头、累计距离、动态字段、事件） | Rust | 合成和真机样本均可被 Garmin/Strava 解码；时间、距离、事件、路线和传感器字段与基线一致 | 已实现，待平台验收 |
 | FIT-02 | FIT 解码、重编码、有效性和内容质量探测 | `FitMerger.swift` 中 `FitMessagesReencoder`、`FitContentProbe` | `FitActivityEncoderTests.swift` | Rust | 非 FIT 被拒绝；重编码保留未知/数组字段；GPS、心率点数和质量分稳定 | Rust 部分实现，已接桥 |
-| FIT-03 | 主文件优先、补文件只填缺失字段 | `FitMerger.swift` | `FitActivityEncoderTests.swift`（主源优先、补缺） | Rust | 字段冲突主源胜出；缺失传感器可补；不插入不允许的 GPS/间隙记录 | 未完成 |
+| FIT-03 | 主文件优先、补文件只填缺失字段 | `FitMerger.swift` | `FitActivityEncoderTests.swift`（主源优先、补缺） | Rust | 字段冲突主源胜出；缺失传感器可补；不插入不允许的 GPS/间隙记录 | Rust 最小实现，未接业务 |
 | FIT-04 | 全字段与仅传感器补充模式 | `FitMerger.swift` | `FitActivityEncoderTests.swift` | Rust | 两种模式在记录插入、GPS、事件、lap/session 处理上与 Swift 一致 | 未完成 |
 | FIT-05 | 自动、手动、逐文件和绝对时间对齐 | `FitMerger.swift`、`FitMergeView.swift` | `FitActivityEncoderTests.swift`（时钟偏差、互相关、累计距离兜底） | Rust + Flutter | 同场可估偏移；不同活动拒绝自动对齐；手动偏移和逐文件偏移精确生效；估算失败有明确错误 | 未完成 |
 | FIT-06 | 合并后事件/lap 排序、距离重基准和 session 范围修正 | `FitMerger.swift` | `FitActivityEncoderTests.swift` | Rust | 事件和 lap 时间单调；分段总距离正确；session 覆盖全部合并记录；数组字段完整 | 未完成 |

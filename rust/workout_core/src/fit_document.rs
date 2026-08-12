@@ -87,6 +87,7 @@ pub struct FitDocument {
     protocol_version: u8,
     profile_version: [u8; 2],
     messages: Vec<FitMessage>,
+    field_count: usize,
     dirty: bool,
 }
 
@@ -251,6 +252,7 @@ impl FitDocument {
             protocol_version: data[1],
             profile_version: [data[2], data[3]],
             messages,
+            field_count,
             dirty: false,
         })
     }
@@ -461,6 +463,57 @@ impl FitDocument {
         field.value = FieldValue::Owned(value.to_vec());
         self.dirty = true;
         Ok(())
+    }
+
+    /// 仅当目标消息缺少该字段时，从已验证的另一份文档复制完整原生字段。
+    /// 保留数组字段的全部字节；不复制 developer field，避免缺少其定义消息时产生不可读数据。
+    pub fn copy_missing_field_from(
+        &mut self,
+        target_message_index: usize,
+        source: &Self,
+        source_message_index: usize,
+        field_number: u8,
+    ) -> Result<bool, FitDecodeError> {
+        let (source_global_number, definition, value) = {
+            let source_message = source
+                .messages
+                .get(source_message_index)
+                .ok_or(FitDecodeError::FieldNotFound)?;
+            let source_field = source_message
+                .fields
+                .iter()
+                .find(|field| field.definition.number == field_number)
+                .ok_or(FitDecodeError::FieldNotFound)?;
+            (
+                source_message.global_number,
+                source_field.definition.clone(),
+                value_bytes(&source.source, &source_field.value).to_vec(),
+            )
+        };
+        let target_message = self
+            .messages
+            .get(target_message_index)
+            .ok_or(FitDecodeError::FieldNotFound)?;
+        if target_message.global_number != source_global_number {
+            return Err(FitDecodeError::InvalidFieldValue);
+        }
+        if target_message.has_field(field_number) {
+            return Ok(false);
+        }
+        let next_count = self
+            .field_count
+            .checked_add(1)
+            .ok_or(FitDecodeError::TooManyFields)?;
+        if next_count > MAX_FIELDS {
+            return Err(FitDecodeError::TooManyFields);
+        }
+        self.messages[target_message_index].fields.push(FitField {
+            definition,
+            value: FieldValue::Owned(value),
+        });
+        self.field_count = next_count;
+        self.dirty = true;
+        Ok(true)
     }
 
     fn field(&self, message_index: usize, field_number: u8) -> Option<&FitField> {
