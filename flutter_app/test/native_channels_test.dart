@@ -7,60 +7,103 @@ void main() {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
-  group('KeychainChannel', () {
+  group('StravaVaultChannel', () {
     const channel = MethodChannel('health_workout_export/keychain');
 
     tearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
-    test('通过约定方法读写和删除非空键值', () async {
+    test('只暴露安全状态、按用途租约、typed commit 与 typed clear', () async {
       final calls = <MethodCall>[];
       messenger.setMockMethodCallHandler(channel, (call) async {
         calls.add(call);
-        return call.method == 'read' ? 'secret' : null;
+        return switch (call.method) {
+          'stravaStatus' => <String, Object?>{
+            'clientId': '123',
+            'hasClientSecret': true,
+            'hasAccessToken': true,
+            'hasRefreshToken': true,
+            'expiresAtSeconds': 42.0,
+          },
+          'stravaLease'
+              when (call.arguments! as Map<Object?, Object?>)['purpose'] ==
+                  'refresh' =>
+            <String, Object?>{
+              'clientId': '123',
+              'clientSecret': 'secret',
+              'refreshToken': 'refresh',
+              'expiresAtSeconds': 42.0,
+            },
+          'stravaLease' => <String, Object?>{
+            'accessToken': 'access',
+            'expiresAtSeconds': 42.0,
+          },
+          _ => null,
+        };
       });
 
-      const keychain = KeychainChannel();
-      expect(await keychain.read('token'), 'secret');
-      await keychain.write('token', 'updated');
-      await keychain.delete('token');
+      const vault = StravaVaultChannel();
+      final status = await vault.status();
+      expect(status.clientId, '123');
+      expect(status.hasClientSecret, isTrue);
+      expect(status.hasAccessToken, isTrue);
+      expect(status.hasRefreshToken, isTrue);
+      expect(status.expiresAtSeconds, 42);
 
-      expect(calls.map((call) => call.method), ['read', 'write', 'delete']);
-      expect(calls[0].arguments, {'account': 'token'});
-      expect(calls[1].arguments, {'account': 'token', 'value': 'updated'});
-      expect(calls[2].arguments, {'account': 'token'});
-    });
+      final refresh = await vault.lease(StravaLeasePurpose.refresh);
+      expect(refresh.clientId, '123');
+      expect(refresh.clientSecret, 'secret');
+      expect(refresh.refreshToken, 'refresh');
+      expect(refresh.accessToken, isNull);
+      expect(refresh.toString(), isNot(contains('secret')));
+      expect(refresh.toString(), isNot(contains('refresh-token')));
+      final upload = await vault.lease(StravaLeasePurpose.upload);
+      expect(upload.accessToken, 'access');
+      expect(upload.clientSecret, isNull);
+      expect(upload.refreshToken, isNull);
 
-    test('空白键和值在进入原生边界前被拒绝', () async {
-      const keychain = KeychainChannel();
-
-      expect(() => keychain.read('  '), throwsArgumentError);
-      expect(() => keychain.write('token', ''), throwsArgumentError);
-      expect(() => keychain.delete(''), throwsArgumentError);
-    });
-
-    test('一次提交完整 Strava 授权', () async {
-      MethodCall? received;
-      messenger.setMockMethodCallHandler(channel, (call) async {
-        received = call;
-        return null;
-      });
-
-      await const KeychainChannel().writeStravaAuthorization(
+      await vault.commitAuthorization(
         clientId: '123',
         clientSecret: 'secret',
         accessToken: 'access',
         refreshToken: 'refresh',
         expiresAtSeconds: 42,
       );
+      await vault.clearAuthorization();
 
-      expect(received?.method, 'writeStravaAuthorization');
-      expect(received?.arguments, {
+      expect(calls.map((call) => call.method), [
+        'stravaStatus',
+        'stravaLease',
+        'stravaLease',
+        'writeStravaAuthorization',
+        'clearStravaAuthorization',
+      ]);
+      expect(calls[3].arguments, {
         'clientId': '123',
         'clientSecret': 'secret',
         'accessToken': 'access',
         'refreshToken': 'refresh',
         'expiresAtSeconds': 42.0,
       });
+      expect(calls[4].arguments, isNull);
+    });
+
+    test('秘密参数校验错误与租约字符串不会泄漏秘密', () async {
+      expect(
+        () => const StravaVaultChannel().commitAuthorization(
+          clientId: '123',
+          clientSecret: 'highly-sensitive-client-secret',
+          accessToken: '',
+          refreshToken: 'highly-sensitive-refresh-token',
+          expiresAtSeconds: 42,
+        ),
+        throwsA(
+          predicate(
+            (error) =>
+                !error.toString().contains('highly-sensitive-client-secret') &&
+                !error.toString().contains('highly-sensitive-refresh-token'),
+          ),
+        ),
+      );
     });
   });
 
@@ -79,12 +122,12 @@ void main() {
       const preferences = PreferencesChannel();
       expect(await preferences.read('strava.gcjCorrectionEnabled'), isTrue);
       await preferences.write('strava.uploadMode', 'web');
-      await preferences.delete('strava.expiresAt');
+      await preferences.delete('virtualPower.enabled');
 
       expect(calls.map((call) => call.method), ['read', 'write', 'delete']);
       expect(calls[0].arguments, {'key': 'strava.gcjCorrectionEnabled'});
       expect(calls[1].arguments, {'key': 'strava.uploadMode', 'value': 'web'});
-      expect(calls[2].arguments, {'key': 'strava.expiresAt'});
+      expect(calls[2].arguments, {'key': 'virtualPower.enabled'});
     });
 
     test('拒绝空键、未知键和 UserDefaults 不支持的对象', () async {
@@ -104,10 +147,12 @@ void main() {
     const preferencesChannel = MethodChannel(
       'health_workout_export/preferences',
     );
+    const webChannel = MethodChannel('health_workout_export/strava_web');
 
     tearDown(() async {
       messenger.setMockMethodCallHandler(keychainChannel, null);
       messenger.setMockMethodCallHandler(preferencesChannel, null);
+      messenger.setMockMethodCallHandler(webChannel, null);
     });
 
     test('读取并更新旧应用使用的原始设置键', () async {
@@ -124,6 +169,15 @@ void main() {
         'strava.gcjCorrectionEnabled': true,
       };
       messenger.setMockMethodCallHandler(keychainChannel, (call) async {
+        if (call.method == 'stravaStatus') {
+          return <String, Object?>{
+            'clientId': secrets['strava.clientId'] ?? '',
+            'hasClientSecret': secrets.containsKey('strava.clientSecret'),
+            'hasAccessToken': secrets.containsKey('strava.accessToken'),
+            'hasRefreshToken': secrets.containsKey('strava.refreshToken'),
+            'expiresAtSeconds': preferences['strava.expiresAt'] ?? 0.0,
+          };
+        }
         final arguments = call.arguments! as Map<Object?, Object?>;
         if (call.method == 'writeStravaAuthorization') {
           secrets['strava.clientId'] = arguments['clientId']! as String;
@@ -133,12 +187,6 @@ void main() {
           preferences['strava.expiresAt'] = arguments['expiresAtSeconds']!;
           return null;
         }
-        final key = arguments['account']! as String;
-        if (call.method == 'read') return secrets[key];
-        if (call.method == 'write') {
-          secrets[key] = arguments['value']! as String;
-        }
-        if (call.method == 'delete') secrets.remove(key);
         return null;
       });
       messenger.setMockMethodCallHandler(preferencesChannel, (call) async {
@@ -149,16 +197,20 @@ void main() {
         if (call.method == 'delete') preferences.remove(key);
         return null;
       });
+      messenger.setMockMethodCallHandler(
+        webChannel,
+        (call) async => call.method == 'hasCookie',
+      );
 
       const store = StravaSettingsStore();
       final snapshot = await store.load();
       expect(snapshot.mode, StravaUploadMode.web);
       expect(snapshot.clientId, '123');
-      expect(snapshot.clientSecret, 'secret');
-      expect(snapshot.accessToken, 'access');
-      expect(snapshot.refreshToken, 'refresh');
+      expect(snapshot.hasClientSecret, isTrue);
+      expect(snapshot.hasAccessToken, isTrue);
+      expect(snapshot.hasRefreshToken, isTrue);
       expect(snapshot.expiresAtSeconds, 42);
-      expect(snapshot.webCookieHeader, 'cookie=value');
+      expect(snapshot.hasWebCookie, isTrue);
       expect(snapshot.gcjCorrectionEnabled, isTrue);
       expect(snapshot.isApiReady, isTrue);
 
@@ -205,7 +257,17 @@ void main() {
         throwsArgumentError,
       );
 
-      messenger.setMockMethodCallHandler(keychainChannel, (_) async => null);
+      messenger.setMockMethodCallHandler(
+        keychainChannel,
+        (_) async => <String, Object?>{
+          'clientId': '',
+          'hasClientSecret': false,
+          'hasAccessToken': false,
+          'hasRefreshToken': false,
+          'expiresAtSeconds': 0.0,
+        },
+      );
+      messenger.setMockMethodCallHandler(webChannel, (_) async => false);
       messenger.setMockMethodCallHandler(preferencesChannel, (call) async {
         final arguments = call.arguments! as Map<Object?, Object?>;
         return arguments['key'] == 'strava.uploadMode' ? 'invalid' : null;
@@ -492,6 +554,45 @@ void main() {
         () => oauth.authorize(
           Uri.parse('https://www.strava.com/oauth/mobile/authorize'),
         ),
+        throwsA(isA<FormatException>()),
+      );
+    });
+  });
+
+  group('StravaWebChannel', () {
+    const channel = MethodChannel('health_workout_export/strava_web');
+
+    tearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    test('登录与持久化状态只返回 readiness，彻底清除使用固定方法', () async {
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return switch (call.method) {
+          'login' => true,
+          'hasCookie' => true,
+          _ => null,
+        };
+      });
+
+      const web = StravaWebChannel();
+      expect(await web.login(), isTrue);
+      expect(await web.hasCookie(), isTrue);
+      await web.clearCookies();
+
+      expect(calls.map((call) => call.method), [
+        'login',
+        'hasCookie',
+        'clearCookies',
+      ]);
+      expect(calls.every((call) => call.arguments == null), isTrue);
+    });
+
+    test('登录 readiness 为空时拒绝静默成功', () async {
+      messenger.setMockMethodCallHandler(channel, (_) async => null);
+
+      expect(
+        () => const StravaWebChannel().login(),
         throwsA(isA<FormatException>()),
       );
     });

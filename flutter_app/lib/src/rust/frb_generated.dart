@@ -70,7 +70,7 @@ class WorkoutCoreRustLib
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -1812348702;
+  int get rustContentHash => -583842597;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -93,6 +93,8 @@ abstract class WorkoutCoreRustLibApi extends BaseApi {
 
   Uint8List crateApiSimpleReencodeFit({required List<int> data});
 
+  bool crateApiSimpleStravaCancelUpload({required String operationHandle});
+
   Future<StravaTokenResult> crateApiSimpleStravaExchangeCode({
     required String clientId,
     required String clientSecret,
@@ -103,6 +105,40 @@ abstract class WorkoutCoreRustLibApi extends BaseApi {
     required String clientId,
     required String clientSecret,
     required String refreshToken,
+  });
+
+  bool crateApiSimpleStravaReleaseUpload({required String operationHandle});
+
+  StravaUploadReservation crateApiSimpleStravaReserveUpload({
+    required String operationId,
+  });
+
+  Future<StravaUploadFfiResponse>
+  crateApiSimpleStravaResumeUploadPollAfterRefresh({
+    required String operationHandle,
+    required String accessToken,
+    required String uploadId,
+    required int pollAttempt,
+  });
+
+  Future<StravaUploadFfiResponse> crateApiSimpleStravaRetryUploadAfterRefresh({
+    required String operationHandle,
+    required String accessToken,
+    required List<int> fit,
+    required String externalId,
+    required String filename,
+    required bool commute,
+    String? description,
+  });
+
+  Future<StravaUploadFfiResponse> crateApiSimpleStravaUploadFit({
+    required String operationHandle,
+    required String accessToken,
+    required List<int> fit,
+    required String externalId,
+    required String filename,
+    required bool commute,
+    String? description,
   });
 }
 
@@ -214,6 +250,32 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
       const TaskConstMeta(debugName: "reencode_fit", argNames: ["data"]);
 
   @override
+  bool crateApiSimpleStravaCancelUpload({required String operationHandle}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(operationHandle, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSimpleStravaCancelUploadConstMeta,
+        argValues: [operationHandle],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleStravaCancelUploadConstMeta =>
+      const TaskConstMeta(
+        debugName: "strava_cancel_upload",
+        argNames: ["operationHandle"],
+      );
+
+  @override
   Future<StravaTokenResult> crateApiSimpleStravaExchangeCode({
     required String clientId,
     required String clientSecret,
@@ -229,7 +291,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 5,
+            funcId: 6,
             port: port_,
           );
         },
@@ -266,7 +328,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 6,
+            funcId: 7,
             port: port_,
           );
         },
@@ -287,6 +349,223 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         argNames: ["clientId", "clientSecret", "refreshToken"],
       );
 
+  @override
+  bool crateApiSimpleStravaReleaseUpload({required String operationHandle}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(operationHandle, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSimpleStravaReleaseUploadConstMeta,
+        argValues: [operationHandle],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleStravaReleaseUploadConstMeta =>
+      const TaskConstMeta(
+        debugName: "strava_release_upload",
+        argNames: ["operationHandle"],
+      );
+
+  @override
+  StravaUploadReservation crateApiSimpleStravaReserveUpload({
+    required String operationId,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(operationId, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_strava_upload_reservation,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleStravaReserveUploadConstMeta,
+        argValues: [operationId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleStravaReserveUploadConstMeta =>
+      const TaskConstMeta(
+        debugName: "strava_reserve_upload",
+        argNames: ["operationId"],
+      );
+
+  @override
+  Future<StravaUploadFfiResponse>
+  crateApiSimpleStravaResumeUploadPollAfterRefresh({
+    required String operationHandle,
+    required String accessToken,
+    required String uploadId,
+    required int pollAttempt,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(operationHandle, serializer);
+          sse_encode_String(accessToken, serializer);
+          sse_encode_String(uploadId, serializer);
+          sse_encode_u_32(pollAttempt, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 10,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_strava_upload_ffi_response,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSimpleStravaResumeUploadPollAfterRefreshConstMeta,
+        argValues: [operationHandle, accessToken, uploadId, pollAttempt],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiSimpleStravaResumeUploadPollAfterRefreshConstMeta =>
+      const TaskConstMeta(
+        debugName: "strava_resume_upload_poll_after_refresh",
+        argNames: ["operationHandle", "accessToken", "uploadId", "pollAttempt"],
+      );
+
+  @override
+  Future<StravaUploadFfiResponse> crateApiSimpleStravaRetryUploadAfterRefresh({
+    required String operationHandle,
+    required String accessToken,
+    required List<int> fit,
+    required String externalId,
+    required String filename,
+    required bool commute,
+    String? description,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(operationHandle, serializer);
+          sse_encode_String(accessToken, serializer);
+          sse_encode_list_prim_u_8_loose(fit, serializer);
+          sse_encode_String(externalId, serializer);
+          sse_encode_String(filename, serializer);
+          sse_encode_bool(commute, serializer);
+          sse_encode_opt_String(description, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 11,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_strava_upload_ffi_response,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSimpleStravaRetryUploadAfterRefreshConstMeta,
+        argValues: [
+          operationHandle,
+          accessToken,
+          fit,
+          externalId,
+          filename,
+          commute,
+          description,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleStravaRetryUploadAfterRefreshConstMeta =>
+      const TaskConstMeta(
+        debugName: "strava_retry_upload_after_refresh",
+        argNames: [
+          "operationHandle",
+          "accessToken",
+          "fit",
+          "externalId",
+          "filename",
+          "commute",
+          "description",
+        ],
+      );
+
+  @override
+  Future<StravaUploadFfiResponse> crateApiSimpleStravaUploadFit({
+    required String operationHandle,
+    required String accessToken,
+    required List<int> fit,
+    required String externalId,
+    required String filename,
+    required bool commute,
+    String? description,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(operationHandle, serializer);
+          sse_encode_String(accessToken, serializer);
+          sse_encode_list_prim_u_8_loose(fit, serializer);
+          sse_encode_String(externalId, serializer);
+          sse_encode_String(filename, serializer);
+          sse_encode_bool(commute, serializer);
+          sse_encode_opt_String(description, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 12,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_strava_upload_ffi_response,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSimpleStravaUploadFitConstMeta,
+        argValues: [
+          operationHandle,
+          accessToken,
+          fit,
+          externalId,
+          filename,
+          commute,
+          description,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleStravaUploadFitConstMeta =>
+      const TaskConstMeta(
+        debugName: "strava_upload_fit",
+        argNames: [
+          "operationHandle",
+          "accessToken",
+          "fit",
+          "externalId",
+          "filename",
+          "commute",
+          "description",
+        ],
+      );
+
   @protected
   String dco_decode_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -303,6 +582,26 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   double dco_decode_box_autoadd_f_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as double;
+  }
+
+  @protected
+  StravaUploadFfiError dco_decode_box_autoadd_strava_upload_ffi_error(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_strava_upload_ffi_error(raw);
+  }
+
+  @protected
+  StravaUploadRetry dco_decode_box_autoadd_strava_upload_retry(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_strava_upload_retry(raw);
+  }
+
+  @protected
+  int dco_decode_box_autoadd_u_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
   }
 
   @protected
@@ -325,6 +624,12 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  int dco_decode_i_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
+  }
+
+  @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as List<int>;
@@ -337,9 +642,39 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  String? dco_decode_opt_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_String(raw);
+  }
+
+  @protected
   double? dco_decode_opt_box_autoadd_f_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_f_64(raw);
+  }
+
+  @protected
+  StravaUploadFfiError? dco_decode_opt_box_autoadd_strava_upload_ffi_error(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_strava_upload_ffi_error(raw);
+  }
+
+  @protected
+  StravaUploadRetry? dco_decode_opt_box_autoadd_strava_upload_retry(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_strava_upload_retry(raw);
+  }
+
+  @protected
+  int? dco_decode_opt_box_autoadd_u_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_u_32(raw);
   }
 
   @protected
@@ -353,6 +688,75 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
       refreshToken: dco_decode_String(arr[1]),
       expiresAt: dco_decode_f_64(arr[2]),
     );
+  }
+
+  @protected
+  StravaUploadFfiError dco_decode_strava_upload_ffi_error(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return StravaUploadFfiError(
+      code: dco_decode_strava_upload_ffi_error_code(arr[0]),
+      message: dco_decode_String(arr[1]),
+    );
+  }
+
+  @protected
+  StravaUploadFfiErrorCode dco_decode_strava_upload_ffi_error_code(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return StravaUploadFfiErrorCode.values[raw as int];
+  }
+
+  @protected
+  StravaUploadFfiResponse dco_decode_strava_upload_ffi_response(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return StravaUploadFfiResponse(
+      status: dco_decode_strava_upload_ffi_status(arr[0]),
+      remoteId: dco_decode_opt_String(arr[1]),
+      isDuplicate: dco_decode_bool(arr[2]),
+      retry: dco_decode_opt_box_autoadd_strava_upload_retry(arr[3]),
+      error: dco_decode_opt_box_autoadd_strava_upload_ffi_error(arr[4]),
+    );
+  }
+
+  @protected
+  StravaUploadFfiStatus dco_decode_strava_upload_ffi_status(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return StravaUploadFfiStatus.values[raw as int];
+  }
+
+  @protected
+  StravaUploadReservation dco_decode_strava_upload_reservation(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 1)
+      throw Exception('unexpected arr length: expect 1 but see ${arr.length}');
+    return StravaUploadReservation(handle: dco_decode_String(arr[0]));
+  }
+
+  @protected
+  StravaUploadRetry dco_decode_strava_upload_retry(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return StravaUploadRetry(
+      stage: dco_decode_strava_upload_retry_stage(arr[0]),
+      uploadId: dco_decode_opt_String(arr[1]),
+      pollAttempt: dco_decode_opt_box_autoadd_u_32(arr[2]),
+    );
+  }
+
+  @protected
+  StravaUploadRetryStage dco_decode_strava_upload_retry_stage(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return StravaUploadRetryStage.values[raw as int];
   }
 
   @protected
@@ -393,6 +797,28 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  StravaUploadFfiError sse_decode_box_autoadd_strava_upload_ffi_error(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_strava_upload_ffi_error(deserializer));
+  }
+
+  @protected
+  StravaUploadRetry sse_decode_box_autoadd_strava_upload_retry(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_strava_upload_retry(deserializer));
+  }
+
+  @protected
+  int sse_decode_box_autoadd_u_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_u_32(deserializer));
+  }
+
+  @protected
   double sse_decode_f_64(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getFloat64();
@@ -412,6 +838,12 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  int sse_decode_i_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getInt32();
+  }
+
+  @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
@@ -426,11 +858,59 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  String? sse_decode_opt_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_f_64(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  StravaUploadFfiError? sse_decode_opt_box_autoadd_strava_upload_ffi_error(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_strava_upload_ffi_error(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  StravaUploadRetry? sse_decode_opt_box_autoadd_strava_upload_retry(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_strava_upload_retry(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_u_32(deserializer));
     } else {
       return null;
     }
@@ -452,6 +932,90 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  StravaUploadFfiError sse_decode_strava_upload_ffi_error(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_code = sse_decode_strava_upload_ffi_error_code(deserializer);
+    var var_message = sse_decode_String(deserializer);
+    return StravaUploadFfiError(code: var_code, message: var_message);
+  }
+
+  @protected
+  StravaUploadFfiErrorCode sse_decode_strava_upload_ffi_error_code(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return StravaUploadFfiErrorCode.values[inner];
+  }
+
+  @protected
+  StravaUploadFfiResponse sse_decode_strava_upload_ffi_response(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_status = sse_decode_strava_upload_ffi_status(deserializer);
+    var var_remoteId = sse_decode_opt_String(deserializer);
+    var var_isDuplicate = sse_decode_bool(deserializer);
+    var var_retry = sse_decode_opt_box_autoadd_strava_upload_retry(
+      deserializer,
+    );
+    var var_error = sse_decode_opt_box_autoadd_strava_upload_ffi_error(
+      deserializer,
+    );
+    return StravaUploadFfiResponse(
+      status: var_status,
+      remoteId: var_remoteId,
+      isDuplicate: var_isDuplicate,
+      retry: var_retry,
+      error: var_error,
+    );
+  }
+
+  @protected
+  StravaUploadFfiStatus sse_decode_strava_upload_ffi_status(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return StravaUploadFfiStatus.values[inner];
+  }
+
+  @protected
+  StravaUploadReservation sse_decode_strava_upload_reservation(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_handle = sse_decode_String(deserializer);
+    return StravaUploadReservation(handle: var_handle);
+  }
+
+  @protected
+  StravaUploadRetry sse_decode_strava_upload_retry(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_stage = sse_decode_strava_upload_retry_stage(deserializer);
+    var var_uploadId = sse_decode_opt_String(deserializer);
+    var var_pollAttempt = sse_decode_opt_box_autoadd_u_32(deserializer);
+    return StravaUploadRetry(
+      stage: var_stage,
+      uploadId: var_uploadId,
+      pollAttempt: var_pollAttempt,
+    );
+  }
+
+  @protected
+  StravaUploadRetryStage sse_decode_strava_upload_retry_stage(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return StravaUploadRetryStage.values[inner];
+  }
+
+  @protected
   int sse_decode_u_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint32();
@@ -466,12 +1030,6 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   @protected
   void sse_decode_unit(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-  }
-
-  @protected
-  int sse_decode_i_32(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getInt32();
   }
 
   @protected
@@ -493,6 +1051,30 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  void sse_encode_box_autoadd_strava_upload_ffi_error(
+    StravaUploadFfiError self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_strava_upload_ffi_error(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_strava_upload_retry(
+    StravaUploadRetry self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_strava_upload_retry(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self, serializer);
+  }
+
+  @protected
   void sse_encode_f_64(double self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putFloat64(self);
@@ -507,6 +1089,12 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
     sse_encode_u_32(self.gpsPointCount, serializer);
     sse_encode_u_32(self.heartRatePointCount, serializer);
     sse_encode_u_32(self.qualityScore, serializer);
+  }
+
+  @protected
+  void sse_encode_i_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putInt32(self);
   }
 
   @protected
@@ -532,12 +1120,58 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  void sse_encode_opt_String(String? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_String(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_f_64(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_strava_upload_ffi_error(
+    StravaUploadFfiError? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_strava_upload_ffi_error(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_strava_upload_retry(
+    StravaUploadRetry? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_strava_upload_retry(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_u_32(self, serializer);
     }
   }
 
@@ -550,6 +1184,76 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
     sse_encode_String(self.accessToken, serializer);
     sse_encode_String(self.refreshToken, serializer);
     sse_encode_f_64(self.expiresAt, serializer);
+  }
+
+  @protected
+  void sse_encode_strava_upload_ffi_error(
+    StravaUploadFfiError self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_strava_upload_ffi_error_code(self.code, serializer);
+    sse_encode_String(self.message, serializer);
+  }
+
+  @protected
+  void sse_encode_strava_upload_ffi_error_code(
+    StravaUploadFfiErrorCode self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_strava_upload_ffi_response(
+    StravaUploadFfiResponse self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_strava_upload_ffi_status(self.status, serializer);
+    sse_encode_opt_String(self.remoteId, serializer);
+    sse_encode_bool(self.isDuplicate, serializer);
+    sse_encode_opt_box_autoadd_strava_upload_retry(self.retry, serializer);
+    sse_encode_opt_box_autoadd_strava_upload_ffi_error(self.error, serializer);
+  }
+
+  @protected
+  void sse_encode_strava_upload_ffi_status(
+    StravaUploadFfiStatus self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_strava_upload_reservation(
+    StravaUploadReservation self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.handle, serializer);
+  }
+
+  @protected
+  void sse_encode_strava_upload_retry(
+    StravaUploadRetry self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_strava_upload_retry_stage(self.stage, serializer);
+    sse_encode_opt_String(self.uploadId, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.pollAttempt, serializer);
+  }
+
+  @protected
+  void sse_encode_strava_upload_retry_stage(
+    StravaUploadRetryStage self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -567,11 +1271,5 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   @protected
   void sse_encode_unit(void self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-  }
-
-  @protected
-  void sse_encode_i_32(int self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putInt32(self);
   }
 }

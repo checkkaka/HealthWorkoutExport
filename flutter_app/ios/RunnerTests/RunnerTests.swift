@@ -17,13 +17,44 @@ class RunnerTests: XCTestCase {
     )
   }
 
-  func testKeychainRejectsEmptyAccountBeforeSecurityCall() {
-    var response: Any?
-    KeychainPlugin().handle(
-      FlutterMethodCall(methodName: "read", arguments: ["account": ""])
-    ) { response = $0 }
+  func testKeychainDisablesGenericAccountMethods() {
+    for method in ["read", "write", "delete"] {
+      var response: Any?
+      KeychainPlugin().handle(
+        FlutterMethodCall(methodName: method, arguments: ["account": "strava.webCookie"])
+      ) { response = $0 }
 
-    XCTAssertEqual((response as? FlutterError)?.code, "invalid_arguments")
+      XCTAssertTrue((response as? NSObject) === FlutterMethodNotImplemented)
+    }
+  }
+
+  func testStravaVaultStatusAndPurposeLeasesExposeLeastPrivilegeShapes() {
+    let state = KeychainPlugin.StravaVaultState(
+      clientId: "123",
+      clientSecret: "client-secret",
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresAtSeconds: 42
+    )
+
+    let status = KeychainPlugin.statusPayload(state)
+    XCTAssertEqual(status["clientId"] as? String, "123")
+    XCTAssertEqual(status["hasClientSecret"] as? Bool, true)
+    XCTAssertEqual(status["hasAccessToken"] as? Bool, true)
+    XCTAssertEqual(status["hasRefreshToken"] as? Bool, true)
+    XCTAssertNil(status["clientSecret"])
+    XCTAssertNil(status["accessToken"])
+    XCTAssertNil(status["refreshToken"])
+
+    let refresh = KeychainPlugin.leasePayload(purpose: "refresh", state: state)
+    XCTAssertEqual(refresh?["clientSecret"] as? String, "client-secret")
+    XCTAssertEqual(refresh?["refreshToken"] as? String, "refresh-token")
+    XCTAssertNil(refresh?["accessToken"])
+    let upload = KeychainPlugin.leasePayload(purpose: "upload", state: state)
+    XCTAssertEqual(upload?["accessToken"] as? String, "access-token")
+    XCTAssertNil(upload?["clientSecret"])
+    XCTAssertNil(upload?["refreshToken"])
+    XCTAssertNil(KeychainPlugin.leasePayload(purpose: "other", state: state))
   }
 
   func testKeychainParsesCompleteStravaAuthorization() throws {
@@ -83,13 +114,70 @@ class RunnerTests: XCTestCase {
         restore: { value, account in
           stored[account] = value
           return true
-        }
+        },
+        readExpiresAt: { 10 },
+        writeExpiresAt: { _ in true }
       )
 
       XCTAssertEqual(outcome.error?.code, "forced_failure")
       XCTAssertFalse(outcome.rollbackFailed)
       XCTAssertEqual(stored, original)
     }
+  }
+
+  func testStravaVaultClearIsIdempotentAndRollsBackSecretsAndExpiry() {
+    let original = [
+      "strava.clientId": "old-id",
+      "strava.clientSecret": "old-secret",
+      "strava.accessToken": "old-access",
+      "strava.refreshToken": "old-refresh",
+    ]
+    var stored = original
+    var expiresAt: Double? = 42
+    var removeCount = 0
+    let forced = FlutterError(code: "forced_failure", message: nil, details: nil)
+
+    let failed = KeychainPlugin.performStravaClearTransaction(
+      read: { (stored[$0], nil) },
+      remove: { account in
+        removeCount += 1
+        if removeCount == 3 { return forced }
+        stored.removeValue(forKey: account)
+        return nil
+      },
+      restore: { value, account in
+        stored[account] = value
+        return true
+      },
+      readExpiresAt: { expiresAt },
+      writeExpiresAt: {
+        expiresAt = $0
+        return true
+      }
+    )
+    XCTAssertEqual(failed.error?.code, "forced_failure")
+    XCTAssertFalse(failed.rollbackFailed)
+    XCTAssertEqual(stored, original)
+    XCTAssertEqual(expiresAt, 42)
+
+    stored.removeAll()
+    expiresAt = nil
+    let idempotent = KeychainPlugin.performStravaClearTransaction(
+      read: { (stored[$0], nil) },
+      remove: { account in
+        stored.removeValue(forKey: account)
+        return nil
+      },
+      restore: { _, _ in true },
+      readExpiresAt: { expiresAt },
+      writeExpiresAt: {
+        expiresAt = $0
+        return true
+      }
+    )
+    XCTAssertNil(idempotent.error)
+    XCTAssertFalse(idempotent.rollbackFailed)
+    XCTAssertNil(expiresAt)
   }
 
   func testPreferencesRoundTripsLegacyStravaKeysAndRejectsInvalidArguments() {
@@ -119,6 +207,11 @@ class RunnerTests: XCTestCase {
 
     plugin.handle(
       FlutterMethodCall(methodName: "read", arguments: ["key": "arbitrary.key"])
+    ) { response = $0 }
+    XCTAssertEqual((response as? FlutterError)?.code, "invalid_arguments")
+
+    plugin.handle(
+      FlutterMethodCall(methodName: "read", arguments: ["key": "strava.expiresAt"])
     ) { response = $0 }
     XCTAssertEqual((response as? FlutterError)?.code, "invalid_arguments")
   }
@@ -269,6 +362,113 @@ class RunnerTests: XCTestCase {
         state: state
       )
     )
+  }
+
+  func testStravaWebCookiesOnlyIncludeExactStravaDomains() throws {
+    func cookie(
+      _ name: String,
+      _ value: String,
+      _ domain: String,
+      path: String = "/"
+    ) throws -> HTTPCookie {
+      try XCTUnwrap(
+        HTTPCookie(properties: [
+          .name: name,
+          .value: value,
+          .domain: domain,
+          .path: path,
+          .secure: "TRUE",
+        ]))
+    }
+
+    let cookies = try [
+      cookie("session", "root", ".strava.com"),
+      cookie("session", "athlete", ".strava.com", path: "/athlete"),
+      cookie("session", "upload", ".strava.com", path: "/upload"),
+      cookie("athlete", "two", "www.strava.com"),
+      cookie("api", "three", "api.strava.com"),
+      cookie("attacker", "three", "evilstrava.com"),
+      cookie("suffix", "four", "strava.com.example.org"),
+    ]
+
+    XCTAssertTrue(StravaWebPlugin.isStravaDomain(".strava.com"))
+    XCTAssertTrue(StravaWebPlugin.isStravaDomain("WWW.STRAVA.COM"))
+    XCTAssertFalse(StravaWebPlugin.isStravaDomain("evilstrava.com"))
+    XCTAssertEqual(
+      StravaWebPlugin.cookieHeader(
+        from: cookies,
+        requestHost: "www.strava.com",
+        requestPath: "/athlete/training_activities"
+      ),
+      "session=athlete; athlete=two"
+    )
+    XCTAssertEqual(StravaWebPlugin.cookieHeader(from: cookies), "session=athlete; athlete=two")
+    XCTAssertTrue(StravaWebPlugin.isValidCookieName("session_id"))
+    XCTAssertFalse(StravaWebPlugin.isValidCookieName("bad name"))
+    XCTAssertFalse(StravaWebPlugin.isValidCookieName("bad:name"))
+    XCTAssertTrue(StravaWebPlugin.isValidCookieValue("abc=123"))
+    XCTAssertFalse(StravaWebPlugin.isValidCookieValue("abc;admin=true"))
+    XCTAssertFalse(StravaWebPlugin.isValidCookieValue("abc\r\nX-Evil: yes"))
+    XCTAssertFalse(StravaWebPlugin.isValidCookieValue("quoted\""))
+    XCTAssertFalse(StravaWebPlugin.isValidCookieValue("comma,value"))
+    XCTAssertFalse(StravaWebPlugin.isValidCookieValue(#"back\slash"#))
+    XCTAssertFalse(StravaWebPlugin.isValidCookieValue("white space"))
+    XCTAssertFalse(StravaWebPlugin.isValidCookieValue("非ASCII"))
+    let oversizedCookies = try (0..<5).map {
+      try cookie("oversized\($0)", String(repeating: "x", count: 4_000), ".strava.com")
+    }
+    XCTAssertNil(
+      StravaWebPlugin.cookieHeader(
+        from: oversizedCookies,
+        requestHost: "www.strava.com",
+        requestPath: "/athlete/training_activities"
+      ))
+
+    XCTAssertTrue(
+      StravaWebPlugin.isAuthenticatedProbe(
+        statusCode: 200,
+        finalURL: URL(string: "https://www.strava.com/athlete/training_activities")!,
+        body: Data(#"{"models":[]}"#.utf8)
+      ))
+    XCTAssertFalse(
+      StravaWebPlugin.isAuthenticatedProbe(
+        statusCode: 200,
+        finalURL: URL(string: "https://www.strava.com/athlete/training_activities")!,
+        body: Data("<html>login</html>".utf8)
+      ))
+    XCTAssertFalse(
+      StravaWebPlugin.isAuthenticatedProbe(
+        statusCode: 200,
+        finalURL: URL(string: "https://evilstrava.com/athlete/training_activities")!,
+        body: Data(#"{"models":[]}"#.utf8)
+      ))
+    XCTAssertFalse(
+      StravaWebPlugin.isAuthenticatedProbe(
+        statusCode: 403,
+        finalURL: URL(string: "https://www.strava.com/athlete/training_activities")!,
+        body: Data(#"{"models":[]}"#.utf8)
+      ))
+
+    XCTAssertTrue(
+      StravaWebPlugin.isAllowedLoginNavigation(
+        URL(string: "https://www.strava.com/login")!
+      ))
+    XCTAssertTrue(
+      StravaWebPlugin.isAllowedLoginNavigation(
+        URL(string: "https://accounts.google.com/signin")!
+      ))
+    XCTAssertFalse(
+      StravaWebPlugin.isAllowedLoginNavigation(
+        URL(string: "http://www.strava.com/login")!
+      ))
+    XCTAssertFalse(
+      StravaWebPlugin.isAllowedLoginNavigation(
+        URL(string: "javascript:alert(1)")!
+      ))
+    XCTAssertFalse(
+      StravaWebPlugin.isAllowedLoginNavigation(
+        URL(string: "https://evil.example/login")!
+      ))
   }
 }
 

@@ -24,5 +24,8 @@ import UIKit
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "StravaOAuthPlugin") {
       StravaOAuthPlugin.register(with: registrar)
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "StravaWebPlugin") {
+      StravaWebPlugin.register(with: registrar)
+    }
   }
 }

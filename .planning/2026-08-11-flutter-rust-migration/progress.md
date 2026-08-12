@@ -52,16 +52,20 @@
 - Rust Strava token mock 覆盖编码、refresh rotation、错误/响应上限与脱敏；FRB 真实调用已接通。当前 Rust 25/25、Flutter 30/30、RunnerTests 11/11。
 - FIT 高风险复审发现语义树会让 1 MB 极端输入产生约 69 MB 峰值；已恢复流式摘要/校验和“验证后原字节复制”，并补 12-byte header、零 header CRC 与 local definition replacement 回归。
 - Strava 批次复审报告的 OAuth 取消覆盖、桥接 DTO 明文 Debug、设置异步乱序均已修复；iOS、macOS、Android 重新完整构建，iOS 模拟器重新安装启动成功。
+- Strava API 上传核心已完成 multipart、轮询、duplicate、限流、响应上限、单次 401 强刷续传与可取消 operation handle；Flutter 生产会话会短暂租用 Vault 凭据、合并并发刷新并事务保存 rotated token。
+- iOS Strava Web 登录已接入固定 HTTPS/域名/路径探测，Cookie 按 RFC 边界筛选且不向 Dart 暴露明文；彻底清除会同时清 Keychain 与默认 WKWebView Cookie store。
+- 通用 Keychain read/write/delete 已收口为固定用途 Strava Vault；事务 journal 支持失败回滚，损坏 journal 会 fail-closed 清除授权并允许重新授权，旧 `strava.expiresAt` 也不能再绕过 Vault 修改。
+- 本批统一验证：Rust 40/40、Flutter 32/32、RunnerTests 14/14，iOS 模拟器、macOS Debug、Android Debug APK 均成功构建。GitNexus 因生成 FRB 公共调度器报告 CRITICAL，已用真实动态库与三平台构建覆盖；尚未接入完整同步引擎，不能宣称 Strava 端到端完成。
 
 ### Test Results
 | Test | Expected | Actual | Status |
 |------|----------|--------|--------|
-| `cargo fmt --check && cargo test` | Rust 格式正确、全部通过 | 25/25 通过 | ✅ |
-| `fvm flutter test` | Flutter 单测/组件测试、原生通道契约及真实 Rust FFI 全部通过 | 30/30 通过 | ✅ |
+| `cargo fmt --check && cargo test --locked` | Rust 格式正确、全部通过 | 40/40 通过 | ✅ |
+| `fvm flutter test` | Flutter 单测/组件测试、原生通道契约及真实 Rust FFI 全部通过 | 32/32 通过 | ✅ |
 | `fvm flutter analyze` | 无静态分析问题 | No issues found | ✅ |
 | `fvm flutter build ios --simulator --debug` | Flutter UI 与 Rust 在 iOS 模拟器链接成功 | Built Runner.app | ✅ |
 | `fvm flutter build macos --debug` | Flutter UI 与 Rust 在 macOS 链接成功 | Built health_workout_export.app | ✅ |
-| `xcodebuild test`（Flutter Runner，iOS 26.5 模拟器） | HealthKit/Keychain/OAuth 原生边界测试通过 | 11/11 通过 | ✅ |
+| `xcodebuild test`（Flutter Runner，iOS 26.5 模拟器） | HealthKit/Keychain/OAuth/Web 原生边界测试通过 | 14/14 通过 | ✅ |
 | `fvm flutter build apk --debug` | Flutter UI 与四 ABI Rust 在 Android 链接成功 | Built app-debug.apk | ✅ |
 | `xcodebuild test`（iOS 26.5 模拟器） | Swift 基线全部通过 | TEST SUCCEEDED | ✅ |
 | `xcodebuild test`（Mac 运行 iOS App） | 可安装测试宿主 | provisioning/未签名宿主不可安装 | ⚠️ 改用 iOS 模拟器完成验证 |

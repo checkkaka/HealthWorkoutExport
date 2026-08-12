@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'native_channels.dart';
 import 'src/rust/api/simple.dart';
@@ -15,11 +16,13 @@ class StravaSettingsPage extends StatefulWidget {
     super.key,
     this.store = const StravaSettingsStore(),
     this.oauth = const StravaOAuthChannel(),
+    this.web = const StravaWebChannel(),
     this.exchangeCode = stravaExchangeCode,
   });
 
   final StravaSettingsStore store;
   final StravaOAuthChannel oauth;
+  final StravaWebChannel web;
   final StravaCodeExchange exchangeCode;
 
   @override
@@ -115,7 +118,10 @@ class _StravaSettingsPageState extends State<StravaSettingsPage> {
       obscureText: true,
       autocorrect: false,
       enableSuggestions: false,
-      decoration: const InputDecoration(labelText: 'Client Secret'),
+      decoration: InputDecoration(
+        labelText: 'Client Secret',
+        helperText: settings.hasClientSecret ? 'Client Secret 已保存' : null,
+      ),
       onChanged: (_) => setState(() {}),
     ),
     const SizedBox(height: 16),
@@ -138,9 +144,21 @@ class _StravaSettingsPageState extends State<StravaSettingsPage> {
   ];
 
   List<Widget> _webSettings(StravaSettingsSnapshot settings) => [
-    Text(settings.webCookieHeader.isEmpty ? '未登录' : '已有 Cookie'),
+    Text(settings.isWebReady ? '已有网页登录凭据' : '无网页登录凭据'),
+    const SizedBox(height: 12),
+    FilledButton(
+      key: const Key('stravaWebLogin'),
+      onPressed: _busy ? null : _loginWeb,
+      child: Text(_busy ? '处理中…' : '打开 Strava 登录'),
+    ),
     const SizedBox(height: 8),
-    const Text('网页登录与彻底清除 WKWebView Cookie 将在网页同步切片接入。'),
+    OutlinedButton(
+      key: const Key('stravaWebClear'),
+      onPressed: _busy ? null : _clearWebCookies,
+      child: const Text('彻底清除网页登录'),
+    ),
+    const SizedBox(height: 8),
+    const Text('登录凭据仅保存在系统安全存储中。'),
   ];
 
   Widget _errorCard() => Center(
@@ -166,7 +184,8 @@ class _StravaSettingsPageState extends State<StravaSettingsPage> {
       final settings = await widget.store.load();
       if (!mounted) return;
       _clientId.text = settings.clientId;
-      _clientSecret.text = settings.clientSecret;
+      // 原生状态只返回是否已保存；旧 secret 永不回填到 Flutter 控件。
+      _clientSecret.clear();
       setState(() {
         _settings = settings;
         _loading = false;
@@ -176,7 +195,7 @@ class _StravaSettingsPageState extends State<StravaSettingsPage> {
       setState(() {
         _settings = null;
         _loading = false;
-        _message = error.toString();
+        _message = _safeErrorMessage(error);
       });
     }
   }
@@ -204,6 +223,7 @@ class _StravaSettingsPageState extends State<StravaSettingsPage> {
         refreshToken: token.refreshToken,
         expiresAtSeconds: token.expiresAt.toDouble(),
       );
+      _clientSecret.clear();
       final settings = await widget.store.load();
       if (!mounted) return;
       setState(() {
@@ -212,7 +232,51 @@ class _StravaSettingsPageState extends State<StravaSettingsPage> {
       });
     } catch (error) {
       if (!mounted) return;
-      setState(() => _message = error.toString());
+      setState(() => _message = _safeErrorMessage(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _loginWeb() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      if (!await widget.web.login()) {
+        throw const FormatException('Strava 网页登录未完成');
+      }
+      final settings = await widget.store.load();
+      if (!mounted) return;
+      setState(() {
+        _settings = settings;
+        _message = 'Strava 网页登录成功';
+      });
+    } catch (error) {
+      if (mounted) setState(() => _message = _safeErrorMessage(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _clearWebCookies() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      await widget.web.clearCookies();
+      final settings = await widget.store.load();
+      if (!mounted) return;
+      setState(() {
+        _settings = settings;
+        _message = 'Strava 网页登录已彻底清除';
+      });
+    } catch (error) {
+      if (mounted) setState(() => _message = _safeErrorMessage(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -226,7 +290,7 @@ class _StravaSettingsPageState extends State<StravaSettingsPage> {
       if (!mounted) return;
       setState(() => _settings = settings);
     } catch (error) {
-      if (mounted) setState(() => _message = error.toString());
+      if (mounted) setState(() => _message = _safeErrorMessage(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -239,9 +303,19 @@ class _StravaSettingsPageState extends State<StravaSettingsPage> {
       final settings = await widget.store.load();
       if (mounted) setState(() => _settings = settings);
     } catch (error) {
-      if (mounted) setState(() => _message = error.toString());
+      if (mounted) setState(() => _message = _safeErrorMessage(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
+}
+
+String _safeErrorMessage(Object error) {
+  if (error is PlatformException && error.message?.isNotEmpty == true) {
+    return error.message!;
+  }
+  if (error case FormatException(message: final message)) {
+    return message.toString();
+  }
+  return 'Strava 操作失败，请重试';
 }

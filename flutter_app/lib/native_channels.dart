@@ -1,32 +1,104 @@
 import 'package:flutter/services.dart';
 
-/// iOS Keychain 的最小 Flutter 通道。
-final class KeychainChannel {
-  const KeychainChannel()
+enum StravaLeasePurpose { refresh, upload }
+
+/// 一次 Strava 原生凭据租约；不得写入日志、UI 或长期状态。
+final class StravaLease {
+  const StravaLease._({
+    required this.purpose,
+    required this.clientId,
+    required this.clientSecret,
+    required this.accessToken,
+    required this.refreshToken,
+    required this.expiresAtSeconds,
+  });
+
+  factory StravaLease.fromObject(StravaLeasePurpose purpose, Object? value) {
+    final map = _objectMap(value, 'Strava 凭据租约');
+    final expiresAt = _requiredFiniteDouble(map, 'expiresAtSeconds');
+    return switch (purpose) {
+      StravaLeasePurpose.refresh => StravaLease._(
+        purpose: purpose,
+        clientId: _requiredText(map, 'clientId'),
+        clientSecret: _requiredText(map, 'clientSecret'),
+        accessToken: null,
+        refreshToken: _requiredText(map, 'refreshToken'),
+        expiresAtSeconds: expiresAt,
+      ),
+      StravaLeasePurpose.upload => StravaLease._(
+        purpose: purpose,
+        clientId: null,
+        clientSecret: null,
+        accessToken: _requiredText(map, 'accessToken'),
+        refreshToken: null,
+        expiresAtSeconds: expiresAt,
+      ),
+    };
+  }
+
+  final StravaLeasePurpose purpose;
+  final String? clientId;
+  final String? clientSecret;
+  final String? accessToken;
+  final String? refreshToken;
+  final double expiresAtSeconds;
+
+  @override
+  String toString() =>
+      'StravaLease(purpose: ${purpose.name}, expiresAtSeconds: $expiresAtSeconds, credentials: <redacted>)';
+}
+
+final class StravaVaultStatus {
+  const StravaVaultStatus({
+    required this.clientId,
+    required this.hasClientSecret,
+    required this.hasAccessToken,
+    required this.hasRefreshToken,
+    required this.expiresAtSeconds,
+  });
+
+  factory StravaVaultStatus.fromObject(Object? value) {
+    final map = _objectMap(value, 'Strava 凭据状态');
+    final clientId = map['clientId'];
+    if (clientId is! String) {
+      throw const FormatException('Strava clientId 状态无效');
+    }
+    return StravaVaultStatus(
+      clientId: clientId,
+      hasClientSecret: _requiredBool(map, 'hasClientSecret'),
+      hasAccessToken: _requiredBool(map, 'hasAccessToken'),
+      hasRefreshToken: _requiredBool(map, 'hasRefreshToken'),
+      expiresAtSeconds: _requiredFiniteDouble(map, 'expiresAtSeconds'),
+    );
+  }
+
+  final String clientId;
+  final bool hasClientSecret;
+  final bool hasAccessToken;
+  final bool hasRefreshToken;
+  final double expiresAtSeconds;
+}
+
+/// 固定用途的 Strava Keychain vault；不提供任意 account 读写能力。
+final class StravaVaultChannel {
+  const StravaVaultChannel()
     : _channel = const MethodChannel('health_workout_export/keychain');
 
   final MethodChannel _channel;
 
-  Future<String?> read(String account) {
-    _requireText(account, 'account');
-    return _channel.invokeMethod<String>('read', {'account': account});
+  Future<StravaVaultStatus> status() async {
+    final value = await _channel.invokeMethod<Object?>('stravaStatus');
+    return StravaVaultStatus.fromObject(value);
   }
 
-  Future<void> write(String account, String value) async {
-    _requireText(account, 'account');
-    _requireText(value, 'value');
-    await _channel.invokeMethod<Object?>('write', {
-      'account': account,
-      'value': value,
+  Future<StravaLease> lease(StravaLeasePurpose purpose) async {
+    final value = await _channel.invokeMethod<Object?>('stravaLease', {
+      'purpose': purpose.name,
     });
+    return StravaLease.fromObject(purpose, value);
   }
 
-  Future<void> delete(String account) async {
-    _requireText(account, 'account');
-    await _channel.invokeMethod<Object?>('delete', {'account': account});
-  }
-
-  Future<void> writeStravaAuthorization({
+  Future<void> commitAuthorization({
     required String clientId,
     required String clientSecret,
     required String accessToken,
@@ -34,9 +106,9 @@ final class KeychainChannel {
     required double expiresAtSeconds,
   }) async {
     _requireText(clientId, 'clientId');
-    _requireText(clientSecret, 'clientSecret');
-    _requireText(accessToken, 'accessToken');
-    _requireText(refreshToken, 'refreshToken');
+    _requireSecret(clientSecret, 'clientSecret');
+    _requireSecret(accessToken, 'accessToken');
+    _requireSecret(refreshToken, 'refreshToken');
     if (!expiresAtSeconds.isFinite || expiresAtSeconds <= 0) {
       throw ArgumentError.value(
         expiresAtSeconds,
@@ -51,6 +123,10 @@ final class KeychainChannel {
       'refreshToken': refreshToken,
       'expiresAtSeconds': expiresAtSeconds,
     });
+  }
+
+  Future<void> clearAuthorization() async {
+    await _channel.invokeMethod<Object?>('clearStravaAuthorization');
   }
 }
 
@@ -93,69 +169,65 @@ final class StravaSettingsSnapshot {
   const StravaSettingsSnapshot({
     required this.mode,
     required this.clientId,
-    required this.clientSecret,
-    required this.accessToken,
-    required this.refreshToken,
+    required this.hasClientSecret,
+    required this.hasAccessToken,
+    required this.hasRefreshToken,
     required this.expiresAtSeconds,
-    required this.webCookieHeader,
+    required this.hasWebCookie,
     required this.gcjCorrectionEnabled,
   });
 
   final StravaUploadMode mode;
   final String clientId;
-  final String clientSecret;
-  final String accessToken;
-  final String refreshToken;
+  final bool hasClientSecret;
+  final bool hasAccessToken;
+  final bool hasRefreshToken;
   final double expiresAtSeconds;
-  final String webCookieHeader;
+  final bool hasWebCookie;
   final bool gcjCorrectionEnabled;
 
   bool get isApiReady =>
-      clientId.isNotEmpty && clientSecret.isNotEmpty && refreshToken.isNotEmpty;
+      clientId.isNotEmpty &&
+      hasClientSecret &&
+      hasAccessToken &&
+      hasRefreshToken;
+
+  bool get isWebReady => hasWebCookie;
 }
 
-/// 使用原始键名读写 Strava Keychain 与 UserDefaults，保留升级前授权。
+/// 通过专用 vault 读取 Strava 安全状态，并用旧 UserDefaults 键保留非敏感设置。
 final class StravaSettingsStore {
   const StravaSettingsStore({
-    this.keychain = const KeychainChannel(),
+    this.vault = const StravaVaultChannel(),
     this.preferences = const PreferencesChannel(),
+    this.web = const StravaWebChannel(),
   });
 
-  final KeychainChannel keychain;
+  final StravaVaultChannel vault;
   final PreferencesChannel preferences;
+  final StravaWebChannel web;
 
   Future<StravaSettingsSnapshot> load() async {
-    final clientId = await keychain.read(_clientIdKey) ?? '';
-    final clientSecret = await keychain.read(_clientSecretKey) ?? '';
-    final accessToken = await keychain.read(_accessTokenKey) ?? '';
-    final refreshToken = await keychain.read(_refreshTokenKey) ?? '';
-    final webCookie = await keychain.read(_webCookieKey) ?? '';
+    final vaultStatus = await vault.status();
+    final hasWebCookie = await web.hasCookie();
     final modeValue = await preferences.read(_modeKey);
-    final expiresValue = await preferences.read(_expiresAtKey);
     final correctionValue = await preferences.read(_gcjCorrectionKey);
 
     final mode = switch (modeValue) {
       'web' => StravaUploadMode.web,
       _ => StravaUploadMode.api,
     };
-    if (expiresValue != null && expiresValue is! num) {
-      throw const FormatException('Strava token 过期时间无效');
-    }
     if (correctionValue != null && correctionValue is! bool) {
       throw const FormatException('Strava 坐标纠偏设置无效');
     }
-    final expiresAt = (expiresValue as num?)?.toDouble() ?? 0;
-    if (!expiresAt.isFinite) {
-      throw const FormatException('Strava token 过期时间无效');
-    }
     return StravaSettingsSnapshot(
       mode: mode,
-      clientId: clientId,
-      clientSecret: clientSecret,
-      accessToken: accessToken,
-      refreshToken: refreshToken,
-      expiresAtSeconds: expiresAt,
-      webCookieHeader: webCookie,
+      clientId: vaultStatus.clientId,
+      hasClientSecret: vaultStatus.hasClientSecret,
+      hasAccessToken: vaultStatus.hasAccessToken,
+      hasRefreshToken: vaultStatus.hasRefreshToken,
+      expiresAtSeconds: vaultStatus.expiresAtSeconds,
+      hasWebCookie: hasWebCookie,
       gcjCorrectionEnabled: correctionValue as bool? ?? false,
     );
   }
@@ -170,9 +242,9 @@ final class StravaSettingsStore {
     final normalizedId = clientId.trim();
     final normalizedSecret = clientSecret.trim();
     _requireText(normalizedId, 'clientId');
-    _requireText(normalizedSecret, 'clientSecret');
-    _requireText(accessToken, 'accessToken');
-    _requireText(refreshToken, 'refreshToken');
+    _requireSecret(normalizedSecret, 'clientSecret');
+    _requireSecret(accessToken, 'accessToken');
+    _requireSecret(refreshToken, 'refreshToken');
     if (!expiresAtSeconds.isFinite || expiresAtSeconds <= 0) {
       throw ArgumentError.value(
         expiresAtSeconds,
@@ -180,7 +252,7 @@ final class StravaSettingsStore {
         '必须是正的有限数值',
       );
     }
-    await keychain.writeStravaAuthorization(
+    await vault.commitAuthorization(
       clientId: normalizedId,
       clientSecret: normalizedSecret,
       accessToken: accessToken,
@@ -195,19 +267,14 @@ final class StravaSettingsStore {
   Future<void> setGcjCorrectionEnabled(bool enabled) =>
       preferences.write(_gcjCorrectionKey, enabled);
 
+  Future<void> clearAuthorization() => vault.clearAuthorization();
+
   static const _modeKey = 'strava.uploadMode';
-  static const _clientIdKey = 'strava.clientId';
-  static const _clientSecretKey = 'strava.clientSecret';
-  static const _accessTokenKey = 'strava.accessToken';
-  static const _refreshTokenKey = 'strava.refreshToken';
-  static const _expiresAtKey = 'strava.expiresAt';
-  static const _webCookieKey = 'strava.webCookie';
   static const _gcjCorrectionKey = 'strava.gcjCorrectionEnabled';
 }
 
 const _allowedPreferenceKeys = <String>{
   'strava.uploadMode',
-  'strava.expiresAt',
   'strava.gcjCorrectionEnabled',
   'virtualPower.enabled',
   'virtualPower.includeInertia',
@@ -259,6 +326,34 @@ final class StravaOAuthChannel {
       throw const FormatException('Strava OAuth 未返回授权码');
     }
     return code;
+  }
+}
+
+/// Strava 网页登录与系统 Cookie 清理边界；界面只使用 readiness，不展示凭据。
+final class StravaWebChannel {
+  const StravaWebChannel()
+    : _channel = const MethodChannel('health_workout_export/strava_web');
+
+  final MethodChannel _channel;
+
+  Future<bool> login() async {
+    final ready = await _channel.invokeMethod<bool>('login');
+    if (ready == null) {
+      throw const FormatException('Strava 网页登录未返回状态');
+    }
+    return ready;
+  }
+
+  Future<bool> hasCookie() async {
+    final ready = await _channel.invokeMethod<bool>('hasCookie');
+    if (ready == null) {
+      throw const FormatException('Strava 网页登录状态为空');
+    }
+    return ready;
+  }
+
+  Future<void> clearCookies() async {
+    await _channel.invokeMethod<Object?>('clearCookies');
   }
 }
 
@@ -580,6 +675,10 @@ void _requireText(String value, String name) {
   }
 }
 
+void _requireSecret(String value, String name) {
+  if (value.trim().isEmpty) throw ArgumentError('不能为空', name);
+}
+
 String _requiredText(Map<Object?, Object?> map, String key) {
   final value = map[key];
   if (value is! String || value.trim().isEmpty) {
@@ -605,6 +704,12 @@ double _requiredDouble(Map<Object?, Object?> map, String key) {
   final value = map[key];
   if (value is! num) throw FormatException('$key 必须是数字');
   return value.toDouble();
+}
+
+bool _requiredBool(Map<Object?, Object?> map, String key) {
+  final value = map[key];
+  if (value is! bool) throw FormatException('$key 必须是布尔值');
+  return value;
 }
 
 double? _optionalDouble(Map<Object?, Object?> map, String key) {

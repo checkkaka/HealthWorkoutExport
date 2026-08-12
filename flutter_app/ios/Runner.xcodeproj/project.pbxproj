@@ -22,6 +22,7 @@
 		D41000000000000000000004 /* KeychainPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = D41000000000000000000003 /* KeychainPlugin.swift */; };
 		D41000000000000000000007 /* StravaOAuthPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = D41000000000000000000006 /* StravaOAuthPlugin.swift */; };
 		D41000000000000000000009 /* PreferencesPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = D41000000000000000000008 /* PreferencesPlugin.swift */; };
+		D4100000000000000000000B /* StravaWebPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4100000000000000000000A /* StravaWebPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -78,6 +79,7 @@
 		D41000000000000000000005 /* Runner.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Runner.entitlements; sourceTree = "<group>"; };
 		D41000000000000000000006 /* StravaOAuthPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StravaOAuthPlugin.swift; sourceTree = "<group>"; };
 		D41000000000000000000008 /* PreferencesPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesPlugin.swift; sourceTree = "<group>"; };
+		D4100000000000000000000A /* StravaWebPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StravaWebPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -170,6 +172,7 @@
 				D41000000000000000000003 /* KeychainPlugin.swift */,
 				D41000000000000000000006 /* StravaOAuthPlugin.swift */,
 				D41000000000000000000008 /* PreferencesPlugin.swift */,
+				D4100000000000000000000A /* StravaWebPlugin.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 				D41000000000000000000005 /* Runner.entitlements */,
@@ -409,6 +412,7 @@
 				D41000000000000000000004 /* KeychainPlugin.swift in Sources */,
 				D41000000000000000000007 /* StravaOAuthPlugin.swift in Sources */,
 				D41000000000000000000009 /* PreferencesPlugin.swift in Sources */,
+				D4100000000000000000000B /* StravaWebPlugin.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 			);

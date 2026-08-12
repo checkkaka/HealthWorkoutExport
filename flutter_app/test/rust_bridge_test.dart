@@ -1,11 +1,15 @@
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_workout_export/src/rust/api/simple.dart';
 import 'package:health_workout_export/src/rust/frb_generated.dart';
+import 'package:health_workout_export/strava_upload_api.dart' as upload;
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('Flutter 通过真实 Rust 核心判定通勤', () async {
     final rustRoot = Directory('../rust/workout_core').absolute;
     final build = await Process.run('cargo', [
@@ -94,5 +98,161 @@ void main() {
       stravaExchangeCode(clientId: '', clientSecret: 'secret', code: 'code'),
       throwsA(anything),
     );
+
+    const uploadApi = upload.StravaUploadApi();
+    final cancelledHandle = uploadApi.reserve('ffi-cancel-before-start');
+    expect(uploadApi.cancel(cancelledHandle), isTrue);
+    final cancelledUpload = await uploadApi.upload(
+      handle: cancelledHandle,
+      accessToken: 'token',
+      fit: Uint8List.fromList(const [1]),
+      externalId: 'external',
+      filename: 'ride.fit',
+      commute: false,
+    );
+    expect(cancelledUpload.status, upload.StravaUploadFfiStatus.cancelled);
+    expect(
+      cancelledUpload.error?.code,
+      upload.StravaUploadFfiErrorCode.cancelled,
+    );
+    expect(cancelledUpload.remoteId, isNull);
+    expect(cancelledUpload.retry, isNull);
+    expect(uploadApi.cancel(cancelledHandle), isFalse);
+
+    final firstGeneration = uploadApi.reserve('ffi-generation');
+    expect(uploadApi.release(firstGeneration), isTrue);
+    final secondGeneration = uploadApi.reserve('ffi-generation');
+    expect(uploadApi.cancel(firstGeneration), isFalse);
+    expect(uploadApi.cancel(secondGeneration), isTrue);
+    expect(uploadApi.release(secondGeneration), isTrue);
+
+    final validationHandle = uploadApi.reserve('ffi-preflight');
+    expect(
+      () => uploadApi.upload(
+        handle: validationHandle,
+        accessToken: 'token',
+        fit: Uint8List(64 * 1024 * 1024 + 1),
+        externalId: 'external',
+        filename: 'ride.fit',
+        commute: false,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => uploadApi.upload(
+        handle: validationHandle,
+        accessToken: ''.padRight(8 * 1024 + 1, 'x'),
+        fit: Uint8List.fromList(const [1]),
+        externalId: 'external',
+        filename: 'ride.fit',
+        commute: false,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => uploadApi.upload(
+        handle: validationHandle,
+        accessToken: 'token',
+        fit: Uint8List.fromList(const [1]),
+        externalId: 'external',
+        filename: 'ride\n.fit',
+        commute: false,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => uploadApi.resumePollAfterRefresh(
+        handle: validationHandle,
+        accessToken: 'token',
+        uploadId: ''.padRight(1025, 'x'),
+        pollAttempt: 0,
+      ),
+      throwsArgumentError,
+    );
+    for (final secretCase in <({String token, String? description})>[
+      (token: 'do-not-leak-token\n', description: null),
+      (token: 'token', description: 'do-not-leak-description\n'),
+    ]) {
+      try {
+        uploadApi.upload(
+          handle: validationHandle,
+          accessToken: secretCase.token,
+          fit: Uint8List.fromList(const [1]),
+          externalId: 'external',
+          filename: 'ride.fit',
+          commute: false,
+          description: secretCase.description,
+        );
+        fail('应在进入 FFI 前拒绝秘密中的控制字符');
+      } on ArgumentError catch (error) {
+        expect(error.toString(), isNot(contains('do-not-leak')));
+      }
+    }
+    expect(uploadApi.release(validationHandle), isFalse);
+    final replacement = uploadApi.reserve('ffi-preflight');
+    expect(uploadApi.release(replacement), isTrue);
+
+    const keychain = MethodChannel('health_workout_export/keychain');
+    var refreshCount = 0;
+    Map<Object?, Object?>? committed;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(keychain, (call) async {
+          switch (call.method) {
+            case 'stravaLease':
+              final purpose =
+                  (call.arguments as Map<Object?, Object?>)['purpose'];
+              if (purpose == 'upload') {
+                return <String, Object>{
+                  'accessToken': 'expired-access',
+                  'expiresAtSeconds': 1.0,
+                };
+              }
+              return <String, Object>{
+                'clientId': 'client',
+                'clientSecret': 'secret',
+                'refreshToken': 'refresh',
+                'expiresAtSeconds': 1.0,
+              };
+            case 'writeStravaAuthorization':
+              committed = Map<Object?, Object?>.from(
+                call.arguments as Map<Object?, Object?>,
+              );
+              return null;
+          }
+          throw MissingPluginException(call.method);
+        });
+    try {
+      final session = upload.StravaUploadSession(
+        refreshToken:
+            ({
+              required clientId,
+              required clientSecret,
+              required refreshToken,
+            }) async {
+              refreshCount += 1;
+              return const StravaTokenResult(
+                accessToken: 'rotated-access',
+                refreshToken: 'rotated-refresh',
+                expiresAt: 2000000000,
+              );
+            },
+      );
+      final task = session.start(
+        logicalOperationId: 'ffi-session-refresh-cancel',
+        fit: Uint8List.fromList(const [1]),
+        externalId: 'external',
+        filename: 'ride.fit',
+        commute: false,
+      );
+      expect(task.cancel(), isTrue);
+      final result = await task.result;
+      expect(result.status, upload.StravaUploadFfiStatus.cancelled);
+      expect(refreshCount, 1);
+      expect(committed?['accessToken'], 'rotated-access');
+      expect(committed?['refreshToken'], 'rotated-refresh');
+    } finally {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(keychain, null);
+    }
   });
 }

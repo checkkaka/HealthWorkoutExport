@@ -6,8 +6,9 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `token_result`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `begin`, `operation_error_response`, `reserve`, `token_result`, `upload_ffi_response`, `upload_operations`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `UploadOperationEntry`, `UploadOperationError`, `UploadOperationRegistry`, `UploadOperationState`, `UploadOperation`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Flutter 调用的最小同步入口，直接复用已测试的核心规则。
 bool isCommute({double? distanceMeters, required double durationSeconds}) =>
@@ -46,6 +47,81 @@ Future<StravaTokenResult> stravaRefreshToken({
   clientSecret: clientSecret,
   refreshToken: refreshToken,
 );
+
+/// 首次上传。若返回 NeedsRefresh/Upload，调用方强制刷新并只调用一次
+/// `strava_retry_upload_after_refresh`，不得再次调用本入口形成无限重试。
+/// 仅供手写 Dart 安全门面调用；业务代码不得直接绕过门面的输入预检。
+Future<StravaUploadFfiResponse> stravaUploadFit({
+  required String operationHandle,
+  required String accessToken,
+  required List<int> fit,
+  required String externalId,
+  required String filename,
+  required bool commute,
+  String? description,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleStravaUploadFit(
+  operationHandle: operationHandle,
+  accessToken: accessToken,
+  fit: fit,
+  externalId: externalId,
+  filename: filename,
+  commute: commute,
+  description: description,
+);
+
+/// POST 401 后的唯一一次重放；本调用再次遇到 401 会直接返回 Unauthorized 硬失败。
+/// 仅供手写 Dart 安全门面调用。
+Future<StravaUploadFfiResponse> stravaRetryUploadAfterRefresh({
+  required String operationHandle,
+  required String accessToken,
+  required List<int> fit,
+  required String externalId,
+  required String filename,
+  required bool commute,
+  String? description,
+}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleStravaRetryUploadAfterRefresh(
+      operationHandle: operationHandle,
+      accessToken: accessToken,
+      fit: fit,
+      externalId: externalId,
+      filename: filename,
+      commute: commute,
+      description: description,
+    );
+
+/// poll 401 后以新 token 从同一 uploadId、同一 attempt 立即续跑；再次 401 直接失败。
+/// 仅供手写 Dart 安全门面调用。
+Future<StravaUploadFfiResponse> stravaResumeUploadPollAfterRefresh({
+  required String operationHandle,
+  required String accessToken,
+  required String uploadId,
+  required int pollAttempt,
+}) => WorkoutCoreRustLib.instance.api
+    .crateApiSimpleStravaResumeUploadPollAfterRefresh(
+      operationHandle: operationHandle,
+      accessToken: accessToken,
+      uploadId: uploadId,
+      pollAttempt: pollAttempt,
+    );
+
+/// 同步预留一个不可重用 handle；Dart 必须先 reserve，再启动异步上传或轮询。
+StravaUploadReservation stravaReserveUpload({required String operationId}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleStravaReserveUpload(
+      operationId: operationId,
+    );
+
+/// 精确取消同 generation handle。旧 handle 永远不能取消新一代同 logical ID 操作。
+bool stravaCancelUpload({required String operationHandle}) => WorkoutCoreRustLib
+    .instance
+    .api
+    .crateApiSimpleStravaCancelUpload(operationHandle: operationHandle);
+
+/// 释放尚未启动的预留 handle；运行中的操作由 RAII 在 Future 结束时释放。
+bool stravaReleaseUpload({required String operationHandle}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleStravaReleaseUpload(
+      operationHandle: operationHandle,
+    );
 
 class FitProbeSummary {
   final int gpsPointCount;
@@ -98,3 +174,113 @@ class StravaTokenResult {
           refreshToken == other.refreshToken &&
           expiresAt == other.expiresAt;
 }
+
+class StravaUploadFfiError {
+  final StravaUploadFfiErrorCode code;
+  final String message;
+
+  const StravaUploadFfiError({required this.code, required this.message});
+
+  @override
+  int get hashCode => code.hashCode ^ message.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is StravaUploadFfiError &&
+          runtimeType == other.runtimeType &&
+          code == other.code &&
+          message == other.message;
+}
+
+enum StravaUploadFfiErrorCode {
+  invalidInput,
+  operationInUse,
+  clientBuild,
+  transport,
+  unauthorized,
+  rateLimited,
+  responseTooLarge,
+  invalidResponse,
+  uploadFailed,
+  cancelled,
+}
+
+class StravaUploadFfiResponse {
+  final StravaUploadFfiStatus status;
+  final String? remoteId;
+  final bool isDuplicate;
+  final StravaUploadRetry? retry;
+  final StravaUploadFfiError? error;
+
+  const StravaUploadFfiResponse({
+    required this.status,
+    this.remoteId,
+    required this.isDuplicate,
+    this.retry,
+    this.error,
+  });
+
+  @override
+  int get hashCode =>
+      status.hashCode ^
+      remoteId.hashCode ^
+      isDuplicate.hashCode ^
+      retry.hashCode ^
+      error.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is StravaUploadFfiResponse &&
+          runtimeType == other.runtimeType &&
+          status == other.status &&
+          remoteId == other.remoteId &&
+          isDuplicate == other.isDuplicate &&
+          retry == other.retry &&
+          error == other.error;
+}
+
+enum StravaUploadFfiStatus { completed, needsRefresh, failed, cancelled }
+
+class StravaUploadReservation {
+  final String handle;
+
+  const StravaUploadReservation({required this.handle});
+
+  @override
+  int get hashCode => handle.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is StravaUploadReservation &&
+          runtimeType == other.runtimeType &&
+          handle == other.handle;
+}
+
+class StravaUploadRetry {
+  final StravaUploadRetryStage stage;
+  final String? uploadId;
+  final int? pollAttempt;
+
+  const StravaUploadRetry({
+    required this.stage,
+    this.uploadId,
+    this.pollAttempt,
+  });
+
+  @override
+  int get hashCode => stage.hashCode ^ uploadId.hashCode ^ pollAttempt.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is StravaUploadRetry &&
+          runtimeType == other.runtimeType &&
+          stage == other.stage &&
+          uploadId == other.uploadId &&
+          pollAttempt == other.pollAttempt;
+}
+
+enum StravaUploadRetryStage { upload, poll }
