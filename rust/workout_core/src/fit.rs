@@ -9,7 +9,8 @@ mod health_fit;
 
 pub use fit_document::{FitDocument, FitMessage, MAX_FIT_BYTES};
 pub use fit_merge::{
-    FitMergeError, MAX_MERGE_INPUT_BYTES, MAX_MERGE_SUPPLEMENTS, merge_fit_sensors,
+    FitMergeError, FitMergeOptions, FitSupplementMode, MAX_MERGE_INPUT_BYTES,
+    MAX_MERGE_SUPPLEMENTS, merge_fit, merge_fit_sensors,
 };
 pub use fit_virtual_power::{
     FitVirtualPowerFillMode, FitVirtualPowerFillOptions, FitVirtualPowerFillResult,

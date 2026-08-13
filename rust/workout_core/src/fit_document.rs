@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -77,6 +78,10 @@ impl FitMessage {
         self.fields
             .iter()
             .any(|field| field.definition.number == number)
+    }
+
+    pub(crate) fn has_developer_fields(&self) -> bool {
+        !self.developer_fields.is_empty()
     }
 }
 
@@ -259,6 +264,30 @@ impl FitDocument {
 
     pub fn messages(&self) -> &[FitMessage] {
         &self.messages
+    }
+
+    pub(crate) fn developer_data_indexes(&self) -> HashSet<u8> {
+        let mut indexes = self
+            .messages
+            .iter()
+            .flat_map(|message| {
+                message
+                    .developer_fields
+                    .iter()
+                    .map(|field| field.definition.developer_data_index)
+            })
+            .collect::<HashSet<_>>();
+        for (message_index, message) in self.messages.iter().enumerate() {
+            let field = match message.global_number {
+                206 => 0,
+                207 => 3,
+                _ => continue,
+            };
+            if let Some(index) = self.read_u8(message_index, field) {
+                indexes.insert(index);
+            }
+        }
+        indexes
     }
 
     pub fn field_bytes(&self, message_index: usize, field_number: u8) -> Option<&[u8]> {
@@ -445,6 +474,52 @@ impl FitDocument {
         Ok(())
     }
 
+    /// 更新已有 `uint32` 字段，或按 FIT 标准 `uint32` 定义补入缺失字段。
+    pub(crate) fn set_or_insert_u32(
+        &mut self,
+        message_index: usize,
+        field_number: u8,
+        value: u32,
+    ) -> Result<(), FitDecodeError> {
+        if self
+            .messages
+            .get(message_index)
+            .is_some_and(|message| message.has_field(field_number))
+        {
+            return self.set_u32(message_index, field_number, value);
+        }
+        if value == u32::MAX {
+            return Err(FitDecodeError::InvalidFieldValue);
+        }
+        let next_count = self
+            .field_count
+            .checked_add(1)
+            .ok_or(FitDecodeError::TooManyFields)?;
+        if next_count > MAX_FIELDS {
+            return Err(FitDecodeError::TooManyFields);
+        }
+        let message = self
+            .messages
+            .get_mut(message_index)
+            .ok_or(FitDecodeError::FieldNotFound)?;
+        let bytes = if message.big_endian {
+            value.to_be_bytes()
+        } else {
+            value.to_le_bytes()
+        };
+        message.fields.push(FitField {
+            definition: FieldDefinition {
+                number: field_number,
+                size: 4,
+                base_type: BASE_TYPE_UINT32,
+            },
+            value: FieldValue::Owned(bytes.to_vec()),
+        });
+        self.field_count = next_count;
+        self.dirty = true;
+        Ok(())
+    }
+
     /// 删除原生字段；用于避免重新计算失败后残留旧的汇总值。
     pub fn remove_field(&mut self, message_index: usize, field_number: u8) -> bool {
         let Some(message) = self.messages.get_mut(message_index) else {
@@ -577,6 +652,198 @@ impl FitDocument {
         self.field_count = next_count;
         self.dirty = true;
         Ok(true)
+    }
+
+    /// 从同类消息补齐全部缺失的原生字段；developer fields 不跨消息拼接。
+    pub(crate) fn copy_all_missing_native_fields_from(
+        &mut self,
+        target_message_index: usize,
+        source: &Self,
+        source_message_index: usize,
+    ) -> Result<usize, FitDecodeError> {
+        let field_numbers = source
+            .messages
+            .get(source_message_index)
+            .ok_or(FitDecodeError::FieldNotFound)?
+            .fields
+            .iter()
+            .map(|field| field.definition.number)
+            .collect::<Vec<_>>();
+        let mut copied = 0;
+        for field_number in field_numbers {
+            copied += usize::from(self.copy_missing_field_from(
+                target_message_index,
+                source,
+                source_message_index,
+                field_number,
+            )?);
+        }
+        Ok(copied)
+    }
+
+    /// 从同类消息补齐缺失的 developer fields，字段冲突仍以目标消息为准。
+    pub(crate) fn copy_all_missing_developer_fields_from(
+        &mut self,
+        target_message_index: usize,
+        source: &Self,
+        source_message_index: usize,
+        developer_indexes: &HashMap<u8, u8>,
+    ) -> Result<usize, FitDecodeError> {
+        let source_message = source
+            .messages
+            .get(source_message_index)
+            .ok_or(FitDecodeError::FieldNotFound)?;
+        let target_message = self
+            .messages
+            .get(target_message_index)
+            .ok_or(FitDecodeError::FieldNotFound)?;
+        if target_message.global_number != source_message.global_number {
+            return Err(FitDecodeError::InvalidFieldValue);
+        }
+        let missing = source_message
+            .developer_fields
+            .iter()
+            .filter(|source_field| {
+                !target_message.developer_fields.iter().any(|target_field| {
+                    target_field.definition.number == source_field.definition.number
+                        && target_field.definition.developer_data_index
+                            == developer_indexes
+                                .get(&source_field.definition.developer_data_index)
+                                .copied()
+                                .unwrap_or(source_field.definition.developer_data_index)
+                })
+            })
+            .map(|field| {
+                let mut definition = field.definition.clone();
+                definition.developer_data_index = developer_indexes
+                    .get(&definition.developer_data_index)
+                    .copied()
+                    .unwrap_or(definition.developer_data_index);
+                FitDeveloperField {
+                    definition,
+                    value: FieldValue::Owned(value_bytes(&source.source, &field.value).to_vec()),
+                }
+            })
+            .collect::<Vec<_>>();
+        let next_count = self
+            .field_count
+            .checked_add(missing.len())
+            .ok_or(FitDecodeError::TooManyFields)?;
+        if next_count > MAX_FIELDS {
+            return Err(FitDecodeError::TooManyFields);
+        }
+        let copied = missing.len();
+        if copied > 0 {
+            self.messages[target_message_index]
+                .developer_fields
+                .extend(missing);
+            self.field_count = next_count;
+            self.dirty = true;
+        }
+        Ok(copied)
+    }
+
+    /// 把另一文档的一条消息连同未知字段和 developer payload 复制为独立所有权。
+    pub(crate) fn append_message_from(
+        &mut self,
+        source: &Self,
+        source_message_index: usize,
+        developer_indexes: &HashMap<u8, u8>,
+    ) -> Result<usize, FitDecodeError> {
+        if self.messages.len() >= MAX_MESSAGES {
+            return Err(FitDecodeError::TooManyMessages);
+        }
+        let source_message = source
+            .messages
+            .get(source_message_index)
+            .ok_or(FitDecodeError::FieldNotFound)?;
+        let added_fields = source_message
+            .fields
+            .len()
+            .checked_add(source_message.developer_fields.len())
+            .ok_or(FitDecodeError::TooManyFields)?;
+        let next_count = self
+            .field_count
+            .checked_add(added_fields)
+            .ok_or(FitDecodeError::TooManyFields)?;
+        if next_count > MAX_FIELDS {
+            return Err(FitDecodeError::TooManyFields);
+        }
+        let fields = source_message
+            .fields
+            .iter()
+            .map(|field| FitField {
+                definition: field.definition.clone(),
+                value: FieldValue::Owned(value_bytes(&source.source, &field.value).to_vec()),
+            })
+            .collect();
+        let developer_fields = source_message
+            .developer_fields
+            .iter()
+            .map(|field| {
+                let mut definition = field.definition.clone();
+                definition.developer_data_index = developer_indexes
+                    .get(&definition.developer_data_index)
+                    .copied()
+                    .unwrap_or(definition.developer_data_index);
+                FitDeveloperField {
+                    definition,
+                    value: FieldValue::Owned(value_bytes(&source.source, &field.value).to_vec()),
+                }
+            })
+            .collect();
+        self.messages.push(FitMessage {
+            global_number: source_message.global_number,
+            big_endian: source_message.big_endian,
+            fields,
+            developer_fields,
+        });
+        self.field_count = next_count;
+        self.dirty = true;
+        let target_index = self.messages.len() - 1;
+        let metadata_field = match source_message.global_number {
+            206 => Some(0),
+            207 => Some(3),
+            _ => None,
+        };
+        if let Some(field) = metadata_field
+            && let Some(source_index) = source.read_u8(source_message_index, field)
+            && let Some(&target) = developer_indexes.get(&source_index)
+        {
+            self.set_u8(target_index, field, target)?;
+        }
+        Ok(target_index)
+    }
+
+    /// 合并输出采用 FIT Activity 的常见消息分组，并在 Event/Record/Lap 内按时间排序。
+    pub(crate) fn sort_messages_for_merge(&mut self) {
+        let mut messages = self
+            .messages
+            .iter()
+            .enumerate()
+            .map(|(index, message)| {
+                let rank = match message.global_number {
+                    0 => 0,              // FileId
+                    23 | 206 | 207 => 1, // DeviceInfo / developer metadata
+                    21 => 2,             // Event
+                    20 => 3,             // Record
+                    19 => 5,             // Lap
+                    18 => 6,             // Session
+                    34 => 7,             // Activity
+                    _ => 4,              // 主文件其他消息稳定透传
+                };
+                let timestamp = matches!(message.global_number, 19..=21)
+                    .then(|| self.read_u32(index, 253).unwrap_or_default())
+                    .unwrap_or_default();
+                (rank, timestamp, index, message.clone())
+            })
+            .collect::<Vec<_>>();
+        messages.sort_by_key(|(rank, timestamp, index, _)| (*rank, *timestamp, *index));
+        self.messages = messages
+            .into_iter()
+            .map(|(_, _, _, message)| message)
+            .collect();
+        self.dirty = true;
     }
 
     fn field(&self, message_index: usize, field_number: u8) -> Option<&FitField> {

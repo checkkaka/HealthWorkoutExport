@@ -72,7 +72,7 @@ typedef AutoSyncMarkRemoteDuplicate =
       required String remoteId,
     });
 
-/// 最小健康首传：仅跳过已同步和稳定近似的远端活动；不做补源、覆盖或删除。
+/// 最小健康首传与恢复重传：仅跳过已同步和稳定近似的远端活动；不做补源或远端删除。
 /// 当前调用入口不支持取消；调用方必须在开始前取得用户确认。
 final class AutoSyncController {
   AutoSyncController({
@@ -137,6 +137,93 @@ final class AutoSyncController {
       results.add(await _syncOne(uuid));
     }
     return results;
+  }
+
+  /// 仅恢复已落盘的最终 FIT。需要删除远端活动的恢复包必须交由网页流程处理。
+  Future<AutoSyncResult> resumeRecovery(String fingerprint) async {
+    String? workoutId;
+    String? remoteId;
+    var uploadedRecorded = false;
+    try {
+      final existing = (await _stateStore.allRecords())[fingerprint];
+      if (existing is Map && existing['status'] == 'uploaded') {
+        await _stateStore.deleteRecovery(fingerprint);
+        return AutoSyncResult(
+          workoutId: existing['primaryActivityId'] as String? ?? fingerprint,
+          fingerprint: fingerprint,
+          remoteId: existing['remoteId'] as String?,
+          isDuplicate: true,
+          message: '此前上传已完成，已清理遗留恢复文件',
+        );
+      }
+      final transaction = await _stateStore.loadRecoveryTransaction(
+        fingerprint,
+      );
+      final upload = _RecoveryUpload.fromJson(
+        await _stateStore.readRecovery(fingerprint),
+      );
+      workoutId = upload.primaryActivityId;
+      if (transaction.phase == SyncRecoveryPhase.prepared &&
+          transaction.remoteIdToReplace != null) {
+        throw const AutoSyncRecoveryException('该恢复项需要先删除远端活动，当前 API 模式不支持');
+      }
+
+      await _stateStore.savePendingFit(
+        record: upload.pending(fingerprint),
+        fit: upload.fit,
+      );
+      final active = transaction.phase == SyncRecoveryPhase.uploading
+          ? transaction
+          : await _stateStore.markRecoveryUploading(fingerprint);
+      final response = await _uploadFit(
+        logicalOperationId: 'recovery-$fingerprint',
+        fit: upload.fit,
+        externalId: active.externalId,
+        filename: upload.filename,
+        commute: upload.commute,
+      );
+      if (response.status != rust.StravaUploadFfiStatus.completed) {
+        throw const AutoSyncUploadException('Strava 上传未完成');
+      }
+      remoteId = response.remoteId;
+      await _stateStore.markUploaded(
+        fingerprint: fingerprint,
+        updatedAt: DateTime.now(),
+        remoteId: remoteId,
+        isDuplicate: response.isDuplicate,
+        distanceMeters: upload.distanceMeters,
+        durationSeconds: upload.durationSeconds,
+        message: upload.message,
+        uploadChannel: SyncUploadChannel.api,
+      );
+      uploadedRecorded = true;
+      await _stateStore.deleteRecovery(fingerprint);
+      return AutoSyncResult(
+        workoutId: workoutId,
+        fingerprint: fingerprint,
+        remoteId: remoteId,
+        isDuplicate: response.isDuplicate,
+      );
+    } catch (error) {
+      if (!uploadedRecorded) {
+        try {
+          await _stateStore.markFailed(
+            fingerprint: fingerprint,
+            updatedAt: DateTime.now(),
+            message: _safeRecoveryFailureMessage(error),
+          );
+        } catch (_) {
+          // 缺少本地记录或保护文件不可用时，保留原恢复包以便稍后继续。
+        }
+      }
+      return AutoSyncResult.failed(
+        workoutId: workoutId ?? fingerprint,
+        fingerprint: fingerprint,
+        message: uploadedRecorded
+            ? 'Strava 上传已完成，但恢复文件清理失败；再次重传只会清理'
+            : _safeRecoveryFailureMessage(error),
+      );
+    }
   }
 
   Future<AutoSyncResult> _syncOne(String uuid) async {
@@ -341,6 +428,12 @@ final class AutoSyncController {
     _ => '同步首传失败',
   };
 
+  static String _safeRecoveryFailureMessage(Object error) => switch (error) {
+    AutoSyncRecoveryException() => error.message,
+    AutoSyncUploadException() => error.message,
+    _ => '重传恢复失败',
+  };
+
   Future<rust.StravaUploadFfiResponse> _uploadFit({
     required String logicalOperationId,
     required Uint8List fit,
@@ -400,3 +493,104 @@ final class AutoSyncUploadException implements Exception {
   @override
   String toString() => message;
 }
+
+final class AutoSyncRecoveryException implements Exception {
+  const AutoSyncRecoveryException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+final class _RecoveryUpload {
+  const _RecoveryUpload({
+    required this.primarySourceId,
+    required this.primaryActivityId,
+    required this.title,
+    required this.startDate,
+    required this.supplementSourceIds,
+    required this.distanceMeters,
+    required this.durationSeconds,
+    required this.fit,
+    required this.message,
+    required this.filename,
+    required this.commute,
+  });
+
+  factory _RecoveryUpload.fromJson(Uint8List bytes) {
+    final value = jsonDecode(utf8.decode(bytes));
+    if (value is! Map<String, dynamic>) {
+      throw const FormatException('恢复上传包不是 JSON 对象');
+    }
+    String text(String key) {
+      final field = value[key];
+      if (field is! String || field.trim().isEmpty) {
+        throw FormatException('恢复上传包缺少 $key');
+      }
+      return field;
+    }
+
+    double number(String key) {
+      final field = value[key];
+      if (field is! num || !field.isFinite) {
+        throw FormatException('恢复上传包的 $key 无效');
+      }
+      return field.toDouble();
+    }
+
+    final supplements = value['supplementSourceIds'];
+    final uploadMessage = value['uploadMessage'];
+    final distance = value['distanceMeters'];
+    final commute = value['commute'];
+    if (supplements is! List ||
+        supplements.any((item) => item is! String) ||
+        (uploadMessage != null && uploadMessage is! String) ||
+        (distance != null && (distance is! num || !distance.isFinite)) ||
+        commute is! bool) {
+      throw const FormatException('恢复上传包字段无效');
+    }
+    return _RecoveryUpload(
+      primarySourceId: text('primarySourceId'),
+      primaryActivityId: text('primaryActivityId'),
+      title: text('title'),
+      startDate: _fromAppleSeconds(number('startDate')),
+      supplementSourceIds: supplements.cast<String>(),
+      distanceMeters: distance?.toDouble(),
+      durationSeconds: number('durationSeconds'),
+      fit: Uint8List.fromList(base64Decode(text('uploadData'))),
+      message: uploadMessage as String?,
+      filename: text('filename'),
+      commute: commute,
+    );
+  }
+
+  final String primarySourceId;
+  final String primaryActivityId;
+  final String title;
+  final DateTime startDate;
+  final List<String> supplementSourceIds;
+  final double? distanceMeters;
+  final double durationSeconds;
+  final Uint8List fit;
+  final String? message;
+  final String filename;
+  final bool commute;
+
+  SyncPendingRecord pending(String fingerprint) => SyncPendingRecord(
+    fingerprint: fingerprint,
+    primarySourceId: primarySourceId,
+    primaryActivityId: primaryActivityId,
+    updatedAt: DateTime.now(),
+    startDate: startDate,
+    title: title,
+    supplementSourceIds: supplementSourceIds,
+    distanceMeters: distanceMeters,
+    durationSeconds: durationSeconds,
+  );
+}
+
+DateTime _fromAppleSeconds(double value) => DateTime.fromMillisecondsSinceEpoch(
+  ((value + 978307200) * Duration.millisecondsPerSecond).round(),
+  isUtc: true,
+);

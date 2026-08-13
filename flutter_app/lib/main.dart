@@ -8,6 +8,7 @@ import 'date_range.dart';
 import 'native_channels.dart';
 import 'src/rust/frb_generated.dart';
 import 'strava_settings_page.dart';
+import 'third_party_source_page.dart';
 import 'workout_export.dart';
 
 Future<void> main() => startApp();
@@ -82,12 +83,13 @@ class _RootTabsPageState extends State<_RootTabsPage> {
             ? '此平台不支持 HealthKit'
             : null,
       ),
-      const _SourcePage(title: '行者活动', sourceName: '行者'),
-      const _SourcePage(title: '顽鹿活动', sourceName: '顽鹿'),
+      const ThirdPartySourcePage(source: ThirdPartySourceType.xingzhe),
+      const ThirdPartySourcePage(source: ThirdPartySourceType.onelap),
     ];
+    const titles = ['健康训练', '行者活动', '顽鹿活动'];
     return Scaffold(
       appBar: AppBar(
-        title: Text(pages[_selectedIndex].title),
+        title: Text(titles[_selectedIndex]),
         actions: [
           if (widget.stravaSettingsEnabled)
             IconButton(
@@ -103,7 +105,13 @@ class _RootTabsPageState extends State<_RootTabsPage> {
             ),
         ],
       ),
-      body: IndexedStack(index: _selectedIndex, children: pages),
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: [
+          for (var index = 0; index < pages.length; index++)
+            TickerMode(enabled: index == _selectedIndex, child: pages[index]),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
         onDestinationSelected: (index) {

@@ -40,7 +40,7 @@ void main() {
     expect(find.text('健康训练'), findsOneWidget);
   });
 
-  testWidgets('切换页签后保留各自的日期预设', (tester) async {
+  testWidgets('切换第三方入口后保留健康页的日期预设', (tester) async {
     await tester.pumpWidget(const HealthWorkoutExportApp());
 
     await tester.tap(find.text('近7天'));
@@ -49,9 +49,7 @@ void main() {
 
     await tester.tap(find.text('行者'));
     await tester.pump();
-    await tester.tap(find.text('今年'));
-    await tester.pump();
-    expect(_chip(tester, '今年').selected, isTrue);
+    expect(find.text('行者活动'), findsAtLeastNWidgets(1));
 
     await tester.tap(find.text('健康'));
     await tester.pump();
@@ -59,7 +57,7 @@ void main() {
 
     await tester.tap(find.text('行者'));
     await tester.pump();
-    expect(_chip(tester, '今年').selected, isTrue);
+    expect(find.text('行者活动'), findsAtLeastNWidgets(1));
   });
 
   testWidgets('非 iOS 平台明确提示 HealthKit 不可用且不调用原生通道', (tester) async {
