@@ -2,12 +2,18 @@
 mod fit_document;
 #[path = "fit_merge.rs"]
 mod fit_merge;
+#[path = "fit_virtual_power.rs"]
+mod fit_virtual_power;
 #[path = "health_fit.rs"]
 mod health_fit;
 
 pub use fit_document::{FitDocument, FitMessage, MAX_FIT_BYTES};
 pub use fit_merge::{
     FitMergeError, MAX_MERGE_INPUT_BYTES, MAX_MERGE_SUPPLEMENTS, merge_fit_sensors,
+};
+pub use fit_virtual_power::{
+    FitVirtualPowerFillMode, FitVirtualPowerFillOptions, FitVirtualPowerFillResult,
+    fill_fit_virtual_power,
 };
 pub use health_fit::{HealthFitError, encode_health_workout_bundle_json};
 

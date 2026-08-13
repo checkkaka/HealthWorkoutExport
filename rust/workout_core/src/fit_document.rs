@@ -399,6 +399,69 @@ impl FitDocument {
         self.set_field_bytes(message_index, field_number, &bytes)
     }
 
+    /// 更新已有 `uint16` 字段，或按 FIT 标准 `uint16` 定义补入缺失字段。
+    pub fn set_or_insert_u16(
+        &mut self,
+        message_index: usize,
+        field_number: u8,
+        value: u16,
+    ) -> Result<(), FitDecodeError> {
+        if self
+            .messages
+            .get(message_index)
+            .is_some_and(|message| message.has_field(field_number))
+        {
+            return self.set_u16(message_index, field_number, value);
+        }
+        if value == u16::MAX {
+            return Err(FitDecodeError::InvalidFieldValue);
+        }
+        let next_count = self
+            .field_count
+            .checked_add(1)
+            .ok_or(FitDecodeError::TooManyFields)?;
+        if next_count > MAX_FIELDS {
+            return Err(FitDecodeError::TooManyFields);
+        }
+        let message = self
+            .messages
+            .get_mut(message_index)
+            .ok_or(FitDecodeError::FieldNotFound)?;
+        let bytes = if message.big_endian {
+            value.to_be_bytes()
+        } else {
+            value.to_le_bytes()
+        };
+        message.fields.push(FitField {
+            definition: FieldDefinition {
+                number: field_number,
+                size: 2,
+                base_type: BASE_TYPE_UINT16,
+            },
+            value: FieldValue::Owned(bytes.to_vec()),
+        });
+        self.field_count = next_count;
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// 删除原生字段；用于避免重新计算失败后残留旧的汇总值。
+    pub fn remove_field(&mut self, message_index: usize, field_number: u8) -> bool {
+        let Some(message) = self.messages.get_mut(message_index) else {
+            return false;
+        };
+        let before = message.fields.len();
+        message
+            .fields
+            .retain(|field| field.definition.number != field_number);
+        let removed = before - message.fields.len();
+        if removed > 0 {
+            self.field_count -= removed;
+            self.dirty = true;
+        }
+        removed > 0
+    }
+
     pub fn set_u32(
         &mut self,
         message_index: usize,

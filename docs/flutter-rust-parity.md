@@ -90,8 +90,8 @@
 | FIT-07 | GPS 速度尖峰识别与修复 | `FitMerger.swift` 中 `FitSpeedSpikeFixer` | `FitActivityEncoderTests.swift`、`VirtualPowerPhysicsTests.swift` | Rust | 瞬时跳变并回落时修复；持续真实加速/急刹不误修；修复后 FIT 仍有效 | Rust 已实现，未接同步流程 |
 | FIT-08 | GCJ-02 → WGS-84 坐标转换和 FIT 重写 | `FitMerger.swift` 中 `Gcj02ToWgs84`、`FitGcjCoordinateRewriter` | `FitActivityEncoderTests.swift` | Rust | 中国境内 Record、Lap、Session 坐标改写后重算 CRC；境外、非标准字段和缺失坐标原样保留 | Rust 核心已实现，待接入上传处理顺序 |
 | FIT-09 | Gribble 虚拟功率物理、风/坡度/惯性和滑行规则 | `VirtualPowerPhysics.swift`、`VirtualPowerSettings.swift` | `VirtualPowerPhysicsTests.swift` | Rust | 稳态算例、负功率、踏频 0、空气密度、风向、坡度、加速度钳位逐项通过移植测试 | Rust 已实现，未接入 |
-| FIT-10 | Open-Meteo 数据源分流、Archive 回退和网格/日期缓存 | `OpenMeteoWeatherClient.swift`、`OpenMeteoWeatherCache.swift` | `OpenMeteoWeatherClientTests.swift`、`OpenMeteoWeatherCacheTests.swift` | Rust | 近 7 天/2022 后/更早分流一致；失败回退 Archive；取消不回退；缓存键与过期行为一致 | 未完成 |
-| FIT-11 | 虚拟功率覆盖、失败秒邻值、失败率门槛和活动类型过滤 | `FitVirtualPowerFiller.swift` | `FitVirtualPowerFillerTests.swift` | Rust | 现有全部 filler 测试移植通过；失败率 ≥10% 拒绝整场；非骑行跳过；残留功率不泄漏 | 未完成 |
+| FIT-10 | Open-Meteo 数据源分流、Archive 回退和网格/日期缓存 | `OpenMeteoWeatherClient.swift`、`OpenMeteoWeatherCache.swift` | `OpenMeteoWeatherClientTests.swift`、`OpenMeteoWeatherCacheTests.swift` | Rust | 近 7 天/2022 后/更早分流一致；失败回退 Archive；取消不回退；缓存键与过期行为一致 | Rust 核心已实现，待接业务/同键并发合并 |
+| FIT-11 | 虚拟功率覆盖、失败秒邻值、失败率门槛和活动类型过滤 | `FitVirtualPowerFiller.swift` | `FitVirtualPowerFillerTests.swift` | Rust | 失败率 ≥10% 拒绝整场；非骑行跳过；已有功率、Lap/Session 汇总和未知字段安全重编码 | Rust 核心部分实现，待接天气、标记与业务 |
 | FIT-12 | `powerSource=virtual` 标记、结果徽标与活动描述文案 | `VirtualPowerSourceMark.swift`、`VirtualPowerSocialCopy.swift` | `FitVirtualPowerFillerTests.swift`、`VirtualPowerSocialCopyTests.swift` | Rust | 标记可写可读且不破坏 FIT；仅实际写入虚拟功率时展示徽标并生成确认文案 | 未完成 |
 
 ## 5. 同步

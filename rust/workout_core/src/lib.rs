@@ -7,6 +7,7 @@ mod frb_generated;
 pub mod onelap;
 pub mod strava;
 pub mod sync_state;
+pub mod weather;
 pub mod xingzhe;
 
 use sha2::{Digest, Sha256};
