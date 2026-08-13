@@ -49,6 +49,7 @@
 - iOS 新增原始 UserDefaults 通道，并以原键名读写 Strava 模式、token 过期时间和 GCJ 纠偏；敏感凭据仍沿用旧 Keychain service/account，Flutter 设置仓测试 13/13 通过。
 - FIT GCJ-02→WGS-84 重写核心已落在 Rust：仅改写中国境内 Record、Lap、Session 的标准坐标字段并重算 CRC；境外和非标准坐标原样保留，尚待接入上传处理顺序。
 - Rust 已补 Open-Meteo 三段分流、Archive 回退、取消和有界进程内缓存；并补骑行 FIT 虚拟功率覆盖、失败率门槛与 Lap/Session 汇总。沿途天气插值、GPS 距离兜底、developer 来源标记和 Flutter 接线仍未完成。
+- Rust 已补 FIT 自动速度互相关、累计距离兜底、绝对/手动/逐文件时间偏移解析及质量门槛；尚未接入合并和 Flutter 手动对齐界面。
 - GitNexus 已重建为 711 nodes / 882 edges / 28 flows；Swift、Dart、Kotlin 可选 parser 仍不可用，相关影响继续用 `rg` 源码调用链补足。
 - Strava API 授权已接入生产设置页：Flutter 生成固定 scope URL，iOS 原生校验 state/回调，Rust 使用 rustls 标准表单交换 token；OAuth 成功后原生一次提交 clientId/secret/refresh/access/expires，任一 Keychain 写入失败会回滚，取消不会覆盖旧授权。网页 Cookie、限额和真机 OAuth 尚未完成。
 - Rust Strava token mock 覆盖编码、refresh rotation、错误/响应上限与脱敏；FRB 真实调用已接通。当前 Rust 25/25、Flutter 30/30、RunnerTests 11/11。
