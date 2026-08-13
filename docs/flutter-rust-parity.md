@@ -88,7 +88,7 @@
 | FIT-05 | 自动、手动、逐文件和绝对时间对齐 | `FitMerger.swift`、`FitMergeView.swift` | `FitActivityEncoderTests.swift`（时钟偏差、互相关、累计距离兜底） | Rust + Flutter | 同场可估偏移；不同活动拒绝自动对齐；手动偏移和逐文件偏移精确生效；估算失败有明确错误 | 未完成 |
 | FIT-06 | 合并后事件/lap 排序、距离重基准和 session 范围修正 | `FitMerger.swift` | `FitActivityEncoderTests.swift` | Rust | 事件和 lap 时间单调；分段总距离正确；session 覆盖全部合并记录；数组字段完整 | 未完成 |
 | FIT-07 | GPS 速度尖峰识别与修复 | `FitMerger.swift` 中 `FitSpeedSpikeFixer` | `FitActivityEncoderTests.swift`、`VirtualPowerPhysicsTests.swift` | Rust | 瞬时跳变并回落时修复；持续真实加速/急刹不误修；修复后 FIT 仍有效 | Rust 已实现，未接同步流程 |
-| FIT-08 | GCJ-02 → WGS-84 坐标转换和 FIT 重写 | `FitMerger.swift` 中 `Gcj02ToWgs84`、`FitGcjCoordinateRewriter` | `FitActivityEncoderTests.swift` | Rust | 中国境内坐标转换与基线误差在容差内；境外不移动；仅开关开启时改写上传副本 | 未完成 |
+| FIT-08 | GCJ-02 → WGS-84 坐标转换和 FIT 重写 | `FitMerger.swift` 中 `Gcj02ToWgs84`、`FitGcjCoordinateRewriter` | `FitActivityEncoderTests.swift` | Rust | 中国境内 Record、Lap、Session 坐标改写后重算 CRC；境外、非标准字段和缺失坐标原样保留 | Rust 核心已实现，待接入上传处理顺序 |
 | FIT-09 | Gribble 虚拟功率物理、风/坡度/惯性和滑行规则 | `VirtualPowerPhysics.swift`、`VirtualPowerSettings.swift` | `VirtualPowerPhysicsTests.swift` | Rust | 稳态算例、负功率、踏频 0、空气密度、风向、坡度、加速度钳位逐项通过移植测试 | Rust 已实现，未接入 |
 | FIT-10 | Open-Meteo 数据源分流、Archive 回退和网格/日期缓存 | `OpenMeteoWeatherClient.swift`、`OpenMeteoWeatherCache.swift` | `OpenMeteoWeatherClientTests.swift`、`OpenMeteoWeatherCacheTests.swift` | Rust | 近 7 天/2022 后/更早分流一致；失败回退 Archive；取消不回退；缓存键与过期行为一致 | 未完成 |
 | FIT-11 | 虚拟功率覆盖、失败秒邻值、失败率门槛和活动类型过滤 | `FitVirtualPowerFiller.swift` | `FitVirtualPowerFillerTests.swift` | Rust | 现有全部 filler 测试移植通过；失败率 ≥10% 拒绝整场；非骑行跳过；残留功率不泄漏 | 未完成 |

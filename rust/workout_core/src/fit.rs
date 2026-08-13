@@ -40,6 +40,13 @@ pub struct FitSpeedSpikeFixResult {
     pub fixed_count: usize,
 }
 
+/// FIT-08 的保守坐标纠偏结果：境外或没有可确认坐标时 `data` 与输入逐字节相同。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FitGcjCoordinateRewriteResult {
+    pub data: Vec<u8>,
+    pub rewritten_count: usize,
+}
+
 pub const MAX_REASONABLE_SPEED_MPS: f64 = 80.0 / 3.6;
 const MAX_SPIKE_GAP_SECONDS: u32 = 8;
 const SPEED_SCALE: f64 = 1_000.0;
@@ -155,6 +162,169 @@ pub fn fix_fit_speed_spikes(data: &[u8]) -> Result<FitSpeedSpikeFixResult, FitDe
         data: document.to_bytes()?,
         fixed_count,
     })
+}
+
+/// 把 FIT 标准位置字段中的中国境内 GCJ-02 坐标改写为 WGS-84。
+///
+/// 仅处理 Record、Lap 和 Session 已定义的 `sint32` 经纬度字段；无效值、缺失半对坐标、
+/// 未知消息与境外坐标均原样保留。写入时由 `FitDocument` 重算两个 FIT CRC。
+pub fn rewrite_fit_gcj_coordinates(
+    data: &[u8],
+) -> Result<FitGcjCoordinateRewriteResult, FitDecodeError> {
+    let mut document = FitDocument::parse(data)?;
+    let mut rewritten_count = 0;
+    for index in 0..document.messages().len() {
+        let fields: &[(u8, u8)] = match document.messages()[index].global_number() {
+            20 => &[(0, 1)],                               // Record: position_lat, position_long
+            19 => &[(3, 4), (5, 6)],                       // Lap: start/end position
+            18 => &[(3, 4), (29, 30), (31, 32), (38, 39)], // Session: start, NEC, SWC, end
+            _ => continue,
+        };
+        for &(latitude_field, longitude_field) in fields {
+            rewritten_count +=
+                rewrite_gcj_coordinate_pair(&mut document, index, latitude_field, longitude_field)?;
+        }
+    }
+    if rewritten_count == 0 {
+        drop(document);
+        return Ok(FitGcjCoordinateRewriteResult {
+            data: data.to_vec(),
+            rewritten_count,
+        });
+    }
+    Ok(FitGcjCoordinateRewriteResult {
+        data: document.to_bytes()?,
+        rewritten_count,
+    })
+}
+
+fn rewrite_gcj_coordinate_pair(
+    document: &mut FitDocument,
+    message_index: usize,
+    latitude_field: u8,
+    longitude_field: u8,
+) -> Result<usize, FitDecodeError> {
+    if document
+        .field_bytes(message_index, latitude_field)
+        .is_none_or(|value| value.len() != 4)
+        || document
+            .field_bytes(message_index, longitude_field)
+            .is_none_or(|value| value.len() != 4)
+    {
+        return Ok(0);
+    }
+    let (Some(latitude), Some(longitude)) = (
+        document.read_i32(message_index, latitude_field),
+        document.read_i32(message_index, longitude_field),
+    ) else {
+        return Ok(0);
+    };
+    let latitude = f64::from(latitude) / SEMICIRCLES_PER_DEGREE;
+    let longitude = f64::from(longitude) / SEMICIRCLES_PER_DEGREE;
+    if !(-90.0..=90.0).contains(&latitude) || !(-180.0..=180.0).contains(&longitude) {
+        return Ok(0);
+    }
+    let (wgs_latitude, wgs_longitude) = gcj02_to_wgs84(latitude, longitude);
+    if (wgs_latitude - latitude).abs() < 1e-9 && (wgs_longitude - longitude).abs() < 1e-9 {
+        return Ok(0);
+    }
+    let Some(wgs_latitude) = semicircles(wgs_latitude) else {
+        return Ok(0);
+    };
+    let Some(wgs_longitude) = semicircles(wgs_longitude) else {
+        return Ok(0);
+    };
+    document.set_i32(message_index, latitude_field, wgs_latitude)?;
+    document.set_i32(message_index, longitude_field, wgs_longitude)?;
+    Ok(1)
+}
+
+/// 中国境内 GCJ-02 → WGS-84 的二分反解；境外坐标原样返回。
+pub fn gcj02_to_wgs84(latitude: f64, longitude: f64) -> (f64, f64) {
+    if is_out_of_china(latitude, longitude) {
+        return (latitude, longitude);
+    }
+    let mut min_latitude = latitude - 0.5;
+    let mut max_latitude = latitude + 0.5;
+    let mut min_longitude = longitude - 0.5;
+    let mut max_longitude = longitude + 0.5;
+    let mut result_latitude = latitude;
+    let mut result_longitude = longitude;
+    for _ in 0..30 {
+        result_latitude = (min_latitude + max_latitude) / 2.0;
+        result_longitude = (min_longitude + max_longitude) / 2.0;
+        let (gcj_latitude, gcj_longitude) = wgs84_to_gcj02(result_latitude, result_longitude);
+        let latitude_delta = gcj_latitude - latitude;
+        let longitude_delta = gcj_longitude - longitude;
+        if latitude_delta.abs() < 1e-6 && longitude_delta.abs() < 1e-6 {
+            break;
+        }
+        if latitude_delta > 0.0 {
+            max_latitude = result_latitude;
+        } else {
+            min_latitude = result_latitude;
+        }
+        if longitude_delta > 0.0 {
+            max_longitude = result_longitude;
+        } else {
+            min_longitude = result_longitude;
+        }
+    }
+    (result_latitude, result_longitude)
+}
+
+fn semicircles(degrees: f64) -> Option<i32> {
+    let value = (degrees * SEMICIRCLES_PER_DEGREE).round();
+    (value.is_finite() && value >= f64::from(i32::MIN) && value < f64::from(i32::MAX))
+        .then_some(value as i32)
+}
+
+fn is_out_of_china(latitude: f64, longitude: f64) -> bool {
+    !(72.004..=137.8347).contains(&longitude) || !(0.8293..=55.8271).contains(&latitude)
+}
+
+fn wgs84_to_gcj02(latitude: f64, longitude: f64) -> (f64, f64) {
+    if is_out_of_china(latitude, longitude) {
+        return (latitude, longitude);
+    }
+    let (latitude_delta, longitude_delta) = gcj_delta(latitude, longitude);
+    (latitude + latitude_delta, longitude + longitude_delta)
+}
+
+fn gcj_delta(latitude: f64, longitude: f64) -> (f64, f64) {
+    const PI: f64 = std::f64::consts::PI;
+    const A: f64 = 6_378_245.0;
+    const EE: f64 = 0.006_693_421_622_965_943;
+    let x = longitude - 105.0;
+    let y = latitude - 35.0;
+    let mut latitude_transform = gcj_transform_lat(x, y);
+    let mut longitude_transform = gcj_transform_longitude(x, y);
+    let radians = latitude / 180.0 * PI;
+    let mut magic = radians.sin();
+    magic = 1.0 - EE * magic * magic;
+    let sqrt_magic = magic.sqrt();
+    latitude_transform =
+        latitude_transform * 180.0 / ((A * (1.0 - EE) / (magic * sqrt_magic)) * PI);
+    longitude_transform = longitude_transform * 180.0 / (A / sqrt_magic * radians.cos() * PI);
+    (latitude_transform, longitude_transform)
+}
+
+fn gcj_transform_lat(x: f64, y: f64) -> f64 {
+    const PI: f64 = std::f64::consts::PI;
+    let mut result = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * x.abs().sqrt();
+    result += (20.0 * (6.0 * x * PI).sin() + 20.0 * (2.0 * x * PI).sin()) * 2.0 / 3.0;
+    result += (20.0 * (y * PI).sin() + 40.0 * (y / 3.0 * PI).sin()) * 2.0 / 3.0;
+    result += (160.0 * (y / 12.0 * PI).sin() + 320.0 * (y * PI / 30.0).sin()) * 2.0 / 3.0;
+    result
+}
+
+fn gcj_transform_longitude(x: f64, y: f64) -> f64 {
+    const PI: f64 = std::f64::consts::PI;
+    let mut result = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * x.abs().sqrt();
+    result += (20.0 * (6.0 * x * PI).sin() + 20.0 * (2.0 * x * PI).sin()) * 2.0 / 3.0;
+    result += (20.0 * (x * PI).sin() + 40.0 * (x / 3.0 * PI).sin()) * 2.0 / 3.0;
+    result += (150.0 * (x / 12.0 * PI).sin() + 300.0 * (x / 30.0 * PI).sin()) * 2.0 / 3.0;
+    result
 }
 
 fn apply_spike_fix(
@@ -323,8 +493,9 @@ fn crc16(bytes: &[u8]) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::{
-        FitContentSummary, FitDecodeError, FitDocument, MAX_FIT_BYTES, decode_fit,
-        fix_fit_speed_spikes, is_valid_fit, reencode_fit,
+        FitContentSummary, FitDecodeError, FitDocument, MAX_FIT_BYTES, SEMICIRCLES_PER_DEGREE,
+        decode_fit, fix_fit_speed_spikes, gcj02_to_wgs84, is_valid_fit, reencode_fit,
+        rewrite_fit_gcj_coordinates, semicircles,
     };
 
     // 当前项目锁定的 FITSwiftSDK Encoder 生成：一个含时间、经纬度和心率的 Record。
@@ -437,6 +608,87 @@ mod tests {
                 fixed_count: 0,
             }
         );
+    }
+
+    #[test]
+    fn converts_only_china_coordinates_in_known_fit_messages_and_recomputes_crc() {
+        let input = gcj_coordinate_fit(31.3, 120.6);
+        let output = rewrite_fit_gcj_coordinates(&input).unwrap();
+        assert_eq!(output.rewritten_count, 7);
+        assert_ne!(output.data, input);
+        assert!(is_valid_fit(&output.data));
+
+        let input_document = FitDocument::parse(&input).unwrap();
+        let input_latitude =
+            f64::from(input_document.read_i32(0, 0).unwrap()) / SEMICIRCLES_PER_DEGREE;
+        let input_longitude =
+            f64::from(input_document.read_i32(0, 1).unwrap()) / SEMICIRCLES_PER_DEGREE;
+        let (expected_latitude, expected_longitude) =
+            gcj02_to_wgs84(input_latitude, input_longitude);
+        let document = FitDocument::parse(&output.data).unwrap();
+        assert_eq!(document.field_bytes(0, 99), Some(&[0xDE, 0xAD, 0xBE][..]));
+        for (index, message) in document.messages().iter().enumerate() {
+            let pairs: &[(u8, u8)] = match message.global_number() {
+                20 => &[(0, 1)],
+                19 => &[(3, 4), (5, 6)],
+                18 => &[(3, 4), (29, 30), (31, 32), (38, 39)],
+                _ => continue,
+            };
+            for &(latitude, longitude) in pairs {
+                assert_eq!(
+                    document.read_i32(index, latitude),
+                    semicircles(expected_latitude)
+                );
+                assert_eq!(
+                    document.read_i32(index, longitude),
+                    semicircles(expected_longitude)
+                );
+                assert_ne!(
+                    document.read_i32(index, latitude),
+                    Some(semicircles(31.3).unwrap())
+                );
+                assert_ne!(
+                    document.read_i32(index, longitude),
+                    Some(semicircles(120.6).unwrap())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn keeps_foreign_and_wrong_typed_coordinates_byte_for_byte() {
+        let outside = gcj_coordinate_fit(37.7749, -122.4194);
+        assert_eq!(rewrite_fit_gcj_coordinates(&outside).unwrap().data, outside);
+
+        let wrong_type = fit_file(&[
+            0x40, 0, 0, 20, 0, 2, // Record
+            0, 4, 0x86, // position_lat but uint32: 不作为标准坐标字段改写
+            1, 4, 0x86, // position_long but uint32
+            0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]);
+        assert_eq!(
+            rewrite_fit_gcj_coordinates(&wrong_type).unwrap().data,
+            wrong_type
+        );
+
+        let wrong_size = fit_file(&[
+            0x40, 0, 0, 20, 0, 2, // Record
+            0, 5, 0x85, // position_lat but nonstandard size
+            1, 5, 0x85, // position_long but nonstandard size
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]);
+        assert_eq!(
+            rewrite_fit_gcj_coordinates(&wrong_size).unwrap().data,
+            wrong_size
+        );
+    }
+
+    #[test]
+    fn gcj_inverse_moves_beijing_and_keeps_foreign_coordinate() {
+        let (wgs_latitude, wgs_longitude) = gcj02_to_wgs84(39.9042, 116.4074);
+        assert!((wgs_latitude - 39.9028).abs() < 0.0003);
+        assert!((wgs_longitude - 116.4012).abs() < 0.0003);
+        assert_eq!(gcj02_to_wgs84(37.7749, -122.4194), (37.7749, -122.4194));
     }
 
     #[test]
@@ -738,6 +990,66 @@ mod tests {
         data.extend_from_slice(&distance.to_le_bytes());
         data.extend_from_slice(&speed.to_le_bytes());
         data.extend_from_slice(&unknown);
+    }
+
+    fn gcj_coordinate_fit(latitude: f64, longitude: f64) -> Vec<u8> {
+        let latitude = semicircles(latitude).unwrap();
+        let longitude = semicircles(longitude).unwrap();
+        let mut data = Vec::new();
+        append_definition(&mut data, 0, 20, &[(0, 0x85), (1, 0x85), (99, 0x0D)]);
+        data.push(0);
+        append_i32(&mut data, latitude);
+        append_i32(&mut data, longitude);
+        data.extend_from_slice(&[0xDE, 0xAD, 0xBE]);
+
+        append_definition(
+            &mut data,
+            1,
+            19,
+            &[(3, 0x85), (4, 0x85), (5, 0x85), (6, 0x85)],
+        );
+        data.push(1);
+        for _ in 0..2 {
+            append_i32(&mut data, latitude);
+            append_i32(&mut data, longitude);
+        }
+
+        append_definition(
+            &mut data,
+            2,
+            18,
+            &[
+                (3, 0x85),
+                (4, 0x85),
+                (29, 0x85),
+                (30, 0x85),
+                (31, 0x85),
+                (32, 0x85),
+                (38, 0x85),
+                (39, 0x85),
+            ],
+        );
+        data.push(2);
+        for _ in 0..4 {
+            append_i32(&mut data, latitude);
+            append_i32(&mut data, longitude);
+        }
+        fit_file(&data)
+    }
+
+    fn append_definition(data: &mut Vec<u8>, local: u8, global: u16, fields: &[(u8, u8)]) {
+        data.push(0x40 | local);
+        data.extend_from_slice(&[0, 0]);
+        data.extend_from_slice(&global.to_le_bytes());
+        data.push(fields.len() as u8);
+        for &(number, base_type) in fields {
+            let size = if base_type == 0x0D { 3 } else { 4 };
+            data.extend_from_slice(&[number, size, base_type]);
+        }
+    }
+
+    fn append_i32(data: &mut Vec<u8>, value: i32) {
+        data.extend_from_slice(&value.to_le_bytes());
     }
 
     fn fit_file_with_header(data: &[u8], header_size: u8, zero_header_crc: bool) -> Vec<u8> {
