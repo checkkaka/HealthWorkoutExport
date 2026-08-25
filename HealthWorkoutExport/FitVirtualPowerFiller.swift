@@ -501,6 +501,7 @@ enum FitVirtualPowerFiller {
         var lons = [Double?](repeating: nil, count: n)
         var times = [Date?](repeating: nil, count: n)
         var dists = [Double?](repeating: nil, count: n)
+        var nativeGrades = [Double?](repeating: nil, count: n)
 
         for i in 0..<n {
             let r = records[i]
@@ -515,6 +516,8 @@ enum FitVirtualPowerFiller {
                 lons[i] = Double(lo) / semicirclesPerDegree
             }
             dists[i] = r.getDistance()
+            // 调用 getGrade：SDK 已按 scale 100 转成百分比；无字段则为 nil。
+            nativeGrades[i] = r.getGrade()
         }
 
         // 调用 replaceGlitchSpeedsWithPrevious：跳变+回落确认的飞点改用上一秒速度。
@@ -532,14 +535,15 @@ enum FitVirtualPowerFiller {
 
         for i in 0..<n {
             let date = times[i] ?? Date()
-            var grade = 0.0
+            // 调用 getGrade：该秒有原生坡度就用（含第一秒）；没有才走平滑海拔差分。
+            var grade = nativeGrades[i] ?? 0.0
             var accel = 0.0
             var bearing: Double?
 
             if i > 0, let t0 = times[i - 1], let t1 = times[i] {
                 let dt = t1.timeIntervalSince(t0)
                 if dt > 0 {
-                    if let a0 = smoothAlt[i - 1], let a1 = smoothAlt[i] {
+                    if nativeGrades[i] == nil, let a0 = smoothAlt[i - 1], let a1 = smoothAlt[i] {
                         let dd: Double
                         if let d0 = dists[i - 1], let d1 = dists[i], d1 > d0 {
                             dd = d1 - d0
