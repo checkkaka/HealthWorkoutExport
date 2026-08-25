@@ -291,6 +291,69 @@ final class FitActivityEncoderTests: XCTestCase {
         XCTAssertEqual(session.getTotalElapsedTime(), 60)
     }
 
+    /// sensorsOnly：主无 grade 时从副源抄 Record.grade；不插缺秒、不改 GPS/距离。
+    func testFitMergeSensorsOnlyCopiesGradeFromSecondary() throws {
+        let base = Date(timeIntervalSince1970: 1_720_000_200)
+        let sc = 2_147_483_648.0 / 180.0
+        let primaryLat = Int32((31.3 * sc).rounded())
+        let primaryLon = Int32((120.6 * sc).rounded())
+
+        func makeFit(hasGrade: Bool, extraSecond: Bool) throws -> Data {
+            let encoder = FITSwiftSDK.Encoder()
+            let fileId = FileIdMesg()
+            try fileId.setType(File.activity)
+            try fileId.setManufacturer(Manufacturer.development)
+            try fileId.setProduct(1)
+            try fileId.setSerialNumber(hasGrade ? 8 : 7)
+            try fileId.setTimeCreated(DateTime(date: base))
+            encoder.write(mesg: fileId)
+            let r0 = RecordMesg()
+            try r0.setTimestamp(DateTime(date: base))
+            try r0.setPositionLat(hasGrade ? Int32((39.9 * sc).rounded()) : primaryLat)
+            try r0.setPositionLong(hasGrade ? Int32((116.4 * sc).rounded()) : primaryLon)
+            try r0.setDistance(hasGrade ? 999 : 0)
+            if hasGrade { try r0.setGrade(5.5) }
+            encoder.write(mesg: r0)
+            let r1 = RecordMesg()
+            try r1.setTimestamp(DateTime(date: base.addingTimeInterval(1)))
+            try r1.setPositionLat(hasGrade ? Int32((39.91 * sc).rounded()) : Int32((31.301 * sc).rounded()))
+            try r1.setPositionLong(hasGrade ? Int32((116.41 * sc).rounded()) : Int32((120.601 * sc).rounded()))
+            try r1.setDistance(hasGrade ? 1999 : 10)
+            if hasGrade { try r1.setGrade(-2.0) }
+            encoder.write(mesg: r1)
+            if extraSecond {
+                let r2 = RecordMesg()
+                try r2.setTimestamp(DateTime(date: base.addingTimeInterval(2)))
+                try r2.setGrade(8.0)
+                encoder.write(mesg: r2)
+            }
+            let session = SessionMesg()
+            try session.setTimestamp(DateTime(date: base.addingTimeInterval(60)))
+            try session.setStartTime(DateTime(date: base))
+            try session.setTotalElapsedTime(60)
+            try session.setSport(.cycling)
+            try session.setTotalDistance(hasGrade ? 5000 : 10)
+            encoder.write(mesg: session)
+            return encoder.close()
+        }
+
+        let merged = try FitMerger.merge(
+            primary: try makeFit(hasGrade: false, extraSecond: false),
+            primaryName: "p.fit",
+            others: [(try makeFit(hasGrade: true, extraSecond: true), "s.fit")],
+            supplementMode: .sensorsOnly
+        )
+        let records = try FitMerger.decode(merged).recordMesgs.sorted {
+            ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)
+        }
+        XCTAssertEqual(records.count, 2, "sensorsOnly 不得插入副源缺秒")
+        XCTAssertEqual(records[0].getGrade(), 5.5)
+        XCTAssertEqual(records[1].getGrade(), -2.0)
+        XCTAssertEqual(records[0].getPositionLat(), primaryLat)
+        XCTAssertEqual(records[0].getDistance(), 0)
+        XCTAssertEqual(records[1].getDistance(), 10)
+    }
+
     /// 少于 2 个文件必须报错。
     func testFitMergeRequiresTwoFiles() {
         XCTAssertThrowsError(try FitMerger.merge(primary: Data(), primaryName: "p.fit", others: []))

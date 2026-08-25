@@ -401,6 +401,55 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         XCTAssertFalse(result.activityRejected)
     }
 
+    /// 平路海拔不变时，原生 Record.grade 仍应抬高该秒功率（不能只靠海拔差分）。
+    func testPrefersNativeRecordGradeOverAltitudeDelta() async throws {
+        let start = Date(timeIntervalSince1970: 1_720_000_000)
+        let startFit = DateTime(date: start)
+        let fileId = FileIdMesg()
+        try fileId.setType(File.activity)
+        try fileId.setManufacturer(Manufacturer.development)
+        try fileId.setProduct(1)
+        try fileId.setTimeCreated(startFit)
+        try fileId.setSerialNumber(1)
+        let encoder = Encoder()
+        encoder.write(mesg: fileId)
+        let semicircles = 2_147_483_648.0 / 180.0
+        for i in 0..<3 {
+            let record = RecordMesg()
+            try record.setTimestamp(DateTime(date: start.addingTimeInterval(Double(i))))
+            try record.setSpeed(8)
+            try record.setAltitude(10)
+            try record.setCadence(80)
+            try record.setPositionLat(Int32((31.2 * semicircles).rounded()))
+            try record.setPositionLong(Int32((121.5 * semicircles).rounded()))
+            try record.setDistance(8 * Double(i))
+            if i >= 1 {
+                try record.setGrade(8)
+            }
+            encoder.write(mesg: record)
+        }
+        let session = SessionMesg()
+        try session.setTimestamp(DateTime(date: start.addingTimeInterval(2)))
+        try session.setStartTime(startFit)
+        try session.setTotalElapsedTime(2)
+        try session.setTotalTimerTime(2)
+        try session.setSport(.cycling)
+        encoder.write(mesg: session)
+        let fit = encoder.close()
+
+        let result = try await FitVirtualPowerFiller.fillIfNeeded(
+            fit,
+            weatherProvider: { _, _, _, _ in [] }
+        )
+        XCTAssertEqual(result.filledCount, 3)
+        let records = try FitMerger.decode(result.data).recordMesgs.sorted {
+            ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)
+        }
+        let p0 = try XCTUnwrap(records[0].getPower())
+        let p2 = try XCTUnwrap(records[2].getPower())
+        XCTAssertGreaterThan(p2, p0 + 100, "第 2 秒有原生 8% 坡度，功率应明显高于平路第 0 秒")
+    }
+
     /// 长轨迹应按距离抽出多个天气锚点（而不只是起点）。
     func testWeatherAnchorsSampleAlongRoute() throws {
         let start = Date(timeIntervalSince1970: 1_720_000_000)
