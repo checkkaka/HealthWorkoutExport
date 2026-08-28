@@ -21,4 +21,59 @@ final class CommuteClassifierTests: XCTestCase {
         // 20km / 50min = 24 km/h but distance >= 16
         XCTAssertFalse(CommuteClassifier.isCommute(distanceMeters: 20_000, durationSeconds: 3000))
     }
+
+    func testCommuteUsesBikeTitleUnlessCustom() {
+        XCTAssertEqual(
+            CommuteClassifier.stravaActivityName(
+                customTitle: nil,
+                isCommute: true,
+                originalTitle: "骑车"
+            ),
+            "通勤🚲"
+        )
+        XCTAssertEqual(
+            CommuteClassifier.stravaActivityName(
+                customTitle: " 回家 ",
+                isCommute: true,
+                originalTitle: "骑车"
+            ),
+            "回家"
+        )
+        XCTAssertEqual(
+            CommuteClassifier.stravaActivityName(
+                customTitle: nil,
+                isCommute: false,
+                originalTitle: "骑车"
+            ),
+            "骑车"
+        )
+    }
+
+    func testVirtualPowerCopyAppendsAtEnd() {
+        XCTAssertEqual(
+            VirtualPowerSocialCopy.appended(to: nil),
+            VirtualPowerSocialCopy.activityDescription
+        )
+        XCTAssertEqual(
+            VirtualPowerSocialCopy.appended(to: "晨骑"),
+            "晨骑\n\n" + VirtualPowerSocialCopy.activityDescription
+        )
+        XCTAssertEqual(
+            VirtualPowerSocialCopy.appended(to: VirtualPowerSocialCopy.activityDescription),
+            VirtualPowerSocialCopy.activityDescription
+        )
+    }
+
+    func testCommuteUsesRoadsideWindShelter() {
+        XCTAssertEqual(
+            CommuteClassifier.windShelterFactor(distanceMeters: 3_430, durationSeconds: 507),
+            0.7,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            CommuteClassifier.windShelterFactor(distanceMeters: 20_000, durationSeconds: 2_400),
+            1.0,
+            accuracy: 0.001
+        )
+    }
 }

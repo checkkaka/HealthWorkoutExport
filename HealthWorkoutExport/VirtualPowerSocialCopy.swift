@@ -4,5 +4,14 @@ import Foundation
 enum VirtualPowerSocialCopy {
     /// 虚拟功率写入成功后附到活动 description（API 上传生效）。
     static let activityDescription =
-        "没钱买功率计，本场瓦特靠风速、坡度和速度等参数拼出来的，仅供参考（出自HealthWorkoutExport）"
+        "功率计还在许愿清单里，本场瓦特是风、坡和速度一起算的，看看就好～（出自 HealthWorkoutExport）"
+
+    /// 把虚拟功率说明接到已有描述末尾；已含则不重复。
+    static func appended(to existing: String?) -> String {
+        let note = activityDescription
+        let current = existing?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if current.isEmpty { return note }
+        if current.contains(note) { return current }
+        return current + "\n\n" + note
+    }
 }

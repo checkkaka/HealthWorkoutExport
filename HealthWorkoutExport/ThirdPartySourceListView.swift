@@ -61,7 +61,12 @@ struct ThirdPartySourceListView: View {
             .sheet(isPresented: $showAutoSync, onDismiss: {
                 Task { await refreshSyncState() }
             }) {
-                AutoSyncView(entrySourceId: sourceId)
+                AutoSyncView(
+                    entrySourceId: sourceId,
+                    selectedActivityIds: Array(exportViewModel.selectedIDs),
+                    selectedStart: exportViewModel.selectedActivities(from: activities).map(\.startDate).min(),
+                    selectedEnd: exportViewModel.selectedActivities(from: activities).map(\.endDate).max()
+                )
             }
             .sheet(isPresented: $showStravaSettings) {
                 NavigationStack { StravaSettingsView() }
@@ -278,12 +283,6 @@ private struct SourceActivityRowView: View {
                 Button(action: onOpenDetail) {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
-                            Text(activity.title).font(.body.weight(.semibold))
-                            if isSynced {
-                                Image(systemName: "checkmark.seal.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.green)
-                            }
                             if hasVirtualPower {
                                 Text("虚拟功率")
                                     .font(.caption2.weight(.semibold))
@@ -299,6 +298,12 @@ private struct SourceActivityRowView: View {
                                     .padding(.horizontal, 5)
                                     .padding(.vertical, 2)
                                     .background(.teal.opacity(0.12), in: Capsule())
+                            }
+                            Text(activity.title).font(.body.weight(.semibold))
+                            if isSynced {
+                                Image(systemName: "checkmark.seal.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.green)
                             }
                             if remoteId != nil {
                                 Image(systemName: "bicycle.circle.fill")

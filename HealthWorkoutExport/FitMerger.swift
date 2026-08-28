@@ -32,7 +32,7 @@ enum FitMergeTimeAlign: Equatable {
 enum FitSupplementMode: Equatable {
     /// 旧行为：同秒补全缺字段；主缺的秒整条插入（含 GPS）。手动合并页用。
     case fillRecords
-    /// 自动同步：只往主已有秒上补传感器；绝不插入副源 GPS/distance，起止严格跟主源。
+    /// 自动同步：只往主已有秒上补传感器（含 grade）；绝不插入副源 GPS/distance，起止严格跟主源。
     case sensorsOnly
 }
 
@@ -45,7 +45,7 @@ enum FitSupplementMode: Equatable {
 /// - Event / Lap：主时间范围内沿用主文件；范围外保留副文件各自的（防重叠双计）。
 /// - Activity / FileId 沿用主文件。
 ///
-/// `sensorsOnly`（自动同步）：同秒只补心率/功率/踏频等；主缺秒不插整条；起止/距离以主为准。
+/// `sensorsOnly`（自动同步）：同秒只补心率/功率/踏频/体温/坡度；主缺秒不插整条；起止/距离以主为准。
 enum FitMerger {
     /// 解码 FIT 二进制为消息集合。
     static func decode(_ data: Data, name: String = "fit") throws -> FitMessages {
@@ -182,7 +182,7 @@ enum FitMerger {
                 alignedMax = max(alignedMax ?? key, key)
                 if let primaryRecord = recordsBySecond[key] {
                     if sensorsOnly {
-                        // 调用 fillSensorFields：同秒只补心率/功率/踏频等，不碰 GPS/距离。
+                        // 调用 fillSensorFields：同秒只补心率/功率/踏频/体温/坡度，不碰 GPS/距离。
                         try fillSensorFields(into: primaryRecord, from: otherRecord)
                     } else {
                         // 调用 fillMissingFields：同一秒冲突，以主为准，仅补主缺的字段。
@@ -475,7 +475,7 @@ enum FitMerger {
         }
     }
 
-    /// 同秒只补传感器：心率/功率/踏频/体温；不碰 GPS、距离、速度、海拔。
+    /// 同秒只补传感器：心率/功率/踏频/体温/坡度；不碰 GPS、距离、速度、海拔。
     private static func fillSensorFields(into target: RecordMesg, from source: RecordMesg) throws {
         if target.getHeartRate() == nil, let v = source.getHeartRate() {
             try target.setHeartRate(v)
@@ -488,6 +488,9 @@ enum FitMerger {
         }
         if target.getTemperature() == nil, let v = source.getTemperature() {
             try target.setTemperature(v)
+        }
+        if target.getGrade() == nil, let v = source.getGrade() {
+            try target.setGrade(v)
         }
     }
 

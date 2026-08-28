@@ -30,6 +30,9 @@ const GRAVITY_MPS2: f64 = 9.8067;
 const MAX_REALISTIC_ACCELERATION_MPS2: f64 = 2.0;
 const GPS_SPEED_JUMP_GLITCH_MPS2: f64 = 8.0 / 3.6;
 const GPS_GLITCH_RECOVERY_MAX_DELTA_MPS: f64 = 5.0 / 3.6;
+pub(crate) const COASTING_MAX_CADENCE_RPM: f64 = 30.0;
+const COMMUTE_WIND_SHELTER_FACTOR: f64 = 0.7;
+const OPEN_WIND_SHELTER_FACTOR: f64 = 1.0;
 
 /// 生成与 Swift `SyncFingerprint.make` 相同的同步幂等指纹。
 pub fn sync_fingerprint(
@@ -78,7 +81,7 @@ pub fn virtual_power_watts(
     params: VirtualPowerParams,
     cadence_rpm: Option<f64>,
 ) -> f64 {
-    if cadence_rpm.is_some_and(|cadence| cadence <= 0.0) || ground_speed_mps <= 0.1 {
+    if cadence_rpm.is_some_and(|cadence| cadence < COASTING_MAX_CADENCE_RPM) || ground_speed_mps <= 0.1 {
         return 0.0;
     }
 
@@ -116,6 +119,13 @@ pub fn headwind_mps(
 ) -> f64 {
     let delta = (wind_from_degrees - riding_bearing_degrees).to_radians();
     wind_speed_mps * delta.cos()
+}
+
+/// Open-Meteo 等 10 m 风速折到公路车气动高度（约 1.0 m，α=1/7 → 0.72）。
+pub const TEN_METER_WIND_TO_RIDER_FACTOR: f64 = 0.72;
+
+pub fn rider_height_wind_mps(ten_meter_wind_mps: f64) -> f64 {
+    ten_meter_wind_mps.max(0.0) * TEN_METER_WIND_TO_RIDER_FACTOR
 }
 
 /// 仅在速度大幅跳变且随后回落时认定 GPS 飞点。
@@ -293,6 +303,18 @@ pub fn is_commute(distance_meters: Option<f64>, duration_seconds: f64) -> bool {
     speed_kmh < SLOW_SPEED_KMH && distance_km < SLOW_COMMUTE_MAX_DISTANCE_KM
 }
 
+/// 通勤路肩遮蔽 0.7，开阔公路 1.0。叠在 10 m→骑手高度折减之上。
+pub fn commute_wind_shelter_factor(
+    distance_meters: Option<f64>,
+    duration_seconds: f64,
+) -> f64 {
+    if is_commute(distance_meters, duration_seconds) {
+        COMMUTE_WIND_SHELTER_FACTOR
+    } else {
+        OPEN_WIND_SHELTER_FACTOR
+    }
+}
+
 /// 判断两条跨来源活动是否为同一场，用于同步幂等去重。
 ///
 /// 开始时间相差不超过 5 分钟时只要求距离接近；5 至 45 分钟时还要求两边时长接近。
@@ -337,7 +359,8 @@ pub fn stable_dedupe_matches(
 mod tests {
     use super::{
         ActivityInterval, VirtualPowerParams, activity_match_score, air_density, bearing_degrees,
-        best_activity_match_index, grade_percent, headwind_mps, is_commute, is_gps_speed_glitch,
+        best_activity_match_index, commute_wind_shelter_factor, grade_percent, headwind_mps,
+        is_commute, is_gps_speed_glitch, rider_height_wind_mps,
         replace_glitch_speeds_with_previous, sanitized_acceleration_mps2, stable_dedupe_matches,
         sync_fingerprint, virtual_power_watts,
     };
@@ -358,6 +381,10 @@ mod tests {
             virtual_power_watts(10.0, 5.0, 0.0, 0.0, params, Some(0.0)),
             0.0
         );
+        assert_eq!(
+            virtual_power_watts(8.0, 0.0, 0.0, 0.0, params, Some(20.0)),
+            0.0
+        );
     }
 
     #[test]
@@ -369,6 +396,12 @@ mod tests {
     fn headwind_component_matches_swift_bearing_convention() {
         assert!(headwind_mps(5.0, 90.0, 0.0).abs() < 0.05);
         assert!((headwind_mps(5.0, 0.0, 0.0) - 5.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn ten_meter_wind_scales_to_rider_height() {
+        assert!((rider_height_wind_mps(10.0) - 7.2).abs() < 0.001);
+        assert_eq!(rider_height_wind_mps(0.0), 0.0);
     }
 
     #[test]
@@ -480,6 +513,12 @@ mod tests {
                 "distance={distance_meters:?}, duration={duration_seconds}"
             );
         }
+    }
+
+    #[test]
+    fn commute_uses_roadside_wind_shelter() {
+        assert!((commute_wind_shelter_factor(Some(3_430.0), 507.0) - 0.7).abs() < 0.001);
+        assert!((commute_wind_shelter_factor(Some(20_000.0), 2_400.0) - 1.0).abs() < 0.001);
     }
 
     #[test]

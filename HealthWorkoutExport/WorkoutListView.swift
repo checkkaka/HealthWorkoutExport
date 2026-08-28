@@ -34,7 +34,12 @@ struct WorkoutListView: View {
             .sheet(isPresented: $showAutoSync, onDismiss: {
                 Task { await refreshSyncState() }
             }) {
-                AutoSyncView(entrySourceId: HealthKitDataSource.sourceId)
+                AutoSyncView(
+                    entrySourceId: HealthKitDataSource.sourceId,
+                    selectedActivityIds: viewModel.selectedWorkouts.map(\.id.uuidString),
+                    selectedStart: viewModel.selectedWorkouts.map(\.startDate).min(),
+                    selectedEnd: viewModel.selectedWorkouts.map(\.endDate).max()
+                )
             }
             .sheet(isPresented: $showStravaSettings) {
                 NavigationStack { StravaSettingsView() }
@@ -254,14 +259,6 @@ struct WorkoutRowView: View {
 
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 6) {
-                                Text(workout.activityName)
-                                    .font(.body.weight(.semibold))
-                                    .foregroundStyle(.primary)
-                                if isSynced {
-                                    Image(systemName: "checkmark.seal.fill")
-                                        .font(.caption)
-                                        .foregroundStyle(.green)
-                                }
                                 if hasVirtualPower {
                                     Text("虚拟功率")
                                         .font(.caption2.weight(.semibold))
@@ -277,6 +274,14 @@ struct WorkoutRowView: View {
                                         .padding(.horizontal, 5)
                                         .padding(.vertical, 2)
                                         .background(.teal.opacity(0.12), in: Capsule())
+                                }
+                                Text(workout.activityName)
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                if isSynced {
+                                    Image(systemName: "checkmark.seal.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.green)
                                 }
                                 if remoteId != nil {
                                     Image(systemName: "bicycle.circle.fill")

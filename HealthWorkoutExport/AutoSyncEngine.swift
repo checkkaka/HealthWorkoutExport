@@ -71,6 +71,72 @@ final class AutoSyncEngine {
         StravaSettings.mode == .web ? webUploader : apiUploader
     }
 
+    /// 本批自定义标题；空则通勤用「通勤🚲」。
+    private var batchCustomTitle: String?
+
+    private func stravaName(originalTitle: String, commute: Bool) -> String {
+        CommuteClassifier.stravaActivityName(
+            customTitle: batchCustomTitle,
+            isCommute: commute,
+            originalTitle: originalTitle
+        )
+    }
+
+    /// 上传后用 API PUT 强行改标题，并把虚拟功率说明接到描述末尾。
+    private func uploadFitWithMetadata(
+        _ data: Data,
+        externalId: String,
+        filename: String,
+        originalTitle: String,
+        commute: Bool,
+        descriptionNote: String?,
+        uploader: any StravaUploading,
+        notes: inout [String]
+    ) async throws -> StravaUploadResult {
+        let name = stravaName(originalTitle: originalTitle, commute: commute)
+        let result = try await uploader.uploadFit(
+            data,
+            externalId: externalId,
+            filename: filename,
+            name: name,
+            commute: commute,
+            description: descriptionNote
+        )
+        if !result.isDuplicate {
+            await applyActivityMetadata(
+                remoteId: result.remoteId,
+                name: name,
+                commute: commute,
+                descriptionNote: descriptionNote,
+                notes: &notes,
+                titleForNotes: originalTitle
+            )
+        }
+        return result
+    }
+
+    private func applyActivityMetadata(
+        remoteId: String?,
+        name: String,
+        commute: Bool,
+        descriptionNote: String?,
+        notes: inout [String],
+        titleForNotes: String
+    ) async {
+        guard let remoteId, StravaSpeedAnomaly.isOpenableRemoteId(remoteId) else { return }
+        guard await apiUploader.isReady() else { return }
+        do {
+            try await apiUploader.updateActivityMetadata(
+                id: remoteId,
+                name: name,
+                commute: commute,
+                descriptionNote: descriptionNote
+            )
+        } catch {
+            notes.append("标题/描述未能写入远端：\(titleForNotes)（\(error.localizedDescription)）")
+        }
+    }
+
     func run(
         primarySourceId: String,
         supplementSourceIds: [String],
@@ -79,6 +145,10 @@ final class AutoSyncEngine {
         customStart: Date,
         customEnd: Date,
         skipIfHistoryExists: Bool = false,
+        selectedActivityIds: [String] = [],
+        selectedStart: Date? = nil,
+        selectedEnd: Date? = nil,
+        customTitle: String? = nil,
         onProgress: @MainActor @escaping (AutoSyncProgress) -> Void,
         onDuplicate: @MainActor @escaping (StravaDuplicatePrompt) async -> StravaDuplicateDecision
     ) async throws -> AutoSyncResult {
@@ -89,12 +159,28 @@ final class AutoSyncEngine {
             .filter { $0 != primarySourceId }
             .compactMap { registry.source(id: $0) }
 
+        let selectedIds = Set(selectedActivityIds.filter { !$0.isEmpty })
         let range: (start: Date, end: Date)
-        switch mode {
-        case .today:
-            range = SyncDayRange.today()
-        case .history:
-            range = historyRange.resolve(customStart: customStart, customEnd: customEnd)
+        if !selectedIds.isEmpty {
+            guard let start = selectedStart, let end = selectedEnd else {
+                return AutoSyncResult(
+                    uploaded: 0,
+                    deduped: 0,
+                    failed: 0,
+                    notes: ["已选活动缺少时间范围，未上传任何内容"]
+                )
+            }
+            range = (
+                start.addingTimeInterval(-3600),
+                end.addingTimeInterval(3600)
+            )
+        } else {
+            switch mode {
+            case .today:
+                range = SyncDayRange.today()
+            case .history:
+                range = historyRange.resolve(customStart: customStart, customEnd: customEnd)
+            }
         }
 
         let uploader = uploader()
@@ -103,16 +189,33 @@ final class AutoSyncEngine {
         // 本批新建天气缓存；结束时清空引用，避免跨批次串数据。
         let batchWeatherCache = OpenMeteoWeatherCache()
         weatherCache = batchWeatherCache
-        defer { weatherCache = nil }
+        batchCustomTitle = customTitle
+        defer {
+            weatherCache = nil
+            batchCustomTitle = nil
+        }
 
         // 调用 listActivities：拉取主源时间窗内活动。
-        let primaries = try await primary.listActivities(from: range.start, to: range.end)
+        var primaries = try await primary.listActivities(from: range.start, to: range.end)
+        if !selectedIds.isEmpty {
+            primaries = primaries.filter { selectedIds.contains($0.id) }
+        }
         var progress = AutoSyncProgress.zero
         progress.total = primaries.count
-        progress.message = "已拉取主源 \(primaries.count) 条"
+        progress.message = selectedIds.isEmpty
+            ? "已拉取主源 \(primaries.count) 条"
+            : "已选 \(primaries.count) 条"
         onProgress(progress)
 
         if primaries.isEmpty {
+            if !selectedIds.isEmpty {
+                return AutoSyncResult(
+                    uploaded: 0,
+                    deduped: 0,
+                    failed: 0,
+                    notes: ["已选活动未在主源「\(primary.displayName)」找到，未上传任何内容"]
+                )
+            }
             let rangeLabel: String
             switch mode {
             case .today:
@@ -456,13 +559,16 @@ final class AutoSyncEngine {
                     distanceMeters: activity.distanceMeters,
                     durationSeconds: activity.duration
                 )
-                // 调用 uploader.uploadFit：上传到 Strava。
-                let result = try await uploader.uploadFit(
+                // 调用 uploadFitWithMetadata：上传并 PUT 标题/描述。
+                let result = try await uploadFitWithMetadata(
                     uploadData,
                     externalId: useOverwriteExternalId ? overwriteExternalId(fingerprint) : fingerprint,
                     filename: filename,
+                    originalTitle: activity.title,
                     commute: commute,
-                    description: activityDescription
+                    descriptionNote: activityDescription,
+                    uploader: uploader,
+                    notes: &notes
                 )
 
                 if result.isDuplicate {
@@ -672,6 +778,13 @@ final class AutoSyncEngine {
         "\(fingerprint)-ow-\(Int(Date().timeIntervalSince1970))"
     }
 
+    /// 覆盖后 duplicate 撞上的远端是否已 404（幽灵索引）。API 未就绪时不当成幽灵，避免误记失败。
+    private func isCollidedRemoteMissing(_ remoteId: String?) async -> Bool {
+        guard let remoteId, StravaSpeedAnomaly.isOpenableRemoteId(remoteId) else { return false }
+        guard await apiUploader.isReady() else { return false }
+        return (try? await apiUploader.fetchActivitySpeed(id: remoteId)) == nil
+    }
+
     /// 处理预检命中或 duplicate：返回 true 表示本条已结束（跳过/打开），false 表示覆盖后已重传或调用方还需继续。
     private func handleDuplicate(
         fingerprint: String,
@@ -699,12 +812,15 @@ final class AutoSyncEngine {
            StravaSpeedAnomaly.isOpenableRemoteId(remoteId),
            await apiUploader.isReady(),
            (try? await apiUploader.fetchActivitySpeed(id: remoteId)) == nil {
-            let result = try await uploader.uploadFit(
+            let result = try await uploadFitWithMetadata(
                 fitData,
                 externalId: overwriteExternalId(fingerprint),
                 filename: filename,
+                originalTitle: title,
                 commute: commute,
-                description: activityDescription
+                descriptionNote: activityDescription,
+                uploader: uploader,
+                notes: &notes
             )
             if !result.isDuplicate {
                 await stateStore.markUploaded(
@@ -789,16 +905,57 @@ final class AutoSyncEngine {
                 notes.append("已删除远端 \(remoteId)，继续上传：\(title)")
                 return false
             }
-            // 调用 uploadFit：按当前模式重传（换 external_id，避免撞已删幽灵）。
-            let result = try await uploader.uploadFit(
+            // 调用 uploadFitWithMetadata：按当前模式重传（换 external_id，避免撞已删幽灵）。
+            var result = try await uploadFitWithMetadata(
                 fitData,
                 externalId: overwriteExternalId(fingerprint),
                 filename: filename,
+                originalTitle: title,
                 commute: commute,
-                description: activityDescription
+                descriptionNote: activityDescription,
+                uploader: uploader,
+                notes: &notes
             )
-            if result.isDuplicate {
-                let hit = result.remoteId.map { "（撞上远端 \($0)）" } ?? ""
+            let retryStarted = Date()
+            var collidedMissing = await isCollidedRemoteMissing(result.remoteId)
+            while result.isDuplicate,
+                  OverwriteGhostDuplicate.shouldRetry(
+                    collidedRemoteMissing: collidedMissing,
+                    elapsed: Date().timeIntervalSince(retryStarted)
+                  ) {
+                try Task.checkCancellation()
+                if let sleepFor = OverwriteGhostDuplicate.sleepInterval(
+                    elapsed: Date().timeIntervalSince(retryStarted)
+                ) {
+                    try await Task.sleep(nanoseconds: UInt64(sleepFor * 1_000_000_000))
+                }
+                try Task.checkCancellation()
+                result = try await uploadFitWithMetadata(
+                    fitData,
+                    externalId: overwriteExternalId(fingerprint),
+                    filename: filename,
+                    originalTitle: title,
+                    commute: commute,
+                    descriptionNote: activityDescription,
+                    uploader: uploader,
+                    notes: &notes
+                )
+                if !result.isDuplicate { break }
+                collidedMissing = await isCollidedRemoteMissing(result.remoteId)
+            }
+            let hit = result.remoteId.map { "（撞上远端 \($0)）" } ?? ""
+            switch OverwriteGhostDuplicate.outcome(
+                isDuplicate: result.isDuplicate,
+                collidedRemoteMissing: result.isDuplicate ? await isCollidedRemoteMissing(result.remoteId) : false
+            ) {
+            case .failedGhost:
+                await stateStore.markFailed(
+                    fingerprint: fingerprint,
+                    message: "覆盖后幽灵 duplicate\(hit)，远端已不存在"
+                )
+                progress.failed += 1
+                notes.append("覆盖后幽灵 duplicate\(hit)，已记失败：\(title)")
+            case .deduped:
                 await stateStore.markUploaded(
                     fingerprint: fingerprint,
                     remoteId: result.remoteId,
@@ -810,7 +967,7 @@ final class AutoSyncEngine {
                 )
                 progress.deduped += 1
                 notes.append("覆盖后仍 duplicate\(hit)：\(title)")
-            } else {
+            case .uploaded:
                 await stateStore.markUploaded(
                     fingerprint: fingerprint,
                     remoteId: result.remoteId,
@@ -821,7 +978,6 @@ final class AutoSyncEngine {
                     syncedFITData: fitData,
                     hasVirtualPower: activityDescription != nil
                 )
-                // 调用 rememberRemote：覆盖重传后写入本批预检列表。
                 rememberRemote(
                     &remoteActivities,
                     remoteId: result.remoteId,
@@ -839,6 +995,7 @@ final class AutoSyncEngine {
     /// 勾选重传：删除前保存最终 FIT；失败时下次优先恢复；默认覆盖不弹窗，通道跟当前设置。
     func resyncFingerprints(
         _ fingerprints: [String],
+        customTitle: String? = nil,
         onProgress: @MainActor @escaping (AutoSyncProgress) -> Void
     ) async throws -> AutoSyncResult {
         let uploader = uploader()
@@ -847,7 +1004,11 @@ final class AutoSyncEngine {
         // 重传批次同样共用天气缓存。
         let batchWeatherCache = OpenMeteoWeatherCache()
         weatherCache = batchWeatherCache
-        defer { weatherCache = nil }
+        batchCustomTitle = customTitle
+        defer {
+            weatherCache = nil
+            batchCustomTitle = nil
+        }
 
         var progress = AutoSyncProgress.zero
         progress.total = fingerprints.count
@@ -1025,13 +1186,16 @@ final class AutoSyncEngine {
                     durationSeconds: prepared.durationSeconds,
                     batchAt: preservedBatchAt
                 )
-                // 调用 uploadFit：按当前设置通道上传（重传一律换 external_id）。
-                let result = try await uploader.uploadFit(
+                // 调用 uploadFitWithMetadata：按当前设置通道上传（重传一律换 external_id）。
+                let result = try await uploadFitWithMetadata(
                     prepared.uploadData,
                     externalId: overwriteExternalId(fingerprint),
                     filename: prepared.filename,
+                    originalTitle: prepared.title,
                     commute: prepared.commute,
-                    description: prepared.activityDescription
+                    descriptionNote: prepared.activityDescription,
+                    uploader: uploader,
+                    notes: &notes
                 )
 
                 if result.isDuplicate {

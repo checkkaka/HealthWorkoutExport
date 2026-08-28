@@ -1,6 +1,6 @@
 use super::{FitDecodeError, FitDocument};
 use crate::{
-    VirtualPowerParams, grade_percent, replace_glitch_speeds_with_previous,
+    COASTING_MAX_CADENCE_RPM, VirtualPowerParams, grade_percent, replace_glitch_speeds_with_previous,
     sanitized_acceleration_mps2, virtual_power_watts,
 };
 
@@ -104,7 +104,10 @@ pub fn fill_fit_virtual_power(
             continue;
         }
         let index = records[position];
-        if document.read_u8(index, CADENCE) == Some(0) {
+        if document
+            .read_u8(index, CADENCE)
+            .is_some_and(|cadence| f64::from(cadence) < COASTING_MAX_CADENCE_RPM)
+        {
             draft[position] = Some(0);
             continue;
         }
