@@ -244,4 +244,32 @@ final class StravaActivityLookupTests: XCTestCase {
         XCTAssertTrue(placeholder.hasPrefix("local-"))
         XCTAssertNotEqual(placeholder, "local-\(Int(Date().timeIntervalSince1970))")
     }
+
+    func testOverwriteGhostRetriesInsideTenSeconds() {
+        XCTAssertTrue(OverwriteGhostDuplicate.shouldRetry(collidedRemoteMissing: true, elapsed: 0))
+        XCTAssertTrue(OverwriteGhostDuplicate.shouldRetry(collidedRemoteMissing: true, elapsed: 9.9))
+        XCTAssertFalse(OverwriteGhostDuplicate.shouldRetry(collidedRemoteMissing: true, elapsed: 10))
+        XCTAssertFalse(OverwriteGhostDuplicate.shouldRetry(collidedRemoteMissing: false, elapsed: 0))
+    }
+
+    func testOverwriteGhostSleepStaysInsideWindow() {
+        XCTAssertEqual(OverwriteGhostDuplicate.sleepInterval(elapsed: 0), 2)
+        XCTAssertEqual(OverwriteGhostDuplicate.sleepInterval(elapsed: 9), 1)
+        XCTAssertNil(OverwriteGhostDuplicate.sleepInterval(elapsed: 10))
+    }
+
+    func testOverwriteGhostOutcomeFailsWhenStillMissing() {
+        XCTAssertEqual(
+            OverwriteGhostDuplicate.outcome(isDuplicate: false, collidedRemoteMissing: true),
+            .uploaded
+        )
+        XCTAssertEqual(
+            OverwriteGhostDuplicate.outcome(isDuplicate: true, collidedRemoteMissing: false),
+            .deduped
+        )
+        XCTAssertEqual(
+            OverwriteGhostDuplicate.outcome(isDuplicate: true, collidedRemoteMissing: true),
+            .failedGhost
+        )
+    }
 }

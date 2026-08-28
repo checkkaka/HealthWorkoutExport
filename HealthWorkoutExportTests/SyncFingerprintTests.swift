@@ -41,6 +41,73 @@ final class SyncFingerprintTests: XCTestCase {
         try? FileManager.default.removeItem(at: url)
     }
 
+    func testStoreKeepsUploadedFITAndRemovesItWithRecord() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("synced_fit_\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stateURL = directory.appendingPathComponent("sync_state.json")
+        let fitDirectory = directory.appendingPathComponent("fits", isDirectory: true)
+        let store = SyncStateStore(fileURL: stateURL, fitDirectoryURL: fitDirectory)
+        let fingerprint = String(repeating: "a", count: 64)
+        let fitData = Data([0x0E, 0x10, 0x20, 0x30])
+
+        await store.markPending(
+            fingerprint: fingerprint,
+            primarySourceId: "healthkit",
+            primaryActivityId: "activity-1"
+        )
+        await store.markUploaded(
+            fingerprint: fingerprint,
+            remoteId: "123",
+            syncedFITData: fitData,
+            hasVirtualPower: true
+        )
+
+        let storedURL = await store.syncedFITURL(
+            primarySourceId: "healthkit",
+            primaryActivityId: "activity-1"
+        )
+        let fitURL = try XCTUnwrap(storedURL)
+        XCTAssertEqual(try Data(contentsOf: fitURL), fitData)
+        let primaryKey = SyncStateStore.primaryKey(sourceId: "healthkit", activityId: "activity-1")
+        let virtualPowerKeys = await store.virtualPowerPrimaryKeys()
+        let syncedFITKeys = await store.syncedFITPrimaryKeys()
+        XCTAssertTrue(virtualPowerKeys.contains(primaryKey))
+        XCTAssertTrue(syncedFITKeys.contains(primaryKey))
+
+        await store.remove(fingerprint: fingerprint)
+        let removedURL = await store.syncedFITURL(
+            primarySourceId: "healthkit",
+            primaryActivityId: "activity-1"
+        )
+        let removedVirtualPowerKeys = await store.virtualPowerPrimaryKeys()
+        let removedSyncedFITKeys = await store.syncedFITPrimaryKeys()
+        XCTAssertNil(removedURL)
+        XCTAssertFalse(removedVirtualPowerKeys.contains(primaryKey))
+        XCTAssertFalse(removedSyncedFITKeys.contains(primaryKey))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fitURL.path))
+    }
+
+    @MainActor
+    func testSyncedFITExportFallsBackWhenSelectedActivityHasNoFile() {
+        let activity = SourceActivity(
+            id: "activity-1",
+            sourceId: "xingzhe",
+            title: "骑行",
+            startDate: Date(),
+            endDate: Date().addingTimeInterval(60),
+            duration: 60
+        )
+        let viewModel = SourceExportViewModel()
+        viewModel.selectedIDs = [activity.id]
+        viewModel.fitExportSource = .strava
+
+        viewModel.prepareExport(from: [activity], syncedFITKeys: [])
+
+        XCTAssertFalse(viewModel.canExportSyncedFIT)
+        XCTAssertEqual(viewModel.fitExportSource, .original)
+    }
+
     func testStableDedupeMatchesNearStartAndDistance() {
         let start = Date(timeIntervalSince1970: 1_700_000_000)
         XCTAssertTrue(SyncStableDedupe.matches(
