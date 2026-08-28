@@ -84,10 +84,8 @@ enum FitVirtualPowerFiller {
 
         let anchors = weatherAnchors(from: records)
         if !anchors.isEmpty,
-           let firstTs = records.first?.getTimestamp()?.timestamp,
-           let lastTs = records.last?.getTimestamp()?.timestamp {
-            let start = Date(timeIntervalSince1970: TimeInterval(firstTs))
-            let end = Date(timeIntervalSince1970: TimeInterval(lastTs))
+           let start = records.first?.getTimestamp()?.date,
+           let end = records.last?.getTimestamp()?.date {
             let provider = weatherProvider ?? { lat, lon, start, end in
                 if let weatherCache {
                     // 调用 OpenMeteoWeatherCache：同批按日+粗网格去重请求。
@@ -151,6 +149,7 @@ enum FitVirtualPowerFiller {
 
         let kinematics = buildKinematics(records: records)
         let n = records.count
+        let windShelter = commuteWindShelterFactor(messages: messages, records: records)
         /// 各秒最终功率草案：直接估算 / 邻域均值；nil 表示仍无功率。
         var draftPower = [UInt16?](repeating: nil, count: n)
         /// 该秒是否为「估算环节失败」（计入失败率；邻域补上后仍算失败）。
@@ -162,8 +161,8 @@ enum FitVirtualPowerFiller {
             let kin = kinematics[index]
             let cadence = record.getCadence().map { Double($0) }
 
-            // 踏频为 0：即使低速也按滑行写 0，避免停车段留下空洞。
-            if let cadence, cadence <= 0 {
+            // 踏频低于滑行阈值：即使仍有速度也按溜车写 0。
+            if let cadence, cadence < VirtualPowerPhysics.coastingMaxCadenceRpm {
                 draftPower[index] = 0
                 estimateSuccess[index] = true
                 continue
@@ -203,7 +202,9 @@ enum FitVirtualPowerFiller {
                 )
                 if let bearing = kin.bearingDegrees {
                     headwind = VirtualPowerPhysics.headwindMps(
-                        windSpeedMps: sample.windSpeedMps,
+                        windSpeedMps: VirtualPowerPhysics.riderHeightWindMps(
+                            fromTenMeter: sample.windSpeedMps
+                        ) * windShelter,
                         windFromDegrees: sample.windFromDegrees,
                         ridingBearingDegrees: bearing
                     )
@@ -434,6 +435,33 @@ enum FitVirtualPowerFiller {
         return sports.contains(.cycling)
     }
 
+    /// 通勤用 0.7 路肩遮蔽，否则 1.0。距离/时长取 session，缺则回退 record。
+    private static func commuteWindShelterFactor(
+        messages: FitMessages,
+        records: [RecordMesg]
+    ) -> Double {
+        let distanceMeters: Double?
+        if let distance = messages.sessionMesgs.compactMap({ $0.getTotalDistance() }).first
+            ?? records.reversed().compactMap({ $0.getDistance() }).first {
+            distanceMeters = Double(distance)
+        } else {
+            distanceMeters = nil
+        }
+        let duration: TimeInterval
+        if let timer = messages.sessionMesgs.compactMap({ $0.getTotalTimerTime() }).first {
+            duration = TimeInterval(timer)
+        } else if let start = records.first?.getTimestamp()?.date,
+                  let end = records.last?.getTimestamp()?.date {
+            duration = max(0, end.timeIntervalSince(start))
+        } else {
+            duration = 0
+        }
+        return CommuteClassifier.windShelterFactor(
+            distanceMeters: distanceMeters,
+            durationSeconds: duration
+        )
+    }
+
     /// 沿途天气站：一个 GPS 锚点 + 该点的逐小时时序。
     private struct WeatherStation {
         var lat: Double
@@ -505,9 +533,8 @@ enum FitVirtualPowerFiller {
 
         for i in 0..<n {
             let r = records[i]
-            if let ts = r.getTimestamp()?.timestamp {
-                times[i] = Date(timeIntervalSince1970: TimeInterval(ts))
-            }
+            // FIT timestamp 使用 Garmin epoch；由 SDK 统一转换为 Unix Date。
+            times[i] = r.getTimestamp()?.date
             speeds[i] = r.getSpeed() ?? r.getEnhancedSpeed()
             // 海拔优先原生 altitude，缺失时回退 enhanced_altitude。
             alts[i] = r.getAltitude() ?? r.getEnhancedAltitude()
@@ -645,7 +672,7 @@ enum FitVirtualPowerFiller {
             guard let la = record.getPositionLat(), let lo = record.getPositionLong() else { continue }
             let lat = Double(la) / semicirclesPerDegree
             let lon = Double(lo) / semicirclesPerDegree
-            let time = record.getTimestamp().map { Date(timeIntervalSince1970: TimeInterval($0.timestamp)) }
+            let time = record.getTimestamp()?.date
 
             if anchors.isEmpty {
                 append(lat, lon)

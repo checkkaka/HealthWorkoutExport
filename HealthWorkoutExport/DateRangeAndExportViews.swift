@@ -117,6 +117,8 @@ struct ExportSheetView: View {
     var body: some View {
         ExportFormSheet(
             exportFormat: $viewModel.exportFormat,
+            fitExportSource: $viewModel.fitExportSource,
+            canExportSyncedFIT: viewModel.canExportSyncedFIT,
             exportTimeZone: $viewModel.exportTimeZone,
             timeZoneOptions: viewModel.timeZoneOptions,
             selectedCount: viewModel.selectedWorkouts.count,
@@ -124,7 +126,7 @@ struct ExportSheetView: View {
             exportProgress: viewModel.exportProgress,
             shareURL: viewModel.shareURL,
             errorMessage: viewModel.errorMessage,
-            formatFootnote: "选择 JSON 或 FIT 其一导出。时区影响文件名、JSON 日期与 FIT 本地时间。",
+            formatFootnote: "原始 FIT 按所选时区生成；Strava 同步版保持上传时内容，时区仅影响导出文件名。",
             onExport: { await viewModel.runExport() },
             onDelete: { viewModel.deleteExportedFile() },
             onDismiss: { dismiss() }
@@ -146,6 +148,8 @@ struct SourceExportSheetView: View {
     var body: some View {
         ExportFormSheet(
             exportFormat: $viewModel.exportFormat,
+            fitExportSource: $viewModel.fitExportSource,
+            canExportSyncedFIT: viewModel.canExportSyncedFIT,
             exportTimeZone: $viewModel.exportTimeZone,
             timeZoneOptions: viewModel.timeZoneOptions,
             selectedCount: selectedCount,
@@ -153,7 +157,7 @@ struct SourceExportSheetView: View {
             exportProgress: viewModel.exportProgress,
             shareURL: viewModel.shareURL,
             errorMessage: viewModel.errorMessage,
-            formatFootnote: "FIT 为源文件原样下载；JSON 仅为活动摘要（无健康明细序列）。时区影响文件名与 JSON 日期。",
+            formatFootnote: "原始 FIT 从源站下载；Strava 同步版保持上传时内容。JSON 仅为活动摘要。时区影响文件名与 JSON 日期。",
             onExport: {
                 await viewModel.runExport(source: source, activities: activities)
             },
@@ -166,6 +170,8 @@ struct SourceExportSheetView: View {
 /// 导出表单：格式 / 时区 / 进度 / 分享。
 private struct ExportFormSheet: View {
     @Binding var exportFormat: ExportFormat
+    @Binding var fitExportSource: FITExportSource
+    let canExportSyncedFIT: Bool
     @Binding var exportTimeZone: TimeZone
     let timeZoneOptions: [TimeZone]
     let selectedCount: Int
@@ -188,6 +194,24 @@ private struct ExportFormSheet: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                    if exportFormat == .fit {
+                        Picker("FIT 来源", selection: $fitExportSource) {
+                            ForEach(FITExportSource.allCases) { source in
+                                Text(source.title).tag(source)
+                                    .disabled(source == .strava && !canExportSyncedFIT)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        if !canExportSyncedFIT {
+                            Text("所选记录缺少本地同步版 FIT，重新同步后才可选择。")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        } else if fitExportSource == .strava {
+                            Text("导出当时实际上传成功并保存在本机的最终 FIT；旧同步记录需重新同步一次后才可用。")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     Picker("时区", selection: $exportTimeZone) {
                         ForEach(timeZoneOptions, id: \.identifier) { zone in
                             Text(ExportTimeZone.displayName(for: zone)).tag(zone)

@@ -27,8 +27,10 @@ enum VirtualPowerPhysics {
     static let gpsSpeedJumpGlitchMps2 = 8.0 / 3.6
     /// 尖峰回落后与跳变前速度相差不超过该值（m/s）视为回落连贯；约等于 5 km/h。
     static let gpsGlitchRecoveryMaxDeltaMps = 5.0 / 3.6
+    /// 低于该踏频视为滑行（曲柄停、车在溜）；公路车坐姿研磨多在 40+。
+    static let coastingMaxCadenceRpm = 30.0
 
-    /// 估算腿部功率。cadenceRpm==0 时强制滑行功率 0；负功率钳为 0。
+    /// 估算腿部功率。踏频低于滑行阈值时强制 0；负功率钳为 0。
     static func powerWatts(
         groundSpeedMps: Double,
         gradePercent: Double,
@@ -37,7 +39,7 @@ enum VirtualPowerPhysics {
         params: Params,
         cadenceRpm: Double? = nil
     ) -> Double {
-        if let cadenceRpm, cadenceRpm <= 0 {
+        if let cadenceRpm, cadenceRpm < coastingMaxCadenceRpm {
             return 0
         }
         guard groundSpeedMps > 0.1 else { return 0 }
@@ -144,6 +146,13 @@ enum VirtualPowerPhysics {
     ) -> Double {
         let delta = (windFromDegrees - ridingBearingDegrees) * .pi / 180
         return windSpeedMps * cos(delta)
+    }
+
+    /// Open-Meteo 等 10 m 风速折到公路车气动高度（约 1.0 m，α=1/7 → 0.72）。
+    static let tenMeterWindToRiderFactor = 0.72
+
+    static func riderHeightWindMps(fromTenMeter windSpeedMps: Double) -> Double {
+        max(0, windSpeedMps) * tenMeterWindToRiderFactor
     }
 
     /// 由相邻点海拔与水平距离估算坡度百分比。

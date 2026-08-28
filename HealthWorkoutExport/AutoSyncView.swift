@@ -7,6 +7,12 @@ struct AutoSyncView: View {
 
     /// 打开页时所在 Tab 的数据源 ID。
     var entrySourceId: String
+    /// 列表已选活动；非空时只同步这些。
+    var selectedActivityIds: [String]
+    var selectedStart: Date?
+    var selectedEnd: Date?
+    /// 同步记录勾选重传的指纹；非空时走覆盖重传。
+    var resyncFingerprints: [String]
 
     @State private var primarySourceId: String
     @State private var supplementIds: Set<String> = []
@@ -15,6 +21,7 @@ struct AutoSyncView: View {
     @State private var customStart = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
     @State private var customEnd = Date()
     @State private var skipIfHistoryExists = false
+    @State private var customTitle = ""
     @State private var authFlags: [String: Bool] = [:]
     @State private var showStravaSettings = false
     @State private var showSyncHistory = false
@@ -24,10 +31,23 @@ struct AutoSyncView: View {
     @State private var bikeMassKg = VirtualPowerSettings.bikeMassKg
     @State private var cda = VirtualPowerSettings.cda
 
+    private var isResync: Bool { !resyncFingerprints.isEmpty }
+    private var isSelectedSync: Bool { !selectedActivityIds.isEmpty }
+
     private var sources: [any WorkoutDataSource] { DataSourceRegistry.shared.all }
 
-    init(entrySourceId: String) {
+    init(
+        entrySourceId: String,
+        selectedActivityIds: [String] = [],
+        selectedStart: Date? = nil,
+        selectedEnd: Date? = nil,
+        resyncFingerprints: [String] = []
+    ) {
         self.entrySourceId = entrySourceId
+        self.selectedActivityIds = selectedActivityIds
+        self.selectedStart = selectedStart
+        self.selectedEnd = selectedEnd
+        self.resyncFingerprints = resyncFingerprints
         _primarySourceId = State(initialValue: entrySourceId)
     }
 
@@ -56,6 +76,24 @@ struct AutoSyncView: View {
                     }
                 }
 
+                Section {
+                    TextField("自定义标题（可选）", text: $customTitle)
+                        .disabled(session.isRunning)
+                } header: {
+                    Text("Strava 标题")
+                } footer: {
+                    Text("填写则本批全部用这个标题。留空：通勤自动改成「通勤🚲」，其它用数据源原名。虚拟功率说明会接到活动描述末尾（需 API）。")
+                }
+
+                if isSelectedSync, !isResync {
+                    Section {
+                        Text("将同步列表已选 \(selectedActivityIds.count) 条，不再按当天/历史范围。")
+                            .font(.footnote)
+                    }
+                }
+
+                if !isResync {
+                if !isSelectedSync {
                 Section("主数据源") {
                     Picker("主源", selection: $primarySourceId) {
                         ForEach(sources, id: \.id) { source in
@@ -66,6 +104,7 @@ struct AutoSyncView: View {
                     .onChange(of: primarySourceId) { _, _ in
                         applySupplementLinkage()
                     }
+                }
                 }
 
                 Section {
@@ -96,6 +135,7 @@ struct AutoSyncView: View {
                     Text("开启：本地已同步（含同指纹/同主活动/开始+距离近似）则跳过；异常速度（摘要/最佳成绩≥\(Int(StravaSpeedAnomaly.maxSpeedKmh))，或峰值≥\(Int(StravaSpeedAnomaly.maxSpeedKmh))且均速≥\(Int(StravaSpeedAnomaly.averageSpeedKmh))）仍会重传（需 API）。关闭：本地一律不跳，远端已有会弹窗问你跳过或覆盖。")
                 }
 
+                if !isSelectedSync {
                 Section("同步模式") {
                     Picker("模式", selection: $mode) {
                         ForEach(AutoSyncMode.allCases) { m in
@@ -118,11 +158,16 @@ struct AutoSyncView: View {
                         }
                     }
                 }
+                }
+
+                }
 
                 Section("Strava") {
                     Text("当前模式：\(StravaSettings.mode.title)")
                     Button("Strava 设置") { showStravaSettings = true }
-                    Button("同步记录") { showSyncHistory = true }
+                    if !isResync {
+                        Button("同步记录") { showSyncHistory = true }
+                    }
                 }
 
                 Section {
@@ -156,7 +201,7 @@ struct AutoSyncView: View {
                 } header: {
                     Text("虚拟功率")
                 } footer: {
-                    Text("开启后对骑行 FIT 一律用 Gribble + Open-Meteo 估算原生 power，并覆盖已有功率计/补源功率。心率不参与计算；踏频为 0 时按滑行记 0 W。Crr 固定 0.005，传动损失固定 2%。关闭「计入惯性」后均功率通常略低、更稳，尖峰也会明显下降。仅当写入了 powerSource=virtual 时，API 上传才附活动描述；网页上传同请求无法写描述。")
+                    Text("开启后对骑行 FIT 一律用 Gribble + Open-Meteo 估算原生 power，并覆盖已有功率计/补源功率。心率不参与计算；踏频低于 30 时按滑行记 0 W。Crr 固定 0.005，传动损失固定 2%。关闭「计入惯性」后均功率通常略低、更稳，尖峰也会明显下降。虚拟功率说明接到描述末尾；网页上传同请求无法写标题/描述。")
                 }
 
                 if primarySourceId == XingzheDataSource.sourceId
@@ -184,7 +229,7 @@ struct AutoSyncView: View {
                 }
 
                 Section {
-                    if session.wasInterrupted, !session.isRunning, session.lastJob != nil {
+                    if !isResync, session.wasInterrupted, !session.isRunning, session.lastJob != nil {
                         Button("继续上次同步") {
                             session.resume()
                         }
@@ -198,7 +243,7 @@ struct AutoSyncView: View {
                     .disabled(session.isRunning || !(authFlags[primarySourceId] ?? false))
                 }
             }
-            .navigationTitle("自动同步")
+            .navigationTitle(isResync ? "勾选重传" : "自动同步")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("关闭") { dismiss() }
@@ -256,8 +301,13 @@ struct AutoSyncView: View {
     }
 
     private func startSync() {
-        // 调用 persistVirtualPowerSettings：同步前落盘虚拟功率参数。
         persistVirtualPowerSettings()
+        let trimmed = customTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = trimmed.isEmpty ? nil : trimmed
+        if isResync {
+            session.startResync(fingerprints: resyncFingerprints, customTitle: title)
+            return
+        }
         let job = SyncJobConfig(
             primarySourceId: primarySourceId,
             supplementSourceIds: Array(supplementIds),
@@ -265,7 +315,11 @@ struct AutoSyncView: View {
             historyRange: historyRange,
             customStart: customStart,
             customEnd: customEnd,
-            skipIfHistoryExists: skipIfHistoryExists
+            skipIfHistoryExists: skipIfHistoryExists,
+            selectedActivityIds: selectedActivityIds,
+            selectedStart: selectedStart,
+            selectedEnd: selectedEnd,
+            customTitle: title
         )
         // 调用 SyncSession.start：App 级会话执行同步。
         session.start(job)

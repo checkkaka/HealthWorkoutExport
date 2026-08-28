@@ -17,6 +17,8 @@ struct ThirdPartySourceListView: View {
     @State private var showSyncHistory = false
     @State private var loadGeneration = 0
     @State private var uploadedKeys: Set<String> = []
+    @State private var virtualPowerKeys: Set<String> = []
+    @State private var syncedFITKeys: Set<String> = []
     @State private var localRemoteIds: [String: String] = [:]
     @State private var detailActivity: SourceActivity?
     @State private var exportViewModel = SourceExportViewModel()
@@ -56,8 +58,15 @@ struct ThirdPartySourceListView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showAutoSync) {
-                AutoSyncView(entrySourceId: sourceId)
+            .sheet(isPresented: $showAutoSync, onDismiss: {
+                Task { await refreshSyncState() }
+            }) {
+                AutoSyncView(
+                    entrySourceId: sourceId,
+                    selectedActivityIds: Array(exportViewModel.selectedIDs),
+                    selectedStart: exportViewModel.selectedActivities(from: activities).map(\.startDate).min(),
+                    selectedEnd: exportViewModel.selectedActivities(from: activities).map(\.endDate).max()
+                )
             }
             .sheet(isPresented: $showStravaSettings) {
                 NavigationStack { StravaSettingsView() }
@@ -137,7 +146,7 @@ struct ThirdPartySourceListView: View {
         }
         ToolbarItem(placement: .topBarTrailing) {
             Button {
-                exportViewModel.prepareExport(from: activities)
+                exportViewModel.prepareExport(from: activities, syncedFITKeys: syncedFITKeys)
             } label: {
                 Label("导出", systemImage: "square.and.arrow.up")
             }
@@ -178,6 +187,12 @@ struct ThirdPartySourceListView: View {
                             activity: activity,
                             isSelected: exportViewModel.selectedIDs.contains(activity.id),
                             isSynced: synced,
+                            hasVirtualPower: virtualPowerKeys.contains(
+                                SyncStateStore.primaryKey(sourceId: activity.sourceId, activityId: activity.id)
+                            ),
+                            hasSyncedFIT: syncedFITKeys.contains(
+                                SyncStateStore.primaryKey(sourceId: activity.sourceId, activityId: activity.id)
+                            ),
                             remoteId: remoteId,
                             onToggle: { exportViewModel.toggleSelection(activity.id) },
                             onOpenDetail: { detailActivity = activity }
@@ -236,8 +251,10 @@ struct ThirdPartySourceListView: View {
     }
 
     private func refreshSyncState() async {
-        // 从本地同步记录同时刷新已同步徽标与 Strava 远端 ID。
+        // 从本地同步记录同时刷新同步、虚拟功率、同步 FIT 徽标与 Strava 远端 ID。
         uploadedKeys = await SyncStateStore.shared.uploadedPrimaryKeys()
+        virtualPowerKeys = await SyncStateStore.shared.virtualPowerPrimaryKeys()
+        syncedFITKeys = await SyncStateStore.shared.syncedFITPrimaryKeys()
         localRemoteIds = await SyncStateStore.shared.localRemoteIdsByPrimaryKey()
     }
 }
@@ -247,6 +264,8 @@ private struct SourceActivityRowView: View {
     let activity: SourceActivity
     let isSelected: Bool
     let isSynced: Bool
+    let hasVirtualPower: Bool
+    let hasSyncedFIT: Bool
     let remoteId: String?
     let onToggle: () -> Void
     let onOpenDetail: () -> Void
@@ -264,6 +283,22 @@ private struct SourceActivityRowView: View {
                 Button(action: onOpenDetail) {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
+                            if hasVirtualPower {
+                                Text("虚拟功率")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.blue)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(.blue.opacity(0.12), in: Capsule())
+                            }
+                            if hasSyncedFIT {
+                                Text("同步 FIT")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.teal)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(.teal.opacity(0.12), in: Capsule())
+                            }
                             Text(activity.title).font(.body.weight(.semibold))
                             if isSynced {
                                 Image(systemName: "checkmark.seal.fill")

@@ -267,3 +267,31 @@ enum StravaDuplicateDecision: Sendable {
     /// 本批剩余重复一律覆盖（仅当前这次同步任务，不跨批记住）。
     case overwriteRestOfBatch
 }
+
+/// 覆盖删远端后再传仍 duplicate：撞上已 404 的 ID 时 10 秒内重试，用尽则记失败而非去重。
+enum OverwriteGhostDuplicate {
+    static let retryWindow: TimeInterval = 10
+    static let sleepChunk: TimeInterval = 2
+
+    enum Outcome: Equatable {
+        case uploaded
+        case deduped
+        case failedGhost
+    }
+
+    static func shouldRetry(collidedRemoteMissing: Bool, elapsed: TimeInterval) -> Bool {
+        collidedRemoteMissing && elapsed < retryWindow
+    }
+
+    static func sleepInterval(elapsed: TimeInterval) -> TimeInterval? {
+        let remaining = retryWindow - elapsed
+        guard remaining > 0 else { return nil }
+        return min(sleepChunk, remaining)
+    }
+
+    static func outcome(isDuplicate: Bool, collidedRemoteMissing: Bool) -> Outcome {
+        if !isDuplicate { return .uploaded }
+        if collidedRemoteMissing { return .failedGhost }
+        return .deduped
+    }
+}

@@ -12,6 +12,12 @@ struct SyncJobConfig: Equatable, Sendable {
     var customEnd: Date
     /// 本地已有该主活动 uploaded 记录则跳过（忽略补源差异）。
     var skipIfHistoryExists: Bool
+    /// 列表已选活动 ID；非空时只同步这些，不再按当天/历史范围。
+    var selectedActivityIds: [String] = []
+    var selectedStart: Date? = nil
+    var selectedEnd: Date? = nil
+    /// 本批自定义 Strava 标题；空则通勤用「通勤🚲」，其它用源标题。
+    var customTitle: String? = nil
 }
 
 /// App 级同步会话：进度跨页面可见，支持取消、继续与整批重试。
@@ -60,6 +66,10 @@ final class SyncSession {
                     customStart: job.customStart,
                     customEnd: job.customEnd,
                     skipIfHistoryExists: job.skipIfHistoryExists,
+                    selectedActivityIds: job.selectedActivityIds,
+                    selectedStart: job.selectedStart,
+                    selectedEnd: job.selectedEnd,
+                    customTitle: job.customTitle,
                     onProgress: { [weak self] p in
                         self?.progress = p
                     },
@@ -88,7 +98,7 @@ final class SyncSession {
     }
 
     /// 勾选重传：默认覆盖不弹窗；与普通自动同步互斥。
-    func startResync(fingerprints: [String]) {
+    func startResync(fingerprints: [String], customTitle: String? = nil) {
         guard !isRunning else { return }
         guard !fingerprints.isEmpty else { return }
         wasInterrupted = false
@@ -104,7 +114,10 @@ final class SyncSession {
             }
             do {
                 // 调用 AutoSyncEngine.resyncFingerprints：只重传勾选记录。
-                let result = try await engine.resyncFingerprints(fingerprints) { [weak self] p in
+                let result = try await engine.resyncFingerprints(
+                    fingerprints,
+                    customTitle: customTitle
+                ) { [weak self] p in
                     self?.progress = p
                 }
                 try Task.checkCancellation()

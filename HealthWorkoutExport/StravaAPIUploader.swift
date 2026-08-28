@@ -144,6 +144,7 @@ final class StravaAPIUploader: NSObject, StravaUploading {
         _ data: Data,
         externalId: String,
         filename: String,
+        name: String?,
         commute: Bool,
         description: String?
     ) async throws -> StravaUploadResult {
@@ -157,9 +158,10 @@ final class StravaAPIUploader: NSObject, StravaUploading {
         }
         appendField("data_type", "fit")
         appendField("external_id", externalId)
+        if let name, !name.isEmpty { appendField("name", name) }
         // Strava Uploads API：commute 为表单字段，标记结果活动为通勤。
         if commute { appendField("commute", "1") }
-        // 调用 appendField(description)：虚拟功率社交文案写入活动描述。
+        // 调用 appendField(description)：上传时先写一版；处理后还会 PUT 接到末尾。
         if let description, !description.isEmpty {
             appendField("description", description)
         }
@@ -202,6 +204,65 @@ final class StravaAPIUploader: NSObject, StravaUploading {
         // 上传是异步处理：在当前同步任务内等最终 activity_id / duplicate / error，
         // 避免先记成功后由后台静默改成去重或失败。
         return try await pollUpload(id: uploadId)
+    }
+
+    /// 处理后强行改标题，并把说明接到已有描述末尾（上传表单常被 FIT 覆盖）。
+    func updateActivityMetadata(
+        id: String,
+        name: String,
+        commute: Bool,
+        descriptionNote: String?
+    ) async throws {
+        let description: String?
+        if descriptionNote != nil {
+            try await ensureValidAccessToken()
+            var request = URLRequest(url: URL(string: "https://www.strava.com/api/v3/activities/\(id)")!)
+            request.setValue("Bearer \(StravaSettings.accessToken)", forHTTPHeaderField: "Authorization")
+            request.httpMethod = "GET"
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw StravaUploadError.uploadFailed("无响应")
+            }
+            if http.statusCode == 401 { throw StravaUploadError.unauthorized }
+            if http.statusCode == 429 { throw StravaUploadError.rateLimited }
+            if http.statusCode == 404 { throw StravaUploadError.uploadFailed("活动不存在") }
+            guard (200..<300).contains(http.statusCode),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw StravaUploadError.uploadFailed("读取活动 \(id) 失败 HTTP \(http.statusCode)")
+            }
+            description = VirtualPowerSocialCopy.appended(to: json["description"] as? String)
+        } else {
+            description = nil
+        }
+        try await putActivity(id: id, name: name, commute: commute, description: description)
+    }
+
+    private func putActivity(id: String, name: String, commute: Bool, description: String?) async throws {
+        try await ensureValidAccessToken()
+        var request = URLRequest(url: URL(string: "https://www.strava.com/api/v3/activities/\(id)")!)
+        request.httpMethod = "PUT"
+        request.setValue("Bearer \(StravaSettings.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var body: [String: Any] = [
+            "name": name,
+            "commute": commute
+        ]
+        if let description {
+            body["description"] = description
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (respData, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw StravaUploadError.uploadFailed("无响应")
+        }
+        if http.statusCode == 401 { throw StravaUploadError.unauthorized }
+        if http.statusCode == 429 { throw StravaUploadError.rateLimited }
+        guard (200..<300).contains(http.statusCode) else {
+            let detail = StravaUploadError.cleanedMessage(
+                String((String(data: respData, encoding: .utf8) ?? "").prefix(200))
+            )
+            throw StravaUploadError.uploadFailed("更新活动失败 HTTP \(http.statusCode): \(detail)")
+        }
     }
 
     /// 拉取单条活动有效峰值速度（max_speed ∪ best_efforts）；404 返回 nil。

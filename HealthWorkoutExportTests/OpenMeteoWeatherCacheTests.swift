@@ -25,8 +25,10 @@ final class OpenMeteoWeatherCacheTests: XCTestCase {
         // 邻近坐标落入同一 0.1° 格，应复用。
         let second = try await cache.hourly(latitude: 31.21, longitude: 121.51, start: start, end: end)
         XCTAssertEqual(first, second)
-        XCTAssertEqual(await counter.value, 1)
-        XCTAssertEqual(await cache.entryCount, 1)
+        let fetchCount = await counter.value
+        let entryCount = await cache.entryCount
+        XCTAssertEqual(fetchCount, 1)
+        XCTAssertEqual(entryCount, 1)
     }
 
     /// 不同 UTC 日不应复用缓存。
@@ -40,7 +42,8 @@ final class OpenMeteoWeatherCacheTests: XCTestCase {
         let day2 = day1.addingTimeInterval(86_400)
         _ = try await cache.hourly(latitude: 31.2, longitude: 121.5, start: day1, end: day1)
         _ = try await cache.hourly(latitude: 31.2, longitude: 121.5, start: day2, end: day2)
-        XCTAssertEqual(await counter.value, 2)
+        let fetchCount = await counter.value
+        XCTAssertEqual(fetchCount, 2)
     }
 
     /// 粗网格键对邻近坐标应一致。

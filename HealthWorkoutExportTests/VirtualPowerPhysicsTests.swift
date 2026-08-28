@@ -63,6 +63,26 @@ final class VirtualPowerPhysicsTests: XCTestCase {
         XCTAssertEqual(watts, 0, accuracy: 0.01)
     }
 
+    /// 踏频很低但仍有速度：曲柄已停、车在溜，按滑行 0 W。
+    func testLowCadenceWithSpeedForcesCoastingZero() {
+        let params = VirtualPowerPhysics.Params(
+            totalMassKg: 80,
+            cda: 0.32,
+            crr: 0.004,
+            drivetrainLossPercent: 2,
+            airDensity: 1.226
+        )
+        let watts = VirtualPowerPhysics.powerWatts(
+            groundSpeedMps: 8,
+            gradePercent: 0,
+            headwindMps: 0,
+            accelerationMps2: 0,
+            params: params,
+            cadenceRpm: 20
+        )
+        XCTAssertEqual(watts, 0, accuracy: 0.01)
+    }
+
     /// 空气密度：15°C、1013.25 hPa、RH=0 应接近 1.225。
     func testAirDensityDrySeaLevel() {
         let rho = VirtualPowerPhysics.airDensity(
@@ -91,6 +111,20 @@ final class VirtualPowerPhysicsTests: XCTestCase {
             ridingBearingDegrees: 0
         )
         XCTAssertEqual(hw, 5, accuracy: 0.05)
+    }
+
+    /// Open-Meteo 10 m 风按公路车 1.0 m、α=1/7 折到约 0.72。
+    func testTenMeterWindScalesToRiderHeight() {
+        XCTAssertEqual(
+            VirtualPowerPhysics.riderHeightWindMps(fromTenMeter: 10),
+            7.2,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            VirtualPowerPhysics.riderHeightWindMps(fromTenMeter: 0),
+            0,
+            accuracy: 0.001
+        )
     }
 
     /// 大跳变且下一秒回落 → 判定飞点。

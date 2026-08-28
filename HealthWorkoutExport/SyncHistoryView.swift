@@ -302,19 +302,11 @@ struct SyncHistoryView: View {
         } message: {
             Text("只清本主源记录，不会删除 Strava 上的活动，也不影响其他主源。")
         }
-        .navigationDestination(isPresented: $showResyncStravaSettings) {
-            StravaSettingsView()
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("取消") { showResyncStravaSettings = false }
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("开始同步") {
-                            showResyncStravaSettings = false
-                            startSelectedResync()
-                        }
-                    }
-                }
+        .sheet(isPresented: $showResyncStravaSettings) {
+            AutoSyncView(
+                entrySourceId: primarySourceId,
+                resyncFingerprints: Array(selectedFingerprints.intersection(filteredFingerprints))
+            )
         }
         .task {
             await reload()
@@ -404,22 +396,6 @@ struct SyncHistoryView: View {
 
     private func rebuildBatches() {
         cachedBatches = Self.makeBatches(from: filteredRecords)
-    }
-
-    private func startSelectedResync() {
-        guard !session.isRunning else {
-            toast = "已有同步在进行"
-            return
-        }
-        // 只重传当前筛选可见且已勾选的，防止筛掉的旧勾选被带上。
-        let fps = Array(selectedFingerprints.intersection(filteredFingerprints))
-        guard !fps.isEmpty else {
-            toast = "当前筛选下没有已勾选项"
-            return
-        }
-        // 调用 SyncSession.startResync：只重传勾选指纹。
-        session.startResync(fingerprints: fps)
-        toast = "开始勾选重传 \(fps.count) 条"
     }
 
     private func backfillRemoteIds() async {
