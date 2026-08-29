@@ -540,15 +540,13 @@ enum FitMerger {
     }
 }
 
-/// 自动同步上传前：检测并修复几秒内的离谱速度尖峰（几百/几千 km/h）。
-/// 用邻点（或全场）均速改写速度，距离按均速推进；GPS 瞬移则坐标退回上一有效点。
+/// 自动同步上传前：检测并修复 FIT 速度/距离字段中的离谱尖峰（几百/几千 km/h）。
+/// 原生 GPS 坐标只参与透传，绝不由尖峰修复器改写。
 enum FitSpeedSpikeFixer {
     /// 瞬时合理上限（与异常扫描共用 80 km/h）。
     static var maxReasonableSpeedMps: Double { StravaSpeedAnomaly.peakThresholdMps }
     /// 只处理短间隔跳变（秒）。
     private static let maxGapSeconds: Double = 8
-    private static let semicirclesPerDegree = 2_147_483_648.0 / 180.0
-
     struct FixResult: Sendable {
         var data: Data
         var fixedCount: Int
@@ -565,47 +563,49 @@ enum FitSpeedSpikeFixer {
         return FixResult(data: try encode(messages), fixedCount: fixed)
     }
 
-    /// 多趟扫描：后点尖峰修好后，前面依赖关系可能变化。
+    /// 单趟扫描速度/距离字段；不根据 GPS 位移判尖峰，避免误改码表原生坐标。
     private static func fixRecords(_ records: [RecordMesg]) throws -> Int {
         let sorted = records.sorted {
             ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)
         }
         guard sorted.count >= 2 else { return 0 }
 
-        var total = 0
-        for _ in 0..<5 {
-            let activityAvg = activityAverageSpeedMps(sorted) ?? 5.0
-            var pass = 0
-            for i in 1..<sorted.count {
-                let cur = sorted[i]
-                let prev = sorted[i - 1]
-                guard let t0 = prev.getTimestamp()?.timestamp,
-                      let t1 = cur.getTimestamp()?.timestamp else { continue }
-                let dt = Double(Int64(t1) - Int64(t0))
-                guard dt > 0, dt <= maxGapSeconds else { continue }
+        let activityAvg = activityAverageSpeedMps(sorted) ?? 5.0
+        var fixed = 0
+        for i in 1..<sorted.count {
+            let cur = sorted[i]
+            let prev = sorted[i - 1]
+            guard let t0 = prev.getTimestamp()?.timestamp,
+                  let t1 = cur.getTimestamp()?.timestamp else { continue }
+            let dt = Double(Int64(t1) - Int64(t0))
+            guard dt > 0, dt <= maxGapSeconds else { continue }
 
-                let implied = impliedSpeedMps(from: prev, to: cur, dt: dt)
-                let fieldSpeed = cur.getSpeed() ?? cur.getEnhancedSpeed()
-                let peak = max(implied ?? 0, fieldSpeed ?? 0)
-                guard peak > maxReasonableSpeedMps else { continue }
+            let hasGPS = prev.getPositionLat() != nil && prev.getPositionLong() != nil
+                && cur.getPositionLat() != nil && cur.getPositionLong() != nil
+            let implied = !hasGPS
+                ? impliedDistanceSpeedMps(from: prev, to: cur, dt: dt)
+                : nil
+            let fieldSpeed = cur.getSpeed() ?? cur.getEnhancedSpeed()
+            guard max(implied ?? 0, fieldSpeed ?? 0) > maxReasonableSpeedMps else { continue }
 
-                let avg = neighborAverageSpeedMps(sorted, around: i) ?? activityAvg
-                // 调用 applyAverageFix：用均速抹掉瞬移/距离暴跳。
-                try applyAverageFix(current: cur, previous: prev, dt: dt, averageSpeedMps: avg, implied: implied)
-                pass += 1
-            }
-            total += pass
-            if pass == 0 { break }
+            let avg = neighborAverageSpeedMps(sorted, around: i) ?? activityAvg
+            // 调用 applyAverageFix：只修速度/距离字段，原生 GPS 坐标保持不变。
+            try applyAverageFix(
+                current: cur,
+                previous: prev,
+                dt: dt,
+                averageSpeedMps: avg
+            )
+            fixed += 1
         }
-        return total
+        return fixed
     }
 
     private static func applyAverageFix(
         current: RecordMesg,
         previous: RecordMesg,
         dt: Double,
-        averageSpeedMps: Double,
-        implied: Double?
+        averageSpeedMps: Double
     ) throws {
         let avg = max(0, min(averageSpeedMps, maxReasonableSpeedMps))
         try current.setSpeed(avg)
@@ -613,27 +613,12 @@ enum FitSpeedSpikeFixer {
             try current.setEnhancedSpeed(avg)
         }
 
-        // GPS 瞬移：坐标退回上一点，避免平台按轨迹重算几千 km/h。
-        if let implied, implied > maxReasonableSpeedMps,
-           let plat = previous.getPositionLat(), let plon = previous.getPositionLong() {
-            try current.setPositionLat(plat)
-            try current.setPositionLong(plon)
-        }
-
         if let prevDist = previous.getDistance() {
             try current.setDistance(prevDist + avg * dt)
         }
     }
 
-    private static func impliedSpeedMps(from prev: RecordMesg, to cur: RecordMesg, dt: Double) -> Double? {
-        if let la0 = prev.getPositionLat(), let lo0 = prev.getPositionLong(),
-           let la1 = cur.getPositionLat(), let lo1 = cur.getPositionLong() {
-            let meters = haversineMeters(
-                lat1: degree(fromSemicircle: la0), lon1: degree(fromSemicircle: lo0),
-                lat2: degree(fromSemicircle: la1), lon2: degree(fromSemicircle: lo1)
-            )
-            return meters / dt
-        }
+    private static func impliedDistanceSpeedMps(from prev: RecordMesg, to cur: RecordMesg, dt: Double) -> Double? {
         if let d0 = prev.getDistance(), let d1 = cur.getDistance(), d1 >= d0 {
             return (d1 - d0) / dt
         }
@@ -674,21 +659,6 @@ enum FitSpeedSpikeFixer {
             return n > 0 ? sum / Double(n) : nil
         }
         return (last.1 - first.1) / Double(last.0 - first.0)
-    }
-
-    private static func degree(fromSemicircle value: Int32) -> Double {
-        // semicirclesPerDegree = 2^31/180；度 = 半圆 / 该常数（勿再乘 180）。
-        Double(value) / semicirclesPerDegree
-    }
-
-    private static func haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double) -> Double {
-        let r = 6_371_000.0
-        let p1 = lat1 * .pi / 180
-        let p2 = lat2 * .pi / 180
-        let dp = (lat2 - lat1) * .pi / 180
-        let dl = (lon2 - lon1) * .pi / 180
-        let a = sin(dp / 2) * sin(dp / 2) + cos(p1) * cos(p2) * sin(dl / 2) * sin(dl / 2)
-        return 2 * r * asin(min(1, sqrt(a)))
     }
 
     /// 把改过的 FitMessages 重新编码成 Activity FIT。
