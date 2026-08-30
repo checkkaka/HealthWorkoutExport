@@ -833,6 +833,21 @@ final class FitActivityEncoderTests: XCTestCase {
         XCTAssertEqual(outLon, -122.4194, accuracy: 1e-12)
     }
 
+    func testTrackMapProjectionConvertsOnlyGCJSource() {
+        let point = FITTrackPoint(
+            index: 0,
+            date: nil,
+            latitude: 31.34074993,
+            longitude: 120.55964992
+        )
+        let converted = TrackMapProjection.coordinates([point], sourceIsGCJ: true)[0]
+        XCTAssertGreaterThan(abs(converted.latitude - point.latitude), 0.001)
+        XCTAssertGreaterThan(abs(converted.longitude - point.longitude), 0.001)
+        let untouched = TrackMapProjection.coordinates([point], sourceIsGCJ: false)[0]
+        XCTAssertEqual(untouched.latitude, point.latitude, accuracy: 1e-12)
+        XCTAssertEqual(untouched.longitude, point.longitude, accuracy: 1e-12)
+    }
+
     /// 回归：semicircle→度不得多乘 180，否则国内点被当成境外，GCJ 开关形同虚设。
     func testGcjFitRewriteMovesSuzhouSemicirclePoint() throws {
         let sc = 2_147_483_648.0 / 180.0

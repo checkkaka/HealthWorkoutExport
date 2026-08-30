@@ -36,6 +36,27 @@ enum FitSupplementMode: Equatable {
     case sensorsOnly
 }
 
+enum FitSensorField: String, CaseIterable, Hashable, Sendable {
+    case heartRate = "心率"
+    case cadence = "踏频"
+    case power = "功率"
+    case temperature = "温度"
+    case grade = "坡度"
+}
+
+struct FitSupplementReport: Sendable {
+    var name: String
+    var offsetSeconds: Int
+    var filledCounts: [FitSensorField: Int]
+
+    var totalFilledCount: Int { filledCounts.values.reduce(0, +) }
+}
+
+struct FitMergeResult: Sendable {
+    var data: Data
+    var supplements: [FitSupplementReport]
+}
+
 /// 合并多个 FIT Activity 文件：主文件为基准，其余文件仅补充主文件空缺的数据。
 ///
 /// 合并规则（`fillRecords`）：
@@ -128,6 +149,23 @@ enum FitMerger {
         timeAlign: FitMergeTimeAlign = .absolute,
         supplementMode: FitSupplementMode = .fillRecords
     ) throws -> Data {
+        try mergeWithReport(
+            primary: primary,
+            primaryName: primaryName,
+            others: others,
+            timeAlign: timeAlign,
+            supplementMode: supplementMode
+        ).data
+    }
+
+    /// 与 `merge` 使用完全相同的合并逻辑，额外返回每个补源实际补入的传感器字段数量。
+    static func mergeWithReport(
+        primary: Data,
+        primaryName: String,
+        others: [(data: Data, name: String)],
+        timeAlign: FitMergeTimeAlign = .absolute,
+        supplementMode: FitSupplementMode = .fillRecords
+    ) throws -> FitMergeResult {
         guard !others.isEmpty else { throw FitMergeError.needAtLeastTwoFiles }
         let sensorsOnly = supplementMode == .sensorsOnly
 
@@ -154,6 +192,9 @@ enum FitMerger {
             }
             offsets = list
         }
+        var supplementReports = zip(others, offsets).map { input, offset in
+            FitSupplementReport(name: input.name, offsetSeconds: offset, filledCounts: [:])
+        }
 
         // Record 按秒索引，主文件先占位。
         var recordsBySecond: [UInt32: RecordMesg] = [:]
@@ -170,7 +211,8 @@ enum FitMerger {
 
         // 每个副文件对齐后的记录时间范围，用于判断该文件是否与主完全不重叠。
         var alignedRanges: [ClosedRange<UInt32>?] = []
-        for (messages, offset) in zip(otherMessages, offsets) {
+        for (sourceIndex, pair) in zip(otherMessages, offsets).enumerated() {
+            let (messages, offset) = pair
             var alignedMin: UInt32?
             var alignedMax: UInt32?
             for otherRecord in messages.recordMesgs {
@@ -183,7 +225,10 @@ enum FitMerger {
                 if let primaryRecord = recordsBySecond[key] {
                     if sensorsOnly {
                         // 调用 fillSensorFields：同秒只补心率/功率/踏频/体温/坡度，不碰 GPS/距离。
-                        try fillSensorFields(into: primaryRecord, from: otherRecord)
+                        let filled = try fillSensorFields(into: primaryRecord, from: otherRecord)
+                        for (field, count) in filled {
+                            supplementReports[sourceIndex].filledCounts[field, default: 0] += count
+                        }
                     } else {
                         // 调用 fillMissingFields：同一秒冲突，以主为准，仅补主缺的字段。
                         fillMissingFields(into: primaryRecord, from: otherRecord)
@@ -372,7 +417,7 @@ enum FitMerger {
         if let activity = primaryMessages.activityMesgs.first {
             encoder.write(mesg: activity)
         }
-        return encoder.close()
+        return FitMergeResult(data: encoder.close(), supplements: supplementReports)
     }
 
     // MARK: - Align helpers
@@ -476,22 +521,32 @@ enum FitMerger {
     }
 
     /// 同秒只补传感器：心率/功率/踏频/体温/坡度；不碰 GPS、距离、速度、海拔。
-    private static func fillSensorFields(into target: RecordMesg, from source: RecordMesg) throws {
+    private static func fillSensorFields(
+        into target: RecordMesg,
+        from source: RecordMesg
+    ) throws -> [FitSensorField: Int] {
+        var filled: [FitSensorField: Int] = [:]
         if target.getHeartRate() == nil, let v = source.getHeartRate() {
             try target.setHeartRate(v)
+            filled[.heartRate, default: 0] += 1
         }
         if target.getCadence() == nil, let v = source.getCadence() {
             try target.setCadence(v)
+            filled[.cadence, default: 0] += 1
         }
         if target.getPower() == nil, let v = source.getPower() {
             try target.setPower(v)
+            filled[.power, default: 0] += 1
         }
         if target.getTemperature() == nil, let v = source.getTemperature() {
             try target.setTemperature(v)
+            filled[.temperature, default: 0] += 1
         }
         if target.getGrade() == nil, let v = source.getGrade() {
             try target.setGrade(v)
+            filled[.grade, default: 0] += 1
         }
+        return filled
     }
 
     /// Session 只补平均/最大心率等传感器汇总，不动距离与时长（起止以主为准）。
