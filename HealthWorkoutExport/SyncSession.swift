@@ -2,6 +2,47 @@ import Foundation
 import Observation
 import UIKit
 
+enum SyncPreviewPolicy: String, CaseIterable, Identifiable, Sendable {
+    case issuesOnly
+    case everyActivity
+
+    var id: String { rawValue }
+    var title: String { self == .issuesOnly ? "仅异常确认" : "每条确认" }
+
+    static var saved: Self {
+        get {
+            guard let raw = UserDefaults.standard.string(forKey: "sync_preview_policy"),
+                  let value = Self(rawValue: raw) else { return .issuesOnly }
+            return value
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "sync_preview_policy") }
+    }
+}
+
+struct SupplementCandidateGroup: Identifiable, Sendable {
+    var sourceId: String
+    var sourceName: String
+    var candidates: [ActivityMatchCandidate]
+    var selectedActivityId: String?
+    var id: String { sourceId }
+}
+
+struct SyncPreviewPrompt: Identifiable, Sendable {
+    var id = UUID()
+    var activity: SourceActivity
+    var preparedFIT: PreparedFIT
+    var candidateGroups: [SupplementCandidateGroup]
+}
+
+enum SyncPreviewDecision: Sendable {
+    case upload
+    case forceUpload
+    case skip
+    case stopBatch
+    /// sourceId → activityId；空字符串表示当前活动不使用该补源。
+    case rebuild([String: String])
+}
+
 /// 一次自动同步的可恢复配置（中断后「继续」或「整批重试」复用原数据源与范围）。
 struct SyncJobConfig: Equatable, Sendable {
     var primarySourceId: String
@@ -18,6 +59,7 @@ struct SyncJobConfig: Equatable, Sendable {
     var selectedEnd: Date? = nil
     /// 本批自定义 Strava 标题；空则通勤用「通勤🚲」，其它用源标题。
     var customTitle: String? = nil
+    var previewPolicy: SyncPreviewPolicy = .saved
 }
 
 /// App 级同步会话：进度跨页面可见，支持取消、继续与整批重试。
@@ -36,6 +78,8 @@ final class SyncSession {
     /// 供界面展示；真正决策走 UIKit 置顶弹窗，避免 sheet 挡住。
     var duplicatePrompt: StravaDuplicatePrompt?
     private var duplicateContinuation: CheckedContinuation<StravaDuplicateDecision, Never>?
+    var previewPrompt: SyncPreviewPrompt?
+    private var previewContinuation: CheckedContinuation<SyncPreviewDecision, Never>?
     private weak var duplicateAlert: UIAlertController?
     private var runningTask: Task<Void, Never>?
     private let engine = AutoSyncEngine()
@@ -70,12 +114,17 @@ final class SyncSession {
                     selectedStart: job.selectedStart,
                     selectedEnd: job.selectedEnd,
                     customTitle: job.customTitle,
+                    previewPolicy: job.previewPolicy,
                     onProgress: { [weak self] p in
                         self?.progress = p
                     },
                     onDuplicate: { [weak self] prompt in
                         guard let self else { return .skip }
                         return await self.awaitDuplicateDecision(prompt)
+                    },
+                    onPreview: { [weak self] prompt in
+                        guard let self else { return .skip }
+                        return await self.awaitPreviewDecision(prompt)
                     }
                 )
                 try Task.checkCancellation()
@@ -89,10 +138,12 @@ final class SyncSession {
                 self.wasInterrupted = true
                 self.lastError = "同步已取消，可点「继续上次同步」接着跑（已上传的会跳过）"
                 self.resolveDuplicate(.skip)
+                self.resolvePreview(.stopBatch)
             } catch {
                 self.wasInterrupted = true
                 self.lastError = error.localizedDescription
                 self.resolveDuplicate(.skip)
+                self.resolvePreview(.stopBatch)
             }
         }
     }
@@ -157,6 +208,7 @@ final class SyncSession {
         wasInterrupted = true
         progress.message = "正在取消…"
         resolveDuplicate(.skip)
+        resolvePreview(.stopBatch)
     }
 
     func resolveDuplicate(_ decision: StravaDuplicateDecision) {
@@ -179,6 +231,23 @@ final class SyncSession {
             self.duplicatePrompt = prompt
             // 调用 presentDuplicateAlert：盖在任意 sheet 之上，避免看不见覆盖选项。
             self.presentDuplicateAlert(prompt)
+        }
+    }
+
+    func resolvePreview(_ decision: SyncPreviewDecision) {
+        guard let continuation = previewContinuation else {
+            previewPrompt = nil
+            return
+        }
+        previewContinuation = nil
+        previewPrompt = nil
+        continuation.resume(returning: decision)
+    }
+
+    private func awaitPreviewDecision(_ prompt: SyncPreviewPrompt) async -> SyncPreviewDecision {
+        await withCheckedContinuation { continuation in
+            previewContinuation = continuation
+            previewPrompt = prompt
         }
     }
 

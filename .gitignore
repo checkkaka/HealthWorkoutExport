@@ -21,10 +21,41 @@ xcuserdata/
 
 # 真机拉取的本地数据/缓存（含同步记录、偏好）
 .tmp-device-sync/
+.device-pull/
+
+# 本机代码签名
+Signing.local.xcconfig
 
 # 编辑器 / Agent
 .idea/
 .vscode/
 .cursor/
+.claude/
+.planning/
+.playwright-mcp/
+.fvm/
+AGENTS.md
+CLAUDE.md
+*.iml
 *.swp
 *~
+
+# Flutter 本机构建/生成文件
+flutter_app/.dart_tool/
+flutter_app/build/
+flutter_app/**/Pods/
+flutter_app/**/Flutter/ephemeral/
+flutter_app/**/flutter/ephemeral/
+flutter_app/android/.gradle/
+flutter_app/android/.kotlin/
+flutter_app/android/local.properties
+flutter_app/ios/.symlinks/
+flutter_app/ios/Flutter/Generated.xcconfig
+flutter_app/ios/Flutter/flutter_export_environment.sh
+flutter_app/ios/Flutter/Flutter.podspec
+flutter_app/**/GeneratedPluginRegistrant.*
+flutter_app/.flutter-plugins-dependencies
+flutter_app/.idea/
+
+# Rust 构建产物
+rust/**/target/

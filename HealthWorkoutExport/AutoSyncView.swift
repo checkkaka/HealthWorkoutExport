@@ -30,6 +30,7 @@ struct AutoSyncView: View {
     @State private var riderMassKg = VirtualPowerSettings.riderMassKg
     @State private var bikeMassKg = VirtualPowerSettings.bikeMassKg
     @State private var cda = VirtualPowerSettings.cda
+    @State private var previewPolicy = SyncPreviewPolicy.saved
 
     private var isResync: Bool { !resyncFingerprints.isEmpty }
     private var isSelectedSync: Bool { !selectedActivityIds.isEmpty }
@@ -41,7 +42,8 @@ struct AutoSyncView: View {
         selectedActivityIds: [String] = [],
         selectedStart: Date? = nil,
         selectedEnd: Date? = nil,
-        resyncFingerprints: [String] = []
+        resyncFingerprints: [String] = [],
+        initialPreviewPolicy: SyncPreviewPolicy? = nil
     ) {
         self.entrySourceId = entrySourceId
         self.selectedActivityIds = selectedActivityIds
@@ -49,6 +51,7 @@ struct AutoSyncView: View {
         self.selectedEnd = selectedEnd
         self.resyncFingerprints = resyncFingerprints
         _primarySourceId = State(initialValue: entrySourceId)
+        _previewPolicy = State(initialValue: initialPreviewPolicy ?? .saved)
     }
 
     var body: some View {
@@ -133,6 +136,18 @@ struct AutoSyncView: View {
                         .disabled(session.isRunning)
                 } footer: {
                     Text("开启：本地已同步（含同指纹/同主活动/开始+距离近似）则跳过；异常速度（摘要/最佳成绩≥\(Int(StravaSpeedAnomaly.maxSpeedKmh))，或峰值≥\(Int(StravaSpeedAnomaly.maxSpeedKmh))且均速≥\(Int(StravaSpeedAnomaly.averageSpeedKmh))）仍会重传（需 API）。关闭：本地一律不跳，远端已有会弹窗问你跳过或覆盖。")
+                }
+
+                Section {
+                    Picker("上传前确认", selection: $previewPolicy) {
+                        ForEach(SyncPreviewPolicy.allCases) { policy in
+                            Text(policy.title).tag(policy)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(session.isRunning)
+                } footer: {
+                    Text("仅异常确认：出现警告、错误或补源匹配不明确时暂停；每条确认：每个最终 FIT 都先看地图和曲线。选择会自动记住。")
                 }
 
                 if !isSelectedSync {
@@ -265,6 +280,7 @@ struct AutoSyncView: View {
             .onChange(of: riderMassKg) { _, _ in persistVirtualPowerSettings() }
             .onChange(of: bikeMassKg) { _, _ in persistVirtualPowerSettings() }
             .onChange(of: cda) { _, _ in persistVirtualPowerSettings() }
+            .onChange(of: previewPolicy) { _, value in SyncPreviewPolicy.saved = value }
         }
     }
 
@@ -319,7 +335,8 @@ struct AutoSyncView: View {
             selectedActivityIds: selectedActivityIds,
             selectedStart: selectedStart,
             selectedEnd: selectedEnd,
-            customTitle: title
+            customTitle: title,
+            previewPolicy: previewPolicy
         )
         // 调用 SyncSession.start：App 级会话执行同步。
         session.start(job)

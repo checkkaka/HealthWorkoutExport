@@ -1,6 +1,45 @@
 import Foundation
 import CryptoKit
 
+/// 顽鹿会话失效判定：HTTP 401/403、业务码 401/403，或明确要求重新登录的文案。
+enum OnelapAuth {
+    static let tokenRefreshURL = URL(string: "https://otm.onelap.cn/api/token")!
+
+    static func isExpired(httpStatus: Int, code: Int? = nil, message: String = "") -> Bool {
+        if httpStatus == 401 || httpStatus == 403 { return true }
+        if code == 401 || code == 403 { return true }
+        let msg = message.lowercased()
+        let hints = [
+            "未登录", "登录过期", "登录失效", "请重新登录", "重新登录",
+            "token过期", "token失效", "token expired", "invalid token",
+            "token invalid", "unauthorized"
+        ]
+        return hints.contains { msg.contains($0) }
+    }
+
+    /// 登录 `data[0]` 与刷新 `data{token}` 共用。
+    static func sessionTokens(from root: [String: Any]) -> (token: String, refreshToken: String?)? {
+        if let arr = root["data"] as? [[String: Any]], let first = arr.first {
+            return tokens(fromItem: first)
+        }
+        if let obj = root["data"] as? [String: Any] {
+            return tokens(fromItem: obj)
+        }
+        return tokens(fromItem: root)
+    }
+
+    private static func tokens(fromItem item: [String: Any]) -> (token: String, refreshToken: String?)? {
+        guard let token = stringValue(item["token"]), !token.isEmpty else { return nil }
+        return (token, stringValue(item["refresh_token"]))
+    }
+
+    private static func stringValue(_ any: Any?) -> String? {
+        guard let any, !(any is NSNull) else { return nil }
+        let s = "\(any)".trimmingCharacters(in: .whitespacesAndNewlines)
+        return s.isEmpty || s == "<null>" ? nil : s
+    }
+}
+
 /// 顽鹿 HTTP 客户端：MD5 签名登录、骑行列表、FIT 下载（对齐 OnelapSyncStrava）。
 actor OnelapClient {
     private static let secret = "fe9f8382418fcdeb136461cac6acae7b"
@@ -9,6 +48,7 @@ actor OnelapClient {
 
     private var token: String?
     private var uid: String?
+    private var refreshToken: String?
     private let session: URLSession
 
     init(session: URLSession = .shared) {
@@ -17,14 +57,16 @@ actor OnelapClient {
 
     var isLoggedIn: Bool { token != nil && !(token?.isEmpty ?? true) }
 
-    func restore(token: String, uid: String) {
+    func restore(token: String, uid: String, refreshToken: String? = nil) {
         self.token = token
         self.uid = uid
+        self.refreshToken = refreshToken
     }
 
     func clearSession() {
         token = nil
         uid = nil
+        refreshToken = nil
     }
 
     func login(account: String, password: String) async throws {
@@ -52,13 +94,12 @@ actor OnelapClient {
             throw WorkoutDataSourceError.loginFailed("顽鹿登录失败")
         }
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let arr = root["data"] as? [[String: Any]],
-              let first = arr.first,
-              let token = first["token"] as? String else {
+              let parsed = OnelapAuth.sessionTokens(from: root) else {
             throw WorkoutDataSourceError.loginFailed("顽鹿登录响应无效")
         }
         var uidValue = ""
-        if let userinfo = first["userinfo"] as? [String: Any] {
+        if let first = (root["data"] as? [[String: Any]])?.first,
+           let userinfo = first["userinfo"] as? [String: Any] {
             if let n = userinfo["uid"] as? NSNumber {
                 uidValue = n.stringValue
             } else if let s = userinfo["uid"] as? String {
@@ -67,7 +108,8 @@ actor OnelapClient {
                 uidValue = String(i)
             }
         }
-        self.token = token
+        self.token = parsed.token
+        self.refreshToken = parsed.refreshToken
         self.uid = uidValue
     }
 
@@ -216,9 +258,45 @@ actor OnelapClient {
         return lower.hasPrefix("http://") || lower.hasPrefix("https://")
     }
 
-    func sessionSnapshot() -> (token: String, uid: String)? {
+    func sessionSnapshot() -> (token: String, uid: String, refreshToken: String?)? {
         guard let token, let uid else { return nil }
-        return (token, uid)
+        return (token, uid, refreshToken)
+    }
+
+    /// 用 refresh_token 换新 access（对齐 MageneApi POST /api/token）。
+    func refreshAccessToken(using storedRefresh: String? = nil) async throws {
+        if let storedRefresh, !storedRefresh.isEmpty {
+            refreshToken = storedRefresh
+        }
+        guard let currentRefresh = refreshToken, !currentRefresh.isEmpty else {
+            throw WorkoutDataSourceError.notAuthenticated
+        }
+        var request = URLRequest(url: OnelapAuth.tokenRefreshURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "token": currentRefresh,
+            "from": "web",
+            "to": "web"
+        ])
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse,
+              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            throw WorkoutDataSourceError.notAuthenticated
+        }
+        let code = root["code"] as? Int
+        let message = (root["msg"] as? String) ?? (root["message"] as? String) ?? ""
+        if OnelapAuth.isExpired(httpStatus: http.statusCode, code: code, message: message) {
+            throw WorkoutDataSourceError.notAuthenticated
+        }
+        guard http.statusCode == 200, let parsed = OnelapAuth.sessionTokens(from: root) else {
+            throw WorkoutDataSourceError.notAuthenticated
+        }
+        token = parsed.token
+        if let newRefresh = parsed.refreshToken, !newRefresh.isEmpty {
+            refreshToken = newRefresh
+        }
     }
 
     private func requireAuth() throws {
@@ -251,13 +329,7 @@ actor OnelapClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw WorkoutDataSourceError.fetchFailed("顽鹿请求失败")
-        }
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw WorkoutDataSourceError.fetchFailed("顽鹿响应无效")
-        }
-        return root
+        return try decodeJSON(data: data, response: response)
     }
 
     private func getJSON(path: String) async throws -> [String: Any] {
@@ -265,10 +337,25 @@ actor OnelapClient {
         var request = try await authorizedRequest(url: url)
         request.httpMethod = "GET"
         let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+        return try decodeJSON(data: data, response: response)
+    }
+
+    private func decodeJSON(data: Data, response: URLResponse) throws -> [String: Any] {
+        guard let http = response as? HTTPURLResponse else {
             throw WorkoutDataSourceError.fetchFailed("顽鹿请求失败")
         }
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        let code = root?["code"] as? Int
+        let message = (root?["msg"] as? String) ?? (root?["message"] as? String) ?? ""
+        if OnelapAuth.isExpired(httpStatus: http.statusCode, code: code, message: message) {
+            token = nil
+            uid = nil
+            throw WorkoutDataSourceError.notAuthenticated
+        }
+        guard http.statusCode == 200 else {
+            throw WorkoutDataSourceError.fetchFailed("顽鹿请求失败")
+        }
+        guard let root else {
             throw WorkoutDataSourceError.fetchFailed("顽鹿响应无效")
         }
         return root

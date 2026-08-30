@@ -244,6 +244,14 @@ struct ThirdPartySourceListView: View {
             return
         } catch {
             guard generation == loadGeneration else { return }
+            if let sourceError = error as? WorkoutDataSourceError {
+                switch sourceError {
+                case .notAuthenticated, .loginFailed:
+                    isAuthenticated = false
+                default:
+                    break
+                }
+            }
             errorMessage = error.localizedDescription
             activities = []
             exportViewModel.clearSelection()
