@@ -15,6 +15,7 @@ struct ActivityDetailSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(SyncSession.self) private var session
+    @ScaledMetric(relativeTo: .body) private var mapTopInset = RideOverviewLayout.mapTopInset
     @State private var selectedVersion = Version.original
     @State private var originalInspection: FITInspection?
     @State private var syncedInspection: FITInspection?
@@ -25,6 +26,7 @@ struct ActivityDetailSheet: View {
     @State private var errorMessage: String?
     @State private var showSyncPreview = false
     @State private var showOverwriteConfirmation = false
+    @State private var showsMapInfo = true
 
     private enum Version: String, CaseIterable, Identifiable {
         case original
@@ -45,12 +47,14 @@ struct ActivityDetailSheet: View {
                 } else {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 16) {
-                            basicSection
-                            versionSection
                             if let inspection {
-                                mapSection(inspection)
+                                overviewSection(inspection)
+                                versionSection
                                 qualitySection(inspection)
                                 chartSection(inspection)
+                            } else {
+                                basicSection
+                                versionSection
                             }
                             actionSection
                             if let errorMessage {
@@ -102,9 +106,11 @@ struct ActivityDetailSheet: View {
             if let activityTypeName { LabeledContent("类型", value: activityTypeName) }
             LabeledContent("数据源", value: sourceId)
             LabeledContent("开始", value: startDate.formatted(date: .abbreviated, time: .shortened))
-            LabeledContent("时长", value: durationText(duration))
-            if let distanceMeters {
-                LabeledContent("距离", value: String(format: "%.2f 公里", distanceMeters / 1_000))
+            if inspection == nil {
+                LabeledContent("时长", value: durationText(duration))
+                if let distanceMeters {
+                    LabeledContent("距离", value: String(format: "%.2f 公里", distanceMeters / 1_000))
+                }
             }
         }
         .detailCard()
@@ -125,34 +131,61 @@ struct ActivityDetailSheet: View {
         .detailCard()
     }
 
-    private func mapSection(_ inspection: FITInspection) -> some View {
+    private func overviewSection(_ inspection: FITInspection) -> some View {
         let originalIsGCJ = selectedVersion == .original && originalUsesGCJCoordinates
         let coordinates = TrackMapProjection.coordinates(
             inspection.displayTrack(),
             sourceIsGCJ: originalIsGCJ
         )
-        let baseLayer: TrackMapBaseLayer = selectedVersion == .original ? .china : .openStreetMap
-        return VStack(alignment: .leading, spacing: 8) {
-            Text("地图").font(.headline)
+        let metadata = [
+            startDate.formatted(date: .abbreviated, time: .shortened),
+            activityTypeName,
+            sourceId
+        ].compactMap { $0 }.joined(separator: " · ")
+        return RideOverviewSection(
+            summary: inspection.summary,
+            activityTitle: title,
+            activityMetadata: metadata
+        ) {
             TrackMapView(
-                baseLayer: baseLayer,
+                baseLayer: .china,
                 lines: [.init(
                     id: selectedVersion.rawValue,
                     coordinates: coordinates,
                     color: selectedVersion == .original ? .systemOrange : .systemBlue
                 )],
                 contentID: "detail-\(selectedVersion.rawValue)-\(inspection.summary.gpsCount)-\(originalIsGCJ)",
-                height: 300
+                height: RideOverviewLayout.mapHeight,
+                topContentInset: mapTopInset,
+                bottomContentInset: RideOverviewLayout.mapBottomInset
             )
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            Text(selectedVersion == .original
-                 ? "原始 \(originalIsGCJ ? "GCJ-02" : "WGS-84") · 国内底图"
-                 : "WGS-84 · OpenStreetMap")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("展示抽样最多 2000 点；质量体检使用全部 \(inspection.summary.recordCount) 条记录。")
-                .font(.caption).foregroundStyle(.secondary)
+            .overlay(alignment: .topLeading) {
+                Button {
+                    withAnimation { showsMapInfo.toggle() }
+                } label: {
+                    if showsMapInfo {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("地图").font(.headline)
+                            Text(selectedVersion == .original
+                                 ? "原始 \(originalIsGCJ ? "GCJ-02" : "WGS-84") · 国内底图"
+                                 : "同步版 WGS-84 · 国内底图")
+                        }
+                        .font(.caption)
+                        .padding(12)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                    } else {
+                        Image(systemName: "info.circle.fill")
+                            .font(.title3)
+                            .frame(width: 44, height: 44)
+                            .background(.regularMaterial, in: Circle())
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(showsMapInfo ? "收起地图信息" : "显示地图信息")
+                .padding(12)
+            }
         }
-        .detailCard()
+        .padding(.horizontal, -16)
     }
 
     private var syncAppliedGCJConversion: Bool {
@@ -307,6 +340,7 @@ struct ActivityDetailSheet: View {
         formatter.unitsStyle = .abbreviated
         return formatter.string(from: duration) ?? "—"
     }
+
 }
 
 private extension View {
