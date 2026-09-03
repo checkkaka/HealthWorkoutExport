@@ -122,8 +122,8 @@ final class FitVirtualPowerFillerTests: XCTestCase {
         XCTAssertEqual(records.first?.getPower(), 0)
     }
 
-    /// 估算写入的秒应带 developer 字段 powerSource=virtual；原有功率秒同样覆盖并打标。
-    func testMarksFilledRecordsWithPowerSourceVirtual() async throws {
+    /// 虚拟功率只用 developer 字段标来源，不得新增设备声明覆盖原记录设备身份。
+    func testMarksFilledRecordsWithoutDeclaringVirtualPowerAsDevice() async throws {
         let start = Date(timeIntervalSince1970: 1_720_000_000)
         let fit = try makeFit(
             start: start,
@@ -146,7 +146,7 @@ final class FitVirtualPowerFillerTests: XCTestCase {
                 $0.getFieldName(index: 0) == VirtualPowerSourceMark.fieldName
             }
         )
-        XCTAssertTrue(
+        XCTAssertFalse(
             messages.deviceInfoMesgs.contains { $0.getProductName() == "VirtPower Est" }
         )
 

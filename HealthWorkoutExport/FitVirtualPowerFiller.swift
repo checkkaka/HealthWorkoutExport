@@ -343,8 +343,7 @@ enum FitVirtualPowerFiller {
         }
 
         // 调用 VirtualPowerSourceMark：成功 virtual、失败 failed；developer index 避开已占用值。
-        let markTimestamp = records.first?.getTimestamp() ?? DateTime()
-        let markBundle = try VirtualPowerSourceMark.makeBundle(timestamp: markTimestamp, messages: messages)
+        let markBundle = try VirtualPowerSourceMark.makeBundle(messages: messages)
         for record in successRecords {
             try VirtualPowerSourceMark.markRecord(
                 record,
@@ -362,7 +361,6 @@ enum FitVirtualPowerFiller {
 
         let encoded = try FitMessagesReencoder.encode(
             messages,
-            extraDeviceInfos: [markBundle.deviceInfo],
             developerDataIds: [markBundle.developerDataId],
             fieldDescriptions: [markBundle.fieldDescription]
         )

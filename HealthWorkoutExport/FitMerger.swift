@@ -36,6 +36,27 @@ enum FitSupplementMode: Equatable {
     case sensorsOnly
 }
 
+enum FitSensorField: String, CaseIterable, Hashable, Sendable {
+    case heartRate = "心率"
+    case cadence = "踏频"
+    case power = "功率"
+    case temperature = "温度"
+    case grade = "坡度"
+}
+
+struct FitSupplementReport: Sendable {
+    var name: String
+    var offsetSeconds: Int
+    var filledCounts: [FitSensorField: Int]
+
+    var totalFilledCount: Int { filledCounts.values.reduce(0, +) }
+}
+
+struct FitMergeResult: Sendable {
+    var data: Data
+    var supplements: [FitSupplementReport]
+}
+
 /// 合并多个 FIT Activity 文件：主文件为基准，其余文件仅补充主文件空缺的数据。
 ///
 /// 合并规则（`fillRecords`）：
@@ -128,6 +149,23 @@ enum FitMerger {
         timeAlign: FitMergeTimeAlign = .absolute,
         supplementMode: FitSupplementMode = .fillRecords
     ) throws -> Data {
+        try mergeWithReport(
+            primary: primary,
+            primaryName: primaryName,
+            others: others,
+            timeAlign: timeAlign,
+            supplementMode: supplementMode
+        ).data
+    }
+
+    /// 与 `merge` 使用完全相同的合并逻辑，额外返回每个补源实际补入的传感器字段数量。
+    static func mergeWithReport(
+        primary: Data,
+        primaryName: String,
+        others: [(data: Data, name: String)],
+        timeAlign: FitMergeTimeAlign = .absolute,
+        supplementMode: FitSupplementMode = .fillRecords
+    ) throws -> FitMergeResult {
         guard !others.isEmpty else { throw FitMergeError.needAtLeastTwoFiles }
         let sensorsOnly = supplementMode == .sensorsOnly
 
@@ -154,6 +192,9 @@ enum FitMerger {
             }
             offsets = list
         }
+        var supplementReports = zip(others, offsets).map { input, offset in
+            FitSupplementReport(name: input.name, offsetSeconds: offset, filledCounts: [:])
+        }
 
         // Record 按秒索引，主文件先占位。
         var recordsBySecond: [UInt32: RecordMesg] = [:]
@@ -170,7 +211,8 @@ enum FitMerger {
 
         // 每个副文件对齐后的记录时间范围，用于判断该文件是否与主完全不重叠。
         var alignedRanges: [ClosedRange<UInt32>?] = []
-        for (messages, offset) in zip(otherMessages, offsets) {
+        for (sourceIndex, pair) in zip(otherMessages, offsets).enumerated() {
+            let (messages, offset) = pair
             var alignedMin: UInt32?
             var alignedMax: UInt32?
             for otherRecord in messages.recordMesgs {
@@ -183,7 +225,10 @@ enum FitMerger {
                 if let primaryRecord = recordsBySecond[key] {
                     if sensorsOnly {
                         // 调用 fillSensorFields：同秒只补心率/功率/踏频/体温/坡度，不碰 GPS/距离。
-                        try fillSensorFields(into: primaryRecord, from: otherRecord)
+                        let filled = try fillSensorFields(into: primaryRecord, from: otherRecord)
+                        for (field, count) in filled {
+                            supplementReports[sourceIndex].filledCounts[field, default: 0] += count
+                        }
                     } else {
                         // 调用 fillMissingFields：同一秒冲突，以主为准，仅补主缺的字段。
                         fillMissingFields(into: primaryRecord, from: otherRecord)
@@ -372,7 +417,7 @@ enum FitMerger {
         if let activity = primaryMessages.activityMesgs.first {
             encoder.write(mesg: activity)
         }
-        return encoder.close()
+        return FitMergeResult(data: encoder.close(), supplements: supplementReports)
     }
 
     // MARK: - Align helpers
@@ -476,22 +521,32 @@ enum FitMerger {
     }
 
     /// 同秒只补传感器：心率/功率/踏频/体温/坡度；不碰 GPS、距离、速度、海拔。
-    private static func fillSensorFields(into target: RecordMesg, from source: RecordMesg) throws {
+    private static func fillSensorFields(
+        into target: RecordMesg,
+        from source: RecordMesg
+    ) throws -> [FitSensorField: Int] {
+        var filled: [FitSensorField: Int] = [:]
         if target.getHeartRate() == nil, let v = source.getHeartRate() {
             try target.setHeartRate(v)
+            filled[.heartRate, default: 0] += 1
         }
         if target.getCadence() == nil, let v = source.getCadence() {
             try target.setCadence(v)
+            filled[.cadence, default: 0] += 1
         }
         if target.getPower() == nil, let v = source.getPower() {
             try target.setPower(v)
+            filled[.power, default: 0] += 1
         }
         if target.getTemperature() == nil, let v = source.getTemperature() {
             try target.setTemperature(v)
+            filled[.temperature, default: 0] += 1
         }
         if target.getGrade() == nil, let v = source.getGrade() {
             try target.setGrade(v)
+            filled[.grade, default: 0] += 1
         }
+        return filled
     }
 
     /// Session 只补平均/最大心率等传感器汇总，不动距离与时长（起止以主为准）。
@@ -540,15 +595,13 @@ enum FitMerger {
     }
 }
 
-/// 自动同步上传前：检测并修复几秒内的离谱速度尖峰（几百/几千 km/h）。
-/// 用邻点（或全场）均速改写速度，距离按均速推进；GPS 瞬移则坐标退回上一有效点。
+/// 自动同步上传前：检测并修复 FIT 速度/距离字段中的离谱尖峰（几百/几千 km/h）。
+/// 原生 GPS 坐标只参与透传，绝不由尖峰修复器改写。
 enum FitSpeedSpikeFixer {
     /// 瞬时合理上限（与异常扫描共用 80 km/h）。
     static var maxReasonableSpeedMps: Double { StravaSpeedAnomaly.peakThresholdMps }
     /// 只处理短间隔跳变（秒）。
     private static let maxGapSeconds: Double = 8
-    private static let semicirclesPerDegree = 2_147_483_648.0 / 180.0
-
     struct FixResult: Sendable {
         var data: Data
         var fixedCount: Int
@@ -565,47 +618,49 @@ enum FitSpeedSpikeFixer {
         return FixResult(data: try encode(messages), fixedCount: fixed)
     }
 
-    /// 多趟扫描：后点尖峰修好后，前面依赖关系可能变化。
+    /// 单趟扫描速度/距离字段；不根据 GPS 位移判尖峰，避免误改码表原生坐标。
     private static func fixRecords(_ records: [RecordMesg]) throws -> Int {
         let sorted = records.sorted {
             ($0.getTimestamp()?.timestamp ?? 0) < ($1.getTimestamp()?.timestamp ?? 0)
         }
         guard sorted.count >= 2 else { return 0 }
 
-        var total = 0
-        for _ in 0..<5 {
-            let activityAvg = activityAverageSpeedMps(sorted) ?? 5.0
-            var pass = 0
-            for i in 1..<sorted.count {
-                let cur = sorted[i]
-                let prev = sorted[i - 1]
-                guard let t0 = prev.getTimestamp()?.timestamp,
-                      let t1 = cur.getTimestamp()?.timestamp else { continue }
-                let dt = Double(Int64(t1) - Int64(t0))
-                guard dt > 0, dt <= maxGapSeconds else { continue }
+        let activityAvg = activityAverageSpeedMps(sorted) ?? 5.0
+        var fixed = 0
+        for i in 1..<sorted.count {
+            let cur = sorted[i]
+            let prev = sorted[i - 1]
+            guard let t0 = prev.getTimestamp()?.timestamp,
+                  let t1 = cur.getTimestamp()?.timestamp else { continue }
+            let dt = Double(Int64(t1) - Int64(t0))
+            guard dt > 0, dt <= maxGapSeconds else { continue }
 
-                let implied = impliedSpeedMps(from: prev, to: cur, dt: dt)
-                let fieldSpeed = cur.getSpeed() ?? cur.getEnhancedSpeed()
-                let peak = max(implied ?? 0, fieldSpeed ?? 0)
-                guard peak > maxReasonableSpeedMps else { continue }
+            let hasGPS = prev.getPositionLat() != nil && prev.getPositionLong() != nil
+                && cur.getPositionLat() != nil && cur.getPositionLong() != nil
+            let implied = !hasGPS
+                ? impliedDistanceSpeedMps(from: prev, to: cur, dt: dt)
+                : nil
+            let fieldSpeed = cur.getSpeed() ?? cur.getEnhancedSpeed()
+            guard max(implied ?? 0, fieldSpeed ?? 0) > maxReasonableSpeedMps else { continue }
 
-                let avg = neighborAverageSpeedMps(sorted, around: i) ?? activityAvg
-                // 调用 applyAverageFix：用均速抹掉瞬移/距离暴跳。
-                try applyAverageFix(current: cur, previous: prev, dt: dt, averageSpeedMps: avg, implied: implied)
-                pass += 1
-            }
-            total += pass
-            if pass == 0 { break }
+            let avg = neighborAverageSpeedMps(sorted, around: i) ?? activityAvg
+            // 调用 applyAverageFix：只修速度/距离字段，原生 GPS 坐标保持不变。
+            try applyAverageFix(
+                current: cur,
+                previous: prev,
+                dt: dt,
+                averageSpeedMps: avg
+            )
+            fixed += 1
         }
-        return total
+        return fixed
     }
 
     private static func applyAverageFix(
         current: RecordMesg,
         previous: RecordMesg,
         dt: Double,
-        averageSpeedMps: Double,
-        implied: Double?
+        averageSpeedMps: Double
     ) throws {
         let avg = max(0, min(averageSpeedMps, maxReasonableSpeedMps))
         try current.setSpeed(avg)
@@ -613,27 +668,12 @@ enum FitSpeedSpikeFixer {
             try current.setEnhancedSpeed(avg)
         }
 
-        // GPS 瞬移：坐标退回上一点，避免平台按轨迹重算几千 km/h。
-        if let implied, implied > maxReasonableSpeedMps,
-           let plat = previous.getPositionLat(), let plon = previous.getPositionLong() {
-            try current.setPositionLat(plat)
-            try current.setPositionLong(plon)
-        }
-
         if let prevDist = previous.getDistance() {
             try current.setDistance(prevDist + avg * dt)
         }
     }
 
-    private static func impliedSpeedMps(from prev: RecordMesg, to cur: RecordMesg, dt: Double) -> Double? {
-        if let la0 = prev.getPositionLat(), let lo0 = prev.getPositionLong(),
-           let la1 = cur.getPositionLat(), let lo1 = cur.getPositionLong() {
-            let meters = haversineMeters(
-                lat1: degree(fromSemicircle: la0), lon1: degree(fromSemicircle: lo0),
-                lat2: degree(fromSemicircle: la1), lon2: degree(fromSemicircle: lo1)
-            )
-            return meters / dt
-        }
+    private static func impliedDistanceSpeedMps(from prev: RecordMesg, to cur: RecordMesg, dt: Double) -> Double? {
         if let d0 = prev.getDistance(), let d1 = cur.getDistance(), d1 >= d0 {
             return (d1 - d0) / dt
         }
@@ -674,21 +714,6 @@ enum FitSpeedSpikeFixer {
             return n > 0 ? sum / Double(n) : nil
         }
         return (last.1 - first.1) / Double(last.0 - first.0)
-    }
-
-    private static func degree(fromSemicircle value: Int32) -> Double {
-        // semicirclesPerDegree = 2^31/180；度 = 半圆 / 该常数（勿再乘 180）。
-        Double(value) / semicirclesPerDegree
-    }
-
-    private static func haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double) -> Double {
-        let r = 6_371_000.0
-        let p1 = lat1 * .pi / 180
-        let p2 = lat2 * .pi / 180
-        let dp = (lat2 - lat1) * .pi / 180
-        let dl = (lon2 - lon1) * .pi / 180
-        let a = sin(dp / 2) * sin(dp / 2) + cos(p1) * cos(p2) * sin(dl / 2) * sin(dl / 2)
-        return 2 * r * asin(min(1, sqrt(a)))
     }
 
     /// 把改过的 FitMessages 重新编码成 Activity FIT。

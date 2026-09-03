@@ -62,6 +62,11 @@
 		B00100000000000000000038 /* VirtualPowerSocialCopy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000038 /* VirtualPowerSocialCopy.swift */; };
 		B00100000000000000000039 /* VirtualPowerSocialCopyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000039 /* VirtualPowerSocialCopyTests.swift */; };
 		B0010000000000000000003A /* OpenMeteoWeatherClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000003A /* OpenMeteoWeatherClientTests.swift */; };
+		B0010000000000000000003B /* FITInspection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000003B /* FITInspection.swift */; };
+		B0010000000000000000003C /* PreparedFITBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000003C /* PreparedFITBuilder.swift */; };
+		B0010000000000000000003D /* SyncPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000003D /* SyncPreviewView.swift */; };
+		B0010000000000000000003E /* FITInspectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000003E /* FITInspectionTests.swift */; };
+		B0010000000000000000003F /* TrackMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000003F /* TrackMapView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -132,6 +137,12 @@
 		F00100000000000000000038 /* VirtualPowerSocialCopy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualPowerSocialCopy.swift; sourceTree = "<group>"; };
 		F00100000000000000000039 /* VirtualPowerSocialCopyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualPowerSocialCopyTests.swift; sourceTree = "<group>"; };
 		F0010000000000000000003A /* OpenMeteoWeatherClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenMeteoWeatherClientTests.swift; sourceTree = "<group>"; };
+		F0010000000000000000003B /* FITInspection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FITInspection.swift; sourceTree = "<group>"; };
+		F0010000000000000000003C /* PreparedFITBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreparedFITBuilder.swift; sourceTree = "<group>"; };
+		F0010000000000000000003D /* SyncPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncPreviewView.swift; sourceTree = "<group>"; };
+		F0010000000000000000003E /* FITInspectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FITInspectionTests.swift; sourceTree = "<group>"; };
+		F0010000000000000000003F /* TrackMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackMapView.swift; sourceTree = "<group>"; };
+		F00100000000000000000040 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -157,6 +168,7 @@
 		G00100000000000000000001 = {
 			isa = PBXGroup;
 			children = (
+				F00100000000000000000040 /* Signing.xcconfig */,
 				G00100000000000000000002 /* HealthWorkoutExport */,
 				G00100000000000000000004 /* HealthWorkoutExportTests */,
 				G00100000000000000000003 /* Products */,
@@ -207,6 +219,10 @@
 				F00100000000000000000035 /* OpenMeteoWeatherCache.swift */,
 				F00100000000000000000037 /* VirtualPowerSourceMark.swift */,
 				F00100000000000000000038 /* VirtualPowerSocialCopy.swift */,
+				F0010000000000000000003B /* FITInspection.swift */,
+				F0010000000000000000003C /* PreparedFITBuilder.swift */,
+				F0010000000000000000003D /* SyncPreviewView.swift */,
+				F0010000000000000000003F /* TrackMapView.swift */,
 				F00100000000000000000009 /* Assets.xcassets */,
 				F0010000000000000000000A /* Info.plist */,
 				F0010000000000000000000B /* HealthWorkoutExport.entitlements */,
@@ -237,6 +253,7 @@
 				F00100000000000000000036 /* OpenMeteoWeatherCacheTests.swift */,
 				F00100000000000000000039 /* VirtualPowerSocialCopyTests.swift */,
 				F0010000000000000000003A /* OpenMeteoWeatherClientTests.swift */,
+				F0010000000000000000003E /* FITInspectionTests.swift */,
 			);
 			path = HealthWorkoutExportTests;
 			sourceTree = "<group>";
@@ -383,6 +400,10 @@
 				B00100000000000000000035 /* OpenMeteoWeatherCache.swift in Sources */,
 				B00100000000000000000037 /* VirtualPowerSourceMark.swift in Sources */,
 				B00100000000000000000038 /* VirtualPowerSocialCopy.swift in Sources */,
+				B0010000000000000000003B /* FITInspection.swift in Sources */,
+				B0010000000000000000003C /* PreparedFITBuilder.swift in Sources */,
+				B0010000000000000000003D /* SyncPreviewView.swift in Sources */,
+				B0010000000000000000003F /* TrackMapView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -401,6 +422,7 @@
 				B00100000000000000000036 /* OpenMeteoWeatherCacheTests.swift in Sources */,
 				B00100000000000000000039 /* VirtualPowerSocialCopyTests.swift in Sources */,
 				B0010000000000000000003A /* OpenMeteoWeatherClientTests.swift in Sources */,
+				B0010000000000000000003E /* FITInspectionTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -417,6 +439,7 @@
 /* Begin XCBuildConfiguration section */
 		S00100000000000000000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = F00100000000000000000040 /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ENABLE_MODULES = YES;
@@ -436,6 +459,7 @@
 		};
 		S00100000000000000000002 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = F00100000000000000000040 /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ENABLE_MODULES = YES;

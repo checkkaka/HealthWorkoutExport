@@ -42,5 +42,13 @@ struct RootTabView: View {
                 .padding(.top, 4)
             }
         }
+        .fullScreenCover(item: Binding(
+            get: { session.previewPrompt },
+            set: { if $0 == nil { session.resolvePreview(.skip) } }
+        )) { prompt in
+            SyncPreviewView(prompt: prompt) { decision in
+                session.resolvePreview(decision)
+            }
+        }
     }
 }

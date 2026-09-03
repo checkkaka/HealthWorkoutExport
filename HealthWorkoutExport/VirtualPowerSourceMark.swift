@@ -22,13 +22,11 @@ enum VirtualPowerSourceMark {
     struct Bundle {
         var developerDataId: DeveloperDataIdMesg
         var fieldDescription: FieldDescriptionMesg
-        var deviceInfo: DeviceInfoMesg
     }
 
-    /// 选用未占用的 developer_data_index / device_index，避免覆盖 Connect IQ 等已有数据。
-    static func makeBundle(timestamp: DateTime, messages: FitMessages) throws -> Bundle {
+    /// 选用未占用的 developer_data_index，避免覆盖 Connect IQ 等已有数据。
+    static func makeBundle(messages: FitMessages) throws -> Bundle {
         let developerIndex = nextFreeDeveloperDataIndex(in: messages)
-        let deviceIndex = nextFreeDeviceIndex(in: messages)
 
         let developerId = DeveloperDataIdMesg()
         try developerId.setDeveloperDataIndex(developerIndex)
@@ -45,18 +43,9 @@ enum VirtualPowerSourceMark {
         try fieldDesc.setUnits(index: 0, value: "enum")
         try fieldDesc.setNativeMesgNum(.record)
 
-        let deviceInfo = DeviceInfoMesg()
-        try deviceInfo.setTimestamp(timestamp)
-        try deviceInfo.setDeviceIndex(deviceIndex)
-        try deviceInfo.setManufacturer(Manufacturer.development)
-        try deviceInfo.setProduct(2)
-        try deviceInfo.setProductName("VirtPower Est")
-        try deviceInfo.setSoftwareVersion(1.0)
-
         return Bundle(
             developerDataId: developerId,
-            fieldDescription: fieldDesc,
-            deviceInfo: deviceInfo
+            fieldDescription: fieldDesc
         )
     }
 
@@ -84,15 +73,6 @@ enum VirtualPowerSourceMark {
 
     private static func nextFreeDeveloperDataIndex(in messages: FitMessages) -> UInt8 {
         let used = Set(messages.developerDataIdMesgs.compactMap { $0.getDeveloperDataIndex() })
-        var index: UInt8 = 0
-        while used.contains(index), index < .max {
-            index += 1
-        }
-        return index
-    }
-
-    private static func nextFreeDeviceIndex(in messages: FitMessages) -> UInt8 {
-        let used = Set(messages.deviceInfoMesgs.compactMap { $0.getDeviceIndex() })
         var index: UInt8 = 0
         while used.contains(index), index < .max {
             index += 1

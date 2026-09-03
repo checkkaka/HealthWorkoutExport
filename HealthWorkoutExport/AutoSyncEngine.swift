@@ -42,6 +42,22 @@ struct StravaDuplicatePrompt: Sendable {
     var reason: String
 }
 
+enum SafeOverwriteSequence {
+    static func execute<Output>(
+        saveRecovery: () throws -> Void,
+        deleteRemote: () async throws -> Void,
+        upload: () async throws -> Output
+    ) async throws -> Output {
+        try saveRecovery()
+        try await deleteRemote()
+        return try await upload()
+    }
+
+    static func shouldClearRecovery(after status: SyncRecordStatus?) -> Bool {
+        status == .uploaded
+    }
+}
+
 /// 自动同步引擎：主源列表 → 可选补源匹配合并 → 幂等上传 Strava。
 @MainActor
 final class AutoSyncEngine {
@@ -52,6 +68,16 @@ final class AutoSyncEngine {
     private let recoveryStore: ResyncRecoveryStore
     /// 本批同步共用的天气缓存（按日+粗网格），避免同城多活动重复打 Open-Meteo。
     private var weatherCache: OpenMeteoWeatherCache?
+
+    static func shouldPresentPreview(
+        policy: SyncPreviewPolicy,
+        hasErrors: Bool,
+        hasWarnings: Bool,
+        hasAmbiguity: Bool,
+        force: Bool
+    ) -> Bool {
+        force || policy == .everyActivity || hasErrors || hasWarnings || hasAmbiguity
+    }
 
     init(
         registry: DataSourceRegistry? = nil,
@@ -149,8 +175,10 @@ final class AutoSyncEngine {
         selectedStart: Date? = nil,
         selectedEnd: Date? = nil,
         customTitle: String? = nil,
+        previewPolicy: SyncPreviewPolicy = .saved,
         onProgress: @MainActor @escaping (AutoSyncProgress) -> Void,
-        onDuplicate: @MainActor @escaping (StravaDuplicatePrompt) async -> StravaDuplicateDecision
+        onDuplicate: @MainActor @escaping (StravaDuplicatePrompt) async -> StravaDuplicateDecision,
+        onPreview: @MainActor @escaping (SyncPreviewPrompt) async -> SyncPreviewDecision
     ) async throws -> AutoSyncResult {
         guard let primary = registry.source(id: primarySourceId) else {
             throw WorkoutDataSourceError.fetchFailed("未知主数据源")
@@ -273,10 +301,8 @@ final class AutoSyncEngine {
         // 本批同步开始时间：写入每条记录，供同步记录页按批次归纳。
         let batchAt = Date()
 
-        for activity in primaries {
+        activityLoop: for activity in primaries {
             try Task.checkCancellation()
-            // 预检覆盖删远端后继续上传时，须换 external_id，否则易撞已删幽灵。
-            var useOverwriteExternalId = false
             let fingerprint = SyncFingerprint.make(
                 primarySourceId: primary.id,
                 primaryActivityId: activity.id,
@@ -387,65 +413,37 @@ final class AutoSyncEngine {
                     batchAt: batchAt
                 )
 
-                // 调用 match：上传前按时间区间/距离做 Strava 预检。
-                if let existing = StravaActivityLookup.match(
+                // 这里只识别重复，不删除远端；覆盖必须等最终 FIT 完成并确认后再执行。
+                var pendingRemoteDuplicate = StravaActivityLookup.match(
                     startDate: activity.startDate,
                     endDate: activity.endDate,
                     distanceMeters: activity.distanceMeters,
                     in: remoteActivities
-                ) {
+                )
+                if let existing = pendingRemoteDuplicate, existing.id.hasPrefix("local-") {
                     // 本批刚上传、尚无远端 ID：开着本地跳过则静默去重；关掉则弹窗（无法覆盖）。
-                    if existing.id.hasPrefix("local-") {
-                        if skipIfHistoryExists {
-                            await stateStore.markUploaded(
-                                fingerprint: fingerprint,
-                                remoteId: nil,
-                                isDuplicate: true,
-                                distanceMeters: activity.distanceMeters,
-                                durationSeconds: activity.duration,
-                                message: "本批近似活动去重",
-                                uploadChannel: uploader.mode
-                            )
-                            notes.append("跳过本批已传近似活动：\(activity.title)")
-                            progress.deduped += 1
-                            progress.processed += 1
-                            progress.message = "跳过本批近似：\(activity.title)"
-                            onProgress(progress)
-                            continue
-                        }
-                        let handled = try await handleDuplicate(
+                    if skipIfHistoryExists {
+                        await stateStore.markUploaded(
                             fingerprint: fingerprint,
-                            title: activity.title,
-                            remoteId: existing.id,
-                            reason: "本批已传近似活动（尚无远端 ID，无法覆盖）",
-                            skipRest: &skipRestDuplicates,
-                            overwriteRest: &overwriteRestDuplicates,
-                            fitData: nil,
-                            filename: nil,
-                            commute: false,
-                            activityDescription: nil,
+                            remoteId: nil,
+                            isDuplicate: true,
                             distanceMeters: activity.distanceMeters,
                             durationSeconds: activity.duration,
-                            activityStart: activity.startDate,
-                            activityEnd: activity.endDate,
-                            uploader: uploader,
-                            onDuplicate: onDuplicate,
-                            progress: &progress,
-                            notes: &notes,
-                            remoteActivities: &remoteActivities
+                            message: "本批近似活动去重",
+                            uploadChannel: uploader.mode
                         )
-                        if handled {
-                            progress.processed += 1
-                            progress.message = "进度 \(progress.processed)/\(progress.total)"
-                            onProgress(progress)
-                            continue
-                        }
+                        notes.append("跳过本批已传近似活动：\(activity.title)")
+                        progress.deduped += 1
+                        progress.processed += 1
+                        progress.message = "跳过本批近似：\(activity.title)"
+                        onProgress(progress)
+                        continue
                     }
                     let handled = try await handleDuplicate(
                         fingerprint: fingerprint,
                         title: activity.title,
                         remoteId: existing.id,
-                        reason: "Strava 已有时间高度重合的活动",
+                        reason: "本批已传近似活动（尚无远端 ID，无法覆盖）",
                         skipRest: &skipRestDuplicates,
                         overwriteRest: &overwriteRestDuplicates,
                         fitData: nil,
@@ -468,90 +466,152 @@ final class AutoSyncEngine {
                         onProgress(progress)
                         continue
                     }
-                    useOverwriteExternalId = true
+                    pendingRemoteDuplicate = nil
                 }
 
                 // 调用 fetchFitData：拉主源 FIT。
                 let primaryFit = try await primary.fetchFitData(for: activity)
-                var others: [(data: Data, name: String)] = []
+                var candidateGroups: [SupplementCandidateGroup] = []
+                var selectedBySource: [String: String] = [:]
                 for source in supplements {
-                    let candidates = supplementLists[source.id] ?? []
-                    // 调用 ActivityMatcher：为该主活动匹配补源。
-                    guard let match = ActivityMatcher.bestMatch(primary: activity, candidates: candidates) else {
-                        continue
-                    }
-                    do {
-                        let data = try await source.fetchFitData(for: match)
-                        others.append((data, "\(source.id)-\(match.id).fit"))
-                    } catch {
-                        notes.append("补源 \(source.displayName) 拉取失败，已跳过：\(error.localizedDescription)")
-                    }
+                    let ranked = ActivityMatcher.rankedCandidates(
+                        primary: activity,
+                        candidates: supplementLists[source.id] ?? []
+                    )
+                    guard !ranked.isEmpty else { continue }
+                    let selected = ranked.first(where: \.isEligible)?.activity.id
+                    if let selected { selectedBySource[source.id] = selected }
+                    candidateGroups.append(.init(
+                        sourceId: source.id,
+                        sourceName: source.displayName,
+                        candidates: ranked,
+                        selectedActivityId: selected
+                    ))
                 }
 
-                let fitData: Data
-                if others.isEmpty {
-                    fitData = primaryFit
-                } else {
-                    do {
-                        // 调用 FitMerger：主源基准、补源补缺。
-                        fitData = try FitMerger.merge(
-                            primary: primaryFit,
-                            primaryName: "\(primary.id).fit",
-                            others: others,
-                            timeAlign: .automatic,
-                            supplementMode: .sensorsOnly
-                        )
-                    } catch {
-                        // 速度对齐失败：改按起点偏移，仍只补传感器、起止跟主源。
-                        if let startAligned = try? mergeByStartOffset(
-                            primaryFit: primaryFit,
-                            primaryName: "\(primary.id).fit",
-                            others: others
-                        ) {
-                            fitData = startAligned
-                            notes.append("自动对齐失败，已按起点偏移补传感器：\(activity.title)")
-                        } else {
-                            fitData = primaryFit
-                            notes.append("自动对齐失败，已跳过补源合并：\(activity.title)")
+                var fitCache: [String: Data] = [:]
+                var manuallyResolvedMatch = false
+                var forceNextPreview = false
+                var prepared: PreparedFIT!
+                while true {
+                    var selectedSupplements: [PreparedSupplement] = []
+                    var supplementFetchIssues: [FITQualityIssue] = []
+                    for group in candidateGroups {
+                        guard let activityId = selectedBySource[group.sourceId], !activityId.isEmpty,
+                              let source = supplements.first(where: { $0.id == group.sourceId }),
+                              let candidate = group.candidates.first(where: { $0.activity.id == activityId }) else {
+                            continue
+                        }
+                        let cacheKey = "\(group.sourceId):\(activityId)"
+                        do {
+                            let data: Data
+                            if let cached = fitCache[cacheKey] {
+                                data = cached
+                            } else {
+                                data = try await source.fetchFitData(for: candidate.activity)
+                                fitCache[cacheKey] = data
+                            }
+                            selectedSupplements.append(.init(
+                                sourceId: group.sourceId,
+                                sourceName: group.sourceName,
+                                candidate: candidate,
+                                data: data
+                            ))
+                        } catch {
+                            let detail = "补源 \(group.sourceName) 拉取失败，未参与本次合并：\(error.localizedDescription)"
+                            notes.append(detail)
+                            supplementFetchIssues.append(.init(
+                                id: "supplement-fetch-failed-\(group.sourceId)",
+                                severity: .warning,
+                                title: "补源读取失败",
+                                detail: detail
+                            ))
                         }
                     }
+
+                    prepared = try await PreparedFITBuilder.build(
+                        primaryData: primaryFit,
+                        primaryName: primary.displayName,
+                        supplements: selectedSupplements,
+                        gcjEnabled: StravaSettings.gcjCorrectionEnabled,
+                        reuploadMetadata: .init(
+                            fingerprint: fingerprint,
+                            remoteId: pendingRemoteDuplicate?.id,
+                            filename: "\(primary.id)-\(activity.id).fit"
+                        ),
+                        virtualPowerProcessor: { [self] data in
+                            var powerNotes: [String] = []
+                            let result = try await applyVirtualPowerIfNeeded(
+                                data,
+                                activityTitle: activity.title,
+                                notes: &powerNotes
+                            )
+                            return PreparedVirtualPowerResult(
+                                data: result.data,
+                                filledCount: result.virtualPowerCount,
+                                activityDescription: result.activityDescription,
+                                notes: powerNotes
+                            )
+                        }
+                    )
+                    prepared.processingIssues.append(contentsOf: supplementFetchIssues)
+
+                    let automaticAmbiguity = !manuallyResolvedMatch && candidateGroups.contains { group in
+                        ActivityMatcher.requiresConfirmation(group.candidates)
+                            || (group.selectedActivityId == nil && !group.candidates.isEmpty)
+                    }
+                    let shouldPreview = Self.shouldPresentPreview(
+                        policy: previewPolicy,
+                        hasErrors: prepared.hasErrors,
+                        hasWarnings: prepared.hasWarnings,
+                        hasAmbiguity: automaticAmbiguity,
+                        force: forceNextPreview
+                    )
+                    guard shouldPreview else { break }
+                    forceNextPreview = false
+
+                    let displayGroups = candidateGroups.map { group in
+                        var copy = group
+                        copy.selectedActivityId = selectedBySource[group.sourceId]
+                        return copy
+                    }
+                    switch await onPreview(.init(
+                        activity: activity,
+                        preparedFIT: prepared,
+                        candidateGroups: displayGroups
+                    )) {
+                    case .upload:
+                        guard !prepared.hasErrors, !prepared.hasWarnings else { continue }
+                        break
+                    case .forceUpload:
+                        guard !prepared.hasErrors else { continue }
+                        break
+                    case .skip:
+                        notes.append("预览后跳过：\(activity.title)")
+                        progress.processed += 1
+                        progress.message = "预览后跳过：\(activity.title)"
+                        onProgress(progress)
+                        continue activityLoop
+                    case .stopBatch:
+                        throw CancellationError()
+                    case .rebuild(let selections):
+                        selectedBySource = selections.filter { !$0.value.isEmpty }
+                        manuallyResolvedMatch = true
+                        forceNextPreview = true
+                        continue
+                    }
+                    break
                 }
 
-                // 调用 FitSpeedSpikeFixer：抹掉几秒内几百/几千 km/h 尖峰后再上传。
-                let spikeFixed = try FitSpeedSpikeFixer.fix(fitData)
-                var uploadData = spikeFixed.data
-                if spikeFixed.fixedCount > 0 {
-                    notes.append("已修复 \(spikeFixed.fixedCount) 处速度尖峰：\(activity.title)")
+                guard !prepared.hasErrors else {
+                    throw WorkoutDataSourceError.fetchFailed("质量体检存在不可强传错误")
                 }
-                // 上传成功可写入 sync_state.message，便于核对 GCJ 是否跑过。
-                // 虚拟功率放在 GCJ 之后：用最终坐标估风向/方位，避免转换前方位偏差。
-                var uploadMessage: String?
-                if StravaSettings.gcjCorrectionEnabled {
-                    // 调用 FitGcjCoordinateRewriter：可选 GCJ→WGS，修国内轨迹偏移。
-                    let gcj = try FitGcjCoordinateRewriter.rewrite(uploadData)
-                    uploadData = gcj.data
-                    let gcjMsg = gcj.rewrittenCount > 0
-                        ? "已转换 \(gcj.rewrittenCount) 个 GCJ 坐标点"
-                        : "GCJ 开关已开但未转换任何坐标点"
-                    notes.append("\(gcjMsg)：\(activity.title)")
-                    uploadMessage = gcjMsg
-                }
-                // 调用 applyVirtualPowerIfNeeded：开启后估算并覆盖已有原生 power。
-                let virtualPower = try await applyVirtualPowerIfNeeded(
-                    uploadData,
-                    activityTitle: activity.title,
-                    notes: &notes
-                )
-                uploadData = virtualPower.data
-                let activityDescription = virtualPower.activityDescription
-                let gpsPoints = FitContentProbe.gpsPointCount(uploadData)
-                let hrPoints = FitContentProbe.heartRatePointCount(uploadData)
-                if gpsPoints < 5 {
-                    notes.append("警告：轨迹点仅 \(gpsPoints) 个，Strava 易显示为直线：\(activity.title)")
-                }
-                if hrPoints == 0 {
-                    notes.append("警告：无心率点：\(activity.title)")
-                }
+                let uploadData = prepared.data
+                let activityDescription = prepared.activityDescription
+                notes.append(contentsOf: prepared.report.notes.map { "\($0)：\(activity.title)" })
+                let uploadMessage = prepared.report.convertedCoordinateCount > 0
+                    ? "已转换 \(prepared.report.convertedCoordinateCount) 个 GCJ 坐标点"
+                    : nil
 
                 let filename = "\(primary.id)-\(activity.id).fit"
                 // 调用 CommuteClassifier：短距/低速短途标记为通勤（Strava API commute=1）。
@@ -559,10 +619,40 @@ final class AutoSyncEngine {
                     distanceMeters: activity.distanceMeters,
                     durationSeconds: activity.duration
                 )
+
+                if let existing = pendingRemoteDuplicate {
+                    let handled = try await handleDuplicate(
+                        fingerprint: fingerprint,
+                        title: activity.title,
+                        remoteId: existing.id,
+                        reason: "Strava 已有时间高度重合的活动。覆盖会丢失原活动的点赞、评论和照片。",
+                        skipRest: &skipRestDuplicates,
+                        overwriteRest: &overwriteRestDuplicates,
+                        fitData: uploadData,
+                        filename: filename,
+                        commute: commute,
+                        activityDescription: activityDescription,
+                        distanceMeters: activity.distanceMeters,
+                        durationSeconds: activity.duration,
+                        activityStart: activity.startDate,
+                        activityEnd: activity.endDate,
+                        uploader: uploader,
+                        onDuplicate: onDuplicate,
+                        progress: &progress,
+                        notes: &notes,
+                        remoteActivities: &remoteActivities
+                    )
+                    if handled {
+                        progress.processed += 1
+                        progress.message = "进度 \(progress.processed)/\(progress.total)"
+                        onProgress(progress)
+                        continue
+                    }
+                }
                 // 调用 uploadFitWithMetadata：上传并 PUT 标题/描述。
                 let result = try await uploadFitWithMetadata(
                     uploadData,
-                    externalId: useOverwriteExternalId ? overwriteExternalId(fingerprint) : fingerprint,
+                    externalId: fingerprint,
                     filename: filename,
                     originalTitle: activity.title,
                     commute: commute,
@@ -576,7 +666,7 @@ final class AutoSyncEngine {
                         fingerprint: fingerprint,
                         title: activity.title,
                         remoteId: result.remoteId ?? "unknown",
-                        reason: "Strava 判定 duplicate",
+                        reason: "Strava 判定 duplicate。覆盖会丢失原活动的点赞、评论和照片。",
                         skipRest: &skipRestDuplicates,
                         overwriteRest: &overwriteRestDuplicates,
                         fitData: uploadData,
@@ -681,45 +771,17 @@ final class AutoSyncEngine {
         return true
     }
 
-    /// 速度互相关对齐失败时：用各文件 Session/首点起点差做 perFile 偏移合并。
-    private func mergeByStartOffset(
-        primaryFit: Data,
-        primaryName: String,
-        others: [(data: Data, name: String)]
-    ) throws -> Data {
-        let primaryMessages = try FitMerger.decode(primaryFit, name: primaryName)
-        var offsets: [Int] = []
-        for (data, name) in others {
-            let secondary = try FitMerger.decode(data, name: name)
-            guard let offset = FitMerger.estimateStartOffset(
-                primaryMessages: primaryMessages,
-                secondaryMessages: secondary
-            ) else {
-                throw FitMergeError.alignFailed("无法读取补源起点时间：\(name)")
-            }
-            offsets.append(offset)
-        }
-        // 调用 FitMerger.merge：按起点偏移只补传感器，起止跟主源。
-        return try FitMerger.merge(
-            primary: primaryFit,
-            primaryName: primaryName,
-            others: others,
-            timeAlign: .perFile(offsets: offsets),
-            supplementMode: .sensorsOnly
-        )
-    }
-
     /// 开关开启且参数合法时，对骑行 FIT 估算虚拟功率并覆盖已有原生 power。
     /// 返回值：写入后的数据，以及是否应附带虚拟功率社交描述。
     private func applyVirtualPowerIfNeeded(
         _ data: Data,
         activityTitle: String,
         notes: inout [String]
-    ) async throws -> (data: Data, activityDescription: String?) {
-        guard VirtualPowerSettings.enabled else { return (data, nil) }
+    ) async throws -> (data: Data, activityDescription: String?, virtualPowerCount: Int) {
+        guard VirtualPowerSettings.enabled else { return (data, nil, 0) }
         guard VirtualPowerSettings.isConfigured else {
             notes.append("虚拟功率已开但参数无效，已跳过：\(activityTitle)")
-            return (data, nil)
+            return (data, nil, 0)
         }
         // 调用 FitVirtualPowerFiller：Gribble + Open-Meteo，覆盖已有 power；失败秒标 failed。
         let result = try await FitVirtualPowerFiller.fillIfNeeded(
@@ -738,14 +800,14 @@ final class AutoSyncEngine {
         }
         // 仅当编码结果里确有 powerSource=virtual 时才附社交描述（仅 filled/failed 不够）。
         guard !result.activityRejected, result.virtualMarkedCount > 0 else {
-            return (result.data, nil)
+            return (result.data, nil, 0)
         }
         guard let messages = try? FitMerger.decode(result.data),
               // 调用 containsVirtualMarkedRecord：按 developer 字段确认是虚拟功率。
               VirtualPowerSourceMark.containsVirtualMarkedRecord(in: messages) else {
-            return (result.data, nil)
+            return (result.data, nil, 0)
         }
-        return (result.data, VirtualPowerSocialCopy.activityDescription)
+        return (result.data, VirtualPowerSocialCopy.activityDescription, result.virtualMarkedCount)
     }
 
     /// 本批预检列表追加刚上传的活动，避免同批后条再传一遍。
@@ -895,27 +957,56 @@ final class AutoSyncEngine {
             guard await webUploader.isReady() else {
                 throw StravaUploadError.uploadFailed("覆盖需要网页 Cookie：请先在 Strava 设置里完成网页登录（上传模式可仍用 API）")
             }
-            // 调用 deleteActivity：仅覆盖路径用网页 Cookie 删远端。
-            try await webUploader.deleteActivity(id: remoteId)
-            await stateStore.removeSyncedFIT(fingerprint: fingerprint)
-            // 已删除的条目要从预检列表移除，避免后续活动再次匹配到它。
-            remoteActivities.removeAll { $0.id == remoteId }
             guard let fitData, let filename else {
-                // 预检命中时尚无 FIT：返回 false 让上层继续拉 FIT 并上传。
-                notes.append("已删除远端 \(remoteId)，继续上传：\(title)")
+                // 未完成准备/预览时绝不删除远端。
                 return false
             }
-            // 调用 uploadFitWithMetadata：按当前模式重传（换 external_id，避免撞已删幽灵）。
-            var result = try await uploadFitWithMetadata(
-                fitData,
-                externalId: overwriteExternalId(fingerprint),
+            guard let record = await stateStore.record(for: fingerprint) else {
+                throw StravaUploadError.uploadFailed("无法覆盖：缺少本地恢复元数据")
+            }
+            let recovery = PendingResyncUpload(
+                primarySourceId: record.primarySourceId,
+                primaryActivityId: record.primaryActivityId,
+                title: title,
+                startDate: activityStart,
+                endDate: activityEnd,
+                supplementSourceIds: record.supplementSourceIds ?? [],
+                distanceMeters: distanceMeters,
+                durationSeconds: durationSeconds ?? activityEnd.timeIntervalSince(activityStart),
+                uploadData: fitData,
+                uploadMessage: nil,
                 filename: filename,
-                originalTitle: title,
                 commute: commute,
-                descriptionNote: activityDescription,
-                uploader: uploader,
-                notes: &notes
+                activityDescription: activityDescription
             )
+            var firstUploadNotes: [String] = []
+            // 固定顺序：保存恢复文件 → 删除远端 → 上传同一份预览字节。
+            var result = try await SafeOverwriteSequence.execute(
+                saveRecovery: {
+                    try recoveryStore.save(recovery, fingerprint: fingerprint)
+                },
+                deleteRemote: {
+                    // 调用 deleteActivity：仅覆盖路径用网页 Cookie 删远端。
+                    try await webUploader.deleteActivity(id: remoteId)
+                    await stateStore.removeSyncedFIT(fingerprint: fingerprint)
+                },
+                upload: {
+                    // 调用 uploadFitWithMetadata：按当前模式重传（换 external_id，避免撞已删幽灵）。
+                    try await uploadFitWithMetadata(
+                        fitData,
+                        externalId: overwriteExternalId(fingerprint),
+                        filename: filename,
+                        originalTitle: title,
+                        commute: commute,
+                        descriptionNote: activityDescription,
+                        uploader: uploader,
+                        notes: &firstUploadNotes
+                    )
+                }
+            )
+            notes.append(contentsOf: firstUploadNotes)
+            // 已删除的条目要从预检列表移除，避免后续活动再次匹配到它。
+            remoteActivities.removeAll { $0.id == remoteId }
             let retryStarted = Date()
             var collidedMissing = await isCollidedRemoteMissing(result.remoteId)
             while result.isDuplicate,
@@ -967,6 +1058,7 @@ final class AutoSyncEngine {
                 )
                 progress.deduped += 1
                 notes.append("覆盖后仍 duplicate\(hit)：\(title)")
+                recoveryStore.remove(fingerprint: fingerprint)
             case .uploaded:
                 await stateStore.markUploaded(
                     fingerprint: fingerprint,
@@ -987,6 +1079,7 @@ final class AutoSyncEngine {
                     distanceMeters: distanceMeters
                 )
                 progress.uploaded += 1
+                recoveryStore.remove(fingerprint: fingerprint)
             }
             return true
         }
@@ -1085,60 +1178,55 @@ final class AutoSyncEngine {
 
                     // 调用 fetchFitData：拉主源 FIT。
                     let primaryFit = try await primary.fetchFitData(for: activity)
-                    var others: [(data: Data, name: String)] = []
+                    var selectedSupplements: [PreparedSupplement] = []
                     for source in supplements {
                         let candidates = supplementLists[source.id] ?? []
-                        guard let match = ActivityMatcher.bestMatch(primary: activity, candidates: candidates) else {
+                        let ranked = ActivityMatcher.rankedCandidates(primary: activity, candidates: candidates)
+                        guard let candidate = ranked.first(where: \.isEligible) else {
                             continue
                         }
                         do {
-                            let data = try await source.fetchFitData(for: match)
-                            others.append((data, "\(source.id)-\(match.id).fit"))
+                            let data = try await source.fetchFitData(for: candidate.activity)
+                            selectedSupplements.append(.init(
+                                sourceId: source.id,
+                                sourceName: source.displayName,
+                                candidate: candidate,
+                                data: data
+                            ))
                         } catch {
                             notes.append("补源 \(source.displayName) 拉取失败，已跳过：\(error.localizedDescription)")
                         }
                     }
 
-                    let fitData: Data
-                    if others.isEmpty {
-                        fitData = primaryFit
-                    } else if let merged = try? FitMerger.merge(
-                        primary: primaryFit,
-                        primaryName: "\(primary.id).fit",
-                        others: others,
-                        timeAlign: .automatic,
-                        supplementMode: .sensorsOnly
-                    ) {
-                        fitData = merged
-                    } else if let startAligned = try? mergeByStartOffset(
-                        primaryFit: primaryFit,
-                        primaryName: "\(primary.id).fit",
-                        others: others
-                    ) {
-                        fitData = startAligned
-                    } else {
-                        fitData = primaryFit
-                    }
-
-                    let spikeFixed = try FitSpeedSpikeFixer.fix(fitData)
-                    var uploadData = spikeFixed.data
-                    // 重传路径同样：尖峰 → GCJ → 虚拟功率（最终坐标再估风）。
-                    var uploadMessage: String?
-                    if StravaSettings.gcjCorrectionEnabled {
-                        // 调用 FitGcjCoordinateRewriter：可选 GCJ→WGS，修国内轨迹偏移。
-                        let gcj = try FitGcjCoordinateRewriter.rewrite(uploadData)
-                        uploadData = gcj.data
-                        uploadMessage = gcj.rewrittenCount > 0
-                            ? "已转换 \(gcj.rewrittenCount) 个 GCJ 坐标点"
-                            : "GCJ 开关已开但未转换任何坐标点"
-                    }
-                    // 调用 applyVirtualPowerIfNeeded：重传路径同样估算并覆盖已有功率。
-                    let virtualPower = try await applyVirtualPowerIfNeeded(
-                        uploadData,
-                        activityTitle: activity.title,
-                        notes: &notes
+                    let finalFIT = try await PreparedFITBuilder.build(
+                        primaryData: primaryFit,
+                        primaryName: primary.displayName,
+                        supplements: selectedSupplements,
+                        gcjEnabled: StravaSettings.gcjCorrectionEnabled,
+                        reuploadMetadata: .init(
+                            fingerprint: fingerprint,
+                            remoteId: remoteIdToReplace,
+                            filename: "\(primary.id)-\(activity.id).fit"
+                        ),
+                        virtualPowerProcessor: { [self] data in
+                            var powerNotes: [String] = []
+                            let result = try await applyVirtualPowerIfNeeded(
+                                data,
+                                activityTitle: activity.title,
+                                notes: &powerNotes
+                            )
+                            return PreparedVirtualPowerResult(
+                                data: result.data,
+                                filledCount: result.virtualPowerCount,
+                                activityDescription: result.activityDescription,
+                                notes: powerNotes
+                            )
+                        }
                     )
-                    uploadData = virtualPower.data
+                    guard !finalFIT.hasErrors else {
+                        throw WorkoutDataSourceError.fetchFailed("质量体检存在不可强传错误")
+                    }
+                    notes.append(contentsOf: finalFIT.report.notes.map { "\($0)：\(activity.title)" })
 
                     prepared = PendingResyncUpload(
                         primarySourceId: primary.id,
@@ -1149,14 +1237,16 @@ final class AutoSyncEngine {
                         supplementSourceIds: supplementIds,
                         distanceMeters: activity.distanceMeters,
                         durationSeconds: activity.duration,
-                        uploadData: uploadData,
-                        uploadMessage: uploadMessage,
+                        uploadData: finalFIT.data,
+                        uploadMessage: finalFIT.report.convertedCoordinateCount > 0
+                            ? "已转换 \(finalFIT.report.convertedCoordinateCount) 个 GCJ 坐标点"
+                            : nil,
                         filename: "\(primary.id)-\(activity.id).fit",
                         commute: CommuteClassifier.isCommute(
                             distanceMeters: activity.distanceMeters,
                             durationSeconds: activity.duration
                         ),
-                        activityDescription: virtualPower.activityDescription
+                        activityDescription: finalFIT.activityDescription
                     )
                 }
 
@@ -1242,8 +1332,12 @@ final class AutoSyncEngine {
                     )
                     progress.uploaded += 1
                 }
-                // 成功或已完成 duplicate 处理后，恢复文件不再需要。
-                recoveryStore.remove(fingerprint: fingerprint)
+                // 只有状态明确为 uploaded 才清理；幽灵 duplicate 失败时必须保留恢复文件。
+                if SafeOverwriteSequence.shouldClearRecovery(
+                    after: await stateStore.status(for: fingerprint)
+                ) {
+                    recoveryStore.remove(fingerprint: fingerprint)
+                }
             } catch {
                 progress.failed += 1
                 let retained = (try? recoveryStore.load(fingerprint: fingerprint)) != nil

@@ -730,8 +730,8 @@ final class FitActivityEncoderTests: XCTestCase {
         XCTAssertEqual(session.getTimeInHrZone(index: 2), 30, "数组字段第 3 个分量不应丢失")
     }
 
-    /// 1 秒内 GPS 瞬移约 5km（≈18000 km/h）应被均速修复。
-    func testFitSpeedSpikeFixerSmoothsTeleport() throws {
+    /// 即使速度字段异常，尖峰修复也不得改写码表原生 GPS 坐标。
+    func testFitSpeedSpikeFixerPreservesNativeCoordinates() throws {
         let base = Date(timeIntervalSince1970: 1_720_000_000)
         let semicircles = 2_147_483_648.0 / 180.0
         let encoder = FITSwiftSDK.Encoder()
@@ -755,16 +755,17 @@ final class FitActivityEncoderTests: XCTestCase {
         let r1 = RecordMesg()
         try r1.setTimestamp(DateTime(date: base.addingTimeInterval(1)))
         try r1.setPositionLat(Int32((31.045 * semicircles).rounded()))
-        try r1.setPositionLong(Int32((120.0 * semicircles).rounded()))
+        try r1.setPositionLong(Int32((120.045 * semicircles).rounded()))
         try r1.setDistance(5_000)
-        try r1.setSpeed(5_000)
+        try r1.setSpeed(50.0)
         encoder.write(mesg: r1)
 
+        // 下一秒回到正常路线；三个点的原生坐标都必须保持不变。
         let r2 = RecordMesg()
         try r2.setTimestamp(DateTime(date: base.addingTimeInterval(2)))
-        try r2.setPositionLat(Int32((31.0451 * semicircles).rounded()))
+        try r2.setPositionLat(Int32((31.0001 * semicircles).rounded()))
         try r2.setPositionLong(Int32((120.0 * semicircles).rounded()))
-        try r2.setDistance(5_005)
+        try r2.setDistance(10)
         try r2.setSpeed(5.0)
         encoder.write(mesg: r2)
 
@@ -775,7 +776,7 @@ final class FitActivityEncoderTests: XCTestCase {
         encoder.write(mesg: session)
 
         let raw = encoder.close()
-        // 调用 FitSpeedSpikeFixer.fix：应抹掉中间瞬移点。
+        // 调用 FitSpeedSpikeFixer.fix：只修异常速度/距离，不碰坐标。
         let fixed = try FitSpeedSpikeFixer.fix(raw)
         XCTAssertGreaterThan(fixed.fixedCount, 0)
         let messages = try FitMerger.decode(fixed.data)
@@ -784,7 +785,43 @@ final class FitActivityEncoderTests: XCTestCase {
         }
         let spd = try XCTUnwrap(mid?.getSpeed())
         XCTAssertLessThanOrEqual(spd, FitSpeedSpikeFixer.maxReasonableSpeedMps + 0.01)
-        XCTAssertEqual(mid?.getPositionLat(), r0.getPositionLat(), "瞬移坐标应退回上一点")
+        XCTAssertEqual(mid?.getPositionLat(), r1.getPositionLat(), "不得改写原生纬度")
+        XCTAssertEqual(mid?.getPositionLong(), r1.getPositionLong(), "不得改写原生经度")
+        let tail = messages.recordMesgs.first {
+            $0.getTimestamp()?.timestamp == DateTime(date: base.addingTimeInterval(2)).timestamp
+        }
+        XCTAssertEqual(tail?.getPositionLat(), r2.getPositionLat(), "不得级联修改后续坐标")
+        XCTAssertEqual(tail?.getPositionLong(), r2.getPositionLong(), "不得级联修改后续坐标")
+    }
+
+    /// C506 的坐标可能两秒更新一次；中间重复点不能把正常位移误算成 1 秒速度尖峰。
+    func testFitSpeedSpikeFixerKeepsLowFrequencyGPSUpdate() throws {
+        let base = Date(timeIntervalSince1970: 1_720_000_000)
+        let semicircles = 2_147_483_648.0 / 180.0
+        let encoder = FITSwiftSDK.Encoder()
+        let fileId = FileIdMesg()
+        try fileId.setType(File.activity)
+        try fileId.setManufacturer(Manufacturer.development)
+        try fileId.setProduct(1)
+        try fileId.setSerialNumber(1)
+        try fileId.setTimeCreated(DateTime(date: base))
+        encoder.write(mesg: fileId)
+
+        let latitudes = [31.0, 31.0, 31.000225, 31.0003375]
+        for (offset, latitude) in latitudes.enumerated() {
+            let record = RecordMesg()
+            try record.setTimestamp(DateTime(date: base.addingTimeInterval(Double(offset))))
+            try record.setPositionLat(Int32((latitude * semicircles).rounded()))
+            try record.setPositionLong(Int32((120.0 * semicircles).rounded()))
+            try record.setDistance(Double(offset) * 12.5)
+            try record.setSpeed(12.5)
+            encoder.write(mesg: record)
+        }
+
+        let raw = encoder.close()
+        let fixed = try FitSpeedSpikeFixer.fix(raw)
+        XCTAssertEqual(fixed.fixedCount, 0)
+        XCTAssertEqual(fixed.data, raw)
     }
 
     /// GCJ→WGS：北京附近应明显偏移；境外点原样。
@@ -794,6 +831,21 @@ final class FitActivityEncoderTests: XCTestCase {
         let (outLat, outLon) = Gcj02ToWgs84.convert(latitude: 37.7749, longitude: -122.4194)
         XCTAssertEqual(outLat, 37.7749, accuracy: 1e-12)
         XCTAssertEqual(outLon, -122.4194, accuracy: 1e-12)
+    }
+
+    func testTrackMapProjectionConvertsOnlyGCJSource() {
+        let point = FITTrackPoint(
+            index: 0,
+            date: nil,
+            latitude: 31.34074993,
+            longitude: 120.55964992
+        )
+        let converted = TrackMapProjection.coordinates([point], sourceIsGCJ: true)[0]
+        XCTAssertGreaterThan(abs(converted.latitude - point.latitude), 0.001)
+        XCTAssertGreaterThan(abs(converted.longitude - point.longitude), 0.001)
+        let untouched = TrackMapProjection.coordinates([point], sourceIsGCJ: false)[0]
+        XCTAssertEqual(untouched.latitude, point.latitude, accuracy: 1e-12)
+        XCTAssertEqual(untouched.longitude, point.longitude, accuracy: 1e-12)
     }
 
     /// 回归：semicircle→度不得多乘 180，否则国内点被当成境外，GCJ 开关形同虚设。

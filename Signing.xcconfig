@@ -1,0 +1,3 @@
+#include? "Signing.local.xcconfig"
+
+DEVELOPMENT_TEAM = $(LOCAL_DEVELOPMENT_TEAM)
