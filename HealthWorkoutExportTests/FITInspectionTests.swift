@@ -42,6 +42,113 @@ final class FITInspectionTests: XCTestCase {
         XCTAssertTrue(inspection.issues.contains { $0.id == "gps-speed-over-120" })
     }
 
+    func testInspectorPrefersSessionRideSummaryMetrics() throws {
+        let inspection = FITInspector.inspect(try makeFIT(
+            recordCount: 4,
+            speedMPS: 5,
+            includePower: true,
+            sessionAverageSpeedMPS: 6,
+            sessionMaximumSpeedMPS: 12,
+            sessionAverageHeartRate: 150,
+            sessionMaximumHeartRate: 180,
+            sessionAverageCadence: 92,
+            sessionAveragePower: 230,
+            sessionMaximumPower: 550,
+            sessionTotalAscent: 43,
+            sessionTotalDescent: 39,
+            sessionTotalCalories: 680
+        ))
+
+        XCTAssertEqual(inspection.summary.averageSpeedKPH, 21.6)
+        XCTAssertEqual(inspection.summary.maximumSpeedKPH, 43.2)
+        XCTAssertEqual(inspection.summary.averageHeartRateBPM, 150)
+        XCTAssertEqual(inspection.summary.maximumHeartRateBPM, 180)
+        XCTAssertEqual(inspection.summary.averageCadenceRPM, 92)
+        XCTAssertEqual(inspection.summary.averagePowerWatts, 230)
+        XCTAssertEqual(inspection.summary.maximumPowerWatts, 550)
+        XCTAssertEqual(inspection.summary.totalAscentMeters, 43)
+        XCTAssertEqual(inspection.summary.totalDescentMeters, 39)
+        XCTAssertEqual(inspection.summary.totalCalories, 680)
+    }
+
+    func testInspectorFallsBackToFinalRecordMetricsWhenSessionSummariesAreMissing() throws {
+        let inspection = FITInspector.inspect(try makeFIT(recordCount: 4, speedMPS: 5, includePower: true))
+
+        XCTAssertEqual(inspection.summary.averageSpeedKPH, 18)
+        XCTAssertEqual(inspection.summary.averageHeartRateBPM, 121.5)
+        XCTAssertEqual(inspection.summary.maximumHeartRateBPM, 123)
+        XCTAssertEqual(inspection.summary.averageCadenceRPM, 81.5)
+        XCTAssertEqual(inspection.summary.averagePowerWatts, 201.5)
+        XCTAssertEqual(inspection.summary.maximumPowerWatts, 203)
+        XCTAssertNil(inspection.summary.totalAscentMeters)
+        XCTAssertNil(inspection.summary.totalDescentMeters)
+        XCTAssertNil(inspection.summary.totalCalories)
+    }
+
+    func testInspectorUsesElapsedTimeForRecordFallbackAverages() throws {
+        let inspection = FITInspector.inspect(try makeFIT(
+            recordCount: 3,
+            includePower: true,
+            recordTimeOffsets: [0, 9, 10]
+        ))
+
+        XCTAssertEqual(inspection.summary.averageSpeedKPH ?? 0, 3.6, accuracy: 0.001)
+        XCTAssertEqual(inspection.summary.averageHeartRateBPM ?? 0, 120.6, accuracy: 0.001)
+        XCTAssertEqual(inspection.summary.averageCadenceRPM ?? 0, 80.6, accuracy: 0.001)
+        XCTAssertEqual(inspection.summary.averagePowerWatts ?? 0, 200.6, accuracy: 0.001)
+    }
+
+    func testRideSummaryMetricPreferencesPersistOrderAndRestoreDefaultsForEmptySelection() {
+        let suiteName = "RideSummaryMetricPreferencesTests"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        RideSummaryMetricPreferences.save([.averagePower, .distance, .averageHeartRate], defaults: defaults)
+        XCTAssertEqual(
+            RideSummaryMetricPreferences.load(defaults: defaults),
+            [.averagePower, .distance, .averageHeartRate]
+        )
+
+        RideSummaryMetricPreferences.save([], defaults: defaults)
+        XCTAssertEqual(RideSummaryMetricPreferences.load(defaults: defaults), RideSummaryMetric.defaultOrder)
+    }
+
+    func testAverageAndMaximumHeartRateAndSpeedUseDistinctSymbols() {
+        XCTAssertNotEqual(RideSummaryMetric.averageHeartRate.symbol, RideSummaryMetric.maximumHeartRate.symbol)
+        XCTAssertNotEqual(RideSummaryMetric.averageSpeed.symbol, RideSummaryMetric.maximumSpeed.symbol)
+    }
+
+    func testRideSummaryMetricPreferencesPublishesChanges() {
+        let suiteName = "RideSummaryMetricPreferencesNotificationTests"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let notification = expectation(description: "偏好变化通知")
+        let observer = NotificationCenter.default.addObserver(
+            forName: RideSummaryMetricPreferences.didChangeNotification,
+            object: defaults,
+            queue: nil
+        ) { _ in
+            notification.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        RideSummaryMetricPreferences.save([.distance], defaults: defaults)
+
+        wait(for: [notification], timeout: 1)
+    }
+
+    func testRideSummaryDistinguishesMissingMetricsFromRecordedZeroDistance() throws {
+        let missing = FITInspectionSummary()
+        XCTAssertEqual(RideSummaryMetric.distance.display(in: missing).value, "—")
+        XCTAssertEqual(RideSummaryMetric.duration.display(in: missing).value, "—")
+
+        let recorded = FITInspector.inspect(try makeFIT(recordCount: 1)).summary
+        XCTAssertEqual(RideSummaryMetric.distance.display(in: recorded).value, "0.00")
+        XCTAssertEqual(RideSummaryMetric.duration.display(in: recorded).value, "0:01")
+    }
+
     func testPreparedFITPreservesEveryCoordinateWhenGCJDisabled() async throws {
         let raw = try makeFIT(recordCount: 8, speedMPS: 50)
         let original = FITInspector.inspect(raw)
@@ -262,7 +369,19 @@ final class FITInspectionTests: XCTestCase {
         speedMPS: Double = 5,
         gpsStep: Double = 0.05,
         invalidSessionLatitude: Bool = false,
-        includeHeartRate: Bool = true
+        includeHeartRate: Bool = true,
+        includePower: Bool = false,
+        recordTimeOffsets: [TimeInterval]? = nil,
+        sessionAverageSpeedMPS: Double? = nil,
+        sessionMaximumSpeedMPS: Double? = nil,
+        sessionAverageHeartRate: UInt8? = nil,
+        sessionMaximumHeartRate: UInt8? = nil,
+        sessionAverageCadence: UInt8? = nil,
+        sessionAveragePower: UInt16? = nil,
+        sessionMaximumPower: UInt16? = nil,
+        sessionTotalAscent: UInt16? = nil,
+        sessionTotalDescent: UInt16? = nil,
+        sessionTotalCalories: UInt16? = nil
     ) throws -> Data {
         let encoder = Encoder()
         let base = Date(timeIntervalSince1970: 1_720_000_000)
@@ -277,7 +396,8 @@ final class FITInspectionTests: XCTestCase {
         for index in 0..<recordCount {
             let record = RecordMesg()
             if includeTimestamps {
-                try record.setTimestamp(DateTime(date: base.addingTimeInterval(TimeInterval(index))))
+                let offset = recordTimeOffsets?[index] ?? TimeInterval(index)
+                try record.setTimestamp(DateTime(date: base.addingTimeInterval(offset)))
             }
             try record.setPositionLat(Int32(((31.30 + Double(index) * gpsStep) * scale).rounded()))
             try record.setPositionLong(Int32(((120.60 + Double(index) * gpsStep) * scale).rounded()))
@@ -287,11 +407,15 @@ final class FITInspectionTests: XCTestCase {
                 try record.setHeartRate(UInt8(120 + index % 20))
             }
             try record.setCadence(UInt8(80 + index % 10))
+            if includePower {
+                try record.setPower(UInt16(200 + index))
+            }
             encoder.write(mesg: record)
         }
 
         if includeTimestamps {
-            let end = base.addingTimeInterval(TimeInterval(max(1, recordCount - 1)))
+            let duration = recordTimeOffsets?.last ?? TimeInterval(max(1, recordCount - 1))
+            let end = base.addingTimeInterval(duration)
             let lap = LapMesg()
             try lap.setStartTime(DateTime(date: base))
             try lap.setTimestamp(DateTime(date: end))
@@ -306,7 +430,17 @@ final class FITInspectionTests: XCTestCase {
             try session.setTimestamp(DateTime(date: end))
             try session.setSport(.cycling)
             try session.setTotalDistance(Double(max(0, recordCount - 1)) * 5)
-            try session.setTotalTimerTime(Double(max(1, recordCount - 1)))
+            try session.setTotalTimerTime(duration)
+            if let sessionAverageSpeedMPS { try session.setAvgSpeed(sessionAverageSpeedMPS) }
+            if let sessionMaximumSpeedMPS { try session.setMaxSpeed(sessionMaximumSpeedMPS) }
+            if let sessionAverageHeartRate { try session.setAvgHeartRate(sessionAverageHeartRate) }
+            if let sessionMaximumHeartRate { try session.setMaxHeartRate(sessionMaximumHeartRate) }
+            if let sessionAverageCadence { try session.setAvgCadence(sessionAverageCadence) }
+            if let sessionAveragePower { try session.setAvgPower(sessionAveragePower) }
+            if let sessionMaximumPower { try session.setMaxPower(sessionMaximumPower) }
+            if let sessionTotalAscent { try session.setTotalAscent(sessionTotalAscent) }
+            if let sessionTotalDescent { try session.setTotalDescent(sessionTotalDescent) }
+            if let sessionTotalCalories { try session.setTotalCalories(sessionTotalCalories) }
             try session.setStartPositionLat(invalidSessionLatitude ? .max : Int32((31.30 * scale).rounded()))
             try session.setStartPositionLong(Int32((120.60 * scale).rounded()))
             try session.setEndPositionLat(Int32(((31.30 + Double(max(0, recordCount - 1)) * gpsStep) * scale).rounded()))

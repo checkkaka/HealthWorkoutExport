@@ -29,6 +29,10 @@ struct TrackMapView: View {
     var lines: [TrackMapLine]
     var contentID: String
     var height: CGFloat
+    /// 为地图上的标题浮层预留轨迹可见区域。
+    var topContentInset: CGFloat = 0
+    /// 为覆盖地图的摘要面板预留可见区域，轨迹、定位按钮和署名都会避让。
+    var bottomContentInset: CGFloat = 0
 
     @State private var focusToken = 0
 
@@ -38,7 +42,9 @@ struct TrackMapView: View {
                 baseLayer: baseLayer,
                 lines: lines,
                 contentID: contentID,
-                focusToken: focusToken
+                focusToken: focusToken,
+                topContentInset: topContentInset,
+                bottomContentInset: bottomContentInset
             )
             .id(baseLayer)
             Button { focusToken &+= 1 } label: {
@@ -49,7 +55,8 @@ struct TrackMapView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("回到轨迹")
-            .padding(12)
+            .padding(.trailing, 12)
+            .padding(.bottom, 12 + max(0, bottomContentInset))
         }
         .overlay(alignment: .bottomLeading) {
             if baseLayer == .openStreetMap {
@@ -61,7 +68,9 @@ struct TrackMapView: View {
                         .padding(.vertical, 4)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
                 }
-                .padding(8)
+                .padding(.horizontal, 8)
+                .padding(.top, 8)
+                .padding(.bottom, 8 + max(0, bottomContentInset))
             }
         }
         .frame(height: height)
@@ -73,6 +82,8 @@ private struct TrackMKMapView: UIViewRepresentable {
     var lines: [TrackMapLine]
     var contentID: String
     var focusToken: Int
+    var topContentInset: CGFloat
+    var bottomContentInset: CGFloat
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -86,6 +97,10 @@ private struct TrackMKMapView: UIViewRepresentable {
 
     func updateUIView(_ mapView: MKMapView, context: Context) {
         let coordinator = context.coordinator
+        let contentInsetChanged = coordinator.topContentInset != topContentInset
+            || coordinator.bottomContentInset != bottomContentInset
+        coordinator.topContentInset = topContentInset
+        coordinator.bottomContentInset = bottomContentInset
         if coordinator.baseLayer != baseLayer {
             mapView.removeOverlays(mapView.overlays)
             coordinator.colors.removeAll()
@@ -107,7 +122,7 @@ private struct TrackMKMapView: UIViewRepresentable {
             }
             coordinator.contentID = contentID
             focus(mapView)
-        } else if coordinator.focusToken != focusToken {
+        } else if coordinator.focusToken != focusToken || contentInsetChanged {
             focus(mapView)
         }
         coordinator.focusToken = focusToken
@@ -119,7 +134,12 @@ private struct TrackMKMapView: UIViewRepresentable {
         for candidate in rects.dropFirst() { rect = rect.union(candidate) }
         mapView.setVisibleMapRect(
             rect,
-            edgePadding: UIEdgeInsets(top: 28, left: 28, bottom: 28, right: 28),
+            edgePadding: UIEdgeInsets(
+                top: 28 + max(0, topContentInset),
+                left: 28,
+                bottom: 28 + max(0, bottomContentInset),
+                right: 28
+            ),
             animated: true
         )
     }
@@ -128,6 +148,8 @@ private struct TrackMKMapView: UIViewRepresentable {
         var baseLayer: TrackMapBaseLayer?
         var contentID: String?
         var focusToken = 0
+        var topContentInset: CGFloat = 0
+        var bottomContentInset: CGFloat = 0
         var colors: [ObjectIdentifier: UIColor] = [:]
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {

@@ -99,9 +99,20 @@ struct FITInspectionSummary: Sendable {
     var cadenceCount: Int = 0
     var powerCount: Int = 0
     var durationSeconds: TimeInterval = 0
+    var hasDuration: Bool = false
     var distanceMeters: Double = 0
+    var hasDistance: Bool = false
+    var averageSpeedKPH: Double?
     var maximumSpeedKPH: Double = 0
     var maximumGPSSpeedKPH: Double = 0
+    var averageHeartRateBPM: Double?
+    var maximumHeartRateBPM: Double?
+    var averageCadenceRPM: Double?
+    var averagePowerWatts: Double?
+    var maximumPowerWatts: Double?
+    var totalAscentMeters: Double?
+    var totalDescentMeters: Double?
+    var totalCalories: Int?
 }
 
 struct FITInspection: Sendable {
@@ -223,10 +234,16 @@ enum FITInspector {
         }
 
         let timestampedDates = records.compactMap { $0.getTimestamp()?.date }
-        if let first = timestampedDates.first, let last = timestampedDates.last {
-            summary.durationSeconds = messages.sessionMesgs.compactMap { $0.getTotalTimerTime() }
-                .first.map { TimeInterval($0) } ?? max(0, last.timeIntervalSince(first))
-        } else {
+        if let sessionDuration = messages.sessionMesgs.compactMap({ $0.getTotalTimerTime() }).first {
+            summary.durationSeconds = TimeInterval(sessionDuration)
+            summary.hasDuration = true
+        } else if timestampedDates.count > 1,
+                  let first = timestampedDates.first,
+                  let last = timestampedDates.last {
+            summary.durationSeconds = max(0, last.timeIntervalSince(first))
+            summary.hasDuration = true
+        }
+        if timestampedDates.isEmpty {
             issues.append(.init(
                 id: "no-timestamp",
                 severity: .error,
@@ -235,10 +252,62 @@ enum FITInspector {
             ))
         }
         let lastRecordDistance = records.last(where: { $0.getDistance() != nil })?.getDistance()
-        summary.distanceMeters = messages.sessionMesgs.compactMap { $0.getTotalDistance() }
-            .first.map { Double($0) }
-            ?? lastRecordDistance.map { Double($0) }
-            ?? 0
+        if let distance = messages.sessionMesgs.compactMap({ $0.getTotalDistance() }).first
+            ?? lastRecordDistance {
+            summary.distanceMeters = Double(distance)
+            summary.hasDistance = true
+        }
+
+        func timeWeightedAverage(_ kind: FITSeriesKind) -> Double? {
+            let points = series[kind, default: []]
+            guard let first = points.first else { return nil }
+            guard points.count > 1 else { return first.value }
+            var weightedTotal = 0.0
+            var elapsedTotal = 0.0
+            for (current, next) in zip(points, points.dropFirst()) {
+                guard next.index == current.index + 1 else { continue }
+                let elapsed = next.date.timeIntervalSince(current.date)
+                guard elapsed > 0 else { continue }
+                weightedTotal += (current.value + next.value) / 2 * elapsed
+                elapsedTotal += elapsed
+            }
+            return elapsedTotal > 0
+                ? weightedTotal / elapsedTotal
+                : points.map(\.value).reduce(0, +) / Double(points.count)
+        }
+        func maximum(_ kind: FITSeriesKind) -> Double? {
+            series[kind, default: []].map(\.value).max()
+        }
+
+        let sessions = messages.sessionMesgs
+        let distanceAverageSpeedKPH = summary.distanceMeters > 0 && summary.durationSeconds > 0
+            ? summary.distanceMeters / summary.durationSeconds * 3.6
+            : nil
+        summary.averageSpeedKPH = sessions.compactMap { $0.getEnhancedAvgSpeed() ?? $0.getAvgSpeed() }
+            .first.map { Double($0) * 3.6 }
+            ?? distanceAverageSpeedKPH
+            ?? timeWeightedAverage(.speed)
+        summary.maximumSpeedKPH = sessions.compactMap { $0.getEnhancedMaxSpeed() ?? $0.getMaxSpeed() }
+            .first.map { Double($0) * 3.6 }
+            ?? summary.maximumSpeedKPH
+        summary.averageHeartRateBPM = sessions.compactMap { $0.getAvgHeartRate() }
+            .first.map(Double.init)
+            ?? timeWeightedAverage(.heartRate)
+        summary.maximumHeartRateBPM = sessions.compactMap { $0.getMaxHeartRate() }
+            .first.map(Double.init)
+            ?? maximum(.heartRate)
+        summary.averageCadenceRPM = sessions.compactMap { $0.getAvgCadence() }
+            .first.map(Double.init)
+            ?? timeWeightedAverage(.cadence)
+        summary.averagePowerWatts = sessions.compactMap { $0.getAvgPower() }
+            .first.map(Double.init)
+            ?? timeWeightedAverage(.power)
+        summary.maximumPowerWatts = sessions.compactMap { $0.getMaxPower() }
+            .first.map(Double.init)
+            ?? maximum(.power)
+        summary.totalAscentMeters = sessions.compactMap { $0.getTotalAscent() }.first.map(Double.init)
+        summary.totalDescentMeters = sessions.compactMap { $0.getTotalDescent() }.first.map(Double.init)
+        summary.totalCalories = sessions.compactMap { $0.getTotalCalories() }.first.map(Int.init)
 
         if invalidCoordinateCount > 0 {
             issues.append(.init(
