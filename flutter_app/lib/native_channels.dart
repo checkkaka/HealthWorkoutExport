@@ -525,6 +525,45 @@ final class StravaWebChannel {
   Future<void> clearCookies() async {
     await _channel.invokeMethod<Object?>('clearCookies');
   }
+
+  Future<({String? remoteId, bool isDuplicate})> uploadFit({
+    required Uint8List data,
+    required String filename,
+    required String externalId,
+  }) async {
+    _requireText(filename, 'filename');
+    _requireText(externalId, 'externalId');
+    if (data.isEmpty) {
+      throw ArgumentError.value(data, 'data', 'FIT 不能为空');
+    }
+    final value = await _channel.invokeMethod<Object?>('uploadFit', {
+      'data': data,
+      'filename': filename,
+      'externalId': externalId,
+    });
+    final map = _objectMap(value, 'Strava 网页上传结果');
+    return (
+      remoteId: _optionalText(map, 'remoteId'),
+      isDuplicate: _requiredBool(map, 'isDuplicate'),
+    );
+  }
+}
+
+/// 系统文件选择；仅返回用户选中的 FIT 路径。
+final class FilesChannel {
+  const FilesChannel()
+    : _channel = const MethodChannel('health_workout_export/files');
+
+  final MethodChannel _channel;
+
+  Future<List<String>> pickFits() async {
+    final value = await _channel.invokeMethod<List<Object?>>('pickFits');
+    if (value == null) return const [];
+    return [
+      for (final item in value)
+        if (item is String && item.isNotEmpty) item,
+    ];
+  }
 }
 
 /// iOS HealthKit 的可用性、授权与轻量训练摘要通道。

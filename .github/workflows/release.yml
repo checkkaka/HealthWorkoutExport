@@ -1,0 +1,281 @@
+# 三端 release 签名包 → GitHub Release（不上架商店）。
+#
+# 触发：推送 v1.2.3 标签，或 Actions 里手动填写同一格式的 tag。
+#
+# 仓库 Secrets（不要提交证书）：
+#   ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD
+#   IOS_P12_BASE64（Apple Distribution）/ IOS_P12_PASSWORD / IOS_ADHOC_PROFILE_BASE64
+#   MACOS_P12_BASE64（Developer ID Application）/ MACOS_P12_PASSWORD / MACOS_PROVISION_PROFILE_BASE64
+#   APPLE_TEAM_ID
+#
+# 本机转 base64：
+#   base64 -i release.keystore | pbcopy
+#   base64 -i distribution.p12 | pbcopy
+#   base64 -i AdHoc.mobileprovision | pbcopy
+#
+# iOS Ad Hoc 只能装到描述文件里登记过的设备。macOS 包未公证，用户可能需右键打开。
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release 标签，例如 v1.0.0"
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      build_number: ${{ steps.meta.outputs.build_number }}
+    steps:
+      - id: meta
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          case "$TAG" in
+            v*.*.*) ;;
+            *)
+              echo "tag 必须是 v1.2.3 这种形式，当前: $TAG" >&2
+              exit 1
+              ;;
+          esac
+          echo "tag=$TAG" >>"$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >>"$GITHUB_OUTPUT"
+          echo "build_number=${{ github.run_number }}" >>"$GITHUB_OUTPUT"
+
+  android:
+    needs: meta
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/upload-keystore.jks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-flutter-rust
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+      - name: Decode Android keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z ${ANDROID_KEYSTORE_BASE64:-} ]]; then
+            echo "缺少 ANDROID_KEYSTORE_BASE64" >&2
+            exit 1
+          fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d >"$ANDROID_KEYSTORE_PATH"
+      - name: Add Android Rust targets
+        run: rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+      - name: Build signed APKs
+        working-directory: flutter_app
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          flutter pub get
+          flutter build apk --release --split-per-abi \
+            --target-platform android-arm,android-arm64,android-x64 \
+            --build-name="${{ needs.meta.outputs.version }}" \
+            --build-number="${{ needs.meta.outputs.build_number }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: flutter_app/build/app/outputs/flutter-apk/*-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  ios:
+    needs: meta
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-flutter-rust
+      - uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.IOS_P12_BASE64 }}
+          p12-password: ${{ secrets.IOS_P12_PASSWORD }}
+      - id: profile
+        name: Install Ad Hoc provisioning profile
+        env:
+          IOS_ADHOC_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z ${IOS_ADHOC_PROFILE_BASE64:-} ]]; then
+            echo "缺少 IOS_ADHOC_PROFILE_BASE64" >&2
+            exit 1
+          fi
+          PROFILE="$RUNNER_TEMP/ios-adhoc.mobileprovision"
+          printf '%s' "$IOS_ADHOC_PROFILE_BASE64" | base64 --decode >"$PROFILE"
+          bash .github/scripts/install-provision-profile.sh "$PROFILE"
+      - name: Check Apple team
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [[ -z ${APPLE_TEAM_ID:-} ]]; then
+            echo "缺少 APPLE_TEAM_ID" >&2
+            exit 1
+          fi
+          if [[ $APPLE_TEAM_ID != "${{ steps.profile.outputs.team }}" ]]; then
+            echo "APPLE_TEAM_ID ($APPLE_TEAM_ID) 与描述文件 Team (${{ steps.profile.outputs.team }}) 不一致" >&2
+            exit 1
+          fi
+      - name: Configure iOS manual signing
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          {
+            echo ""
+            echo "CODE_SIGN_STYLE=Manual"
+            echo "DEVELOPMENT_TEAM=$APPLE_TEAM_ID"
+            echo "CODE_SIGN_IDENTITY=Apple Distribution"
+            echo "PROVISIONING_PROFILE_SPECIFIER=${{ steps.profile.outputs.name }}"
+          } >>flutter_app/ios/Flutter/Release.xcconfig
+      - name: Write ExportOptions.plist
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          PROFILE_NAME: ${{ steps.profile.outputs.name }}
+        run: |
+          set -euo pipefail
+          EXPORT="$RUNNER_TEMP/ExportOptions.plist"
+          printf '%s\n' \
+            '<?xml version="1.0" encoding="UTF-8"?>' \
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+            '<plist version="1.0">' \
+            '<dict/>' \
+            '</plist>' \
+            >"$EXPORT"
+          /usr/libexec/PlistBuddy -c "Add :method string ad-hoc" "$EXPORT"
+          /usr/libexec/PlistBuddy -c "Add :teamID string $APPLE_TEAM_ID" "$EXPORT"
+          /usr/libexec/PlistBuddy -c "Add :signingStyle string manual" "$EXPORT"
+          /usr/libexec/PlistBuddy -c "Add :compileBitcode bool false" "$EXPORT"
+          /usr/libexec/PlistBuddy -c "Add :signingCertificate string Apple Distribution" "$EXPORT"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$EXPORT"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:com.checkkaka.HealthWorkoutExport string '$PROFILE_NAME'" "$EXPORT"
+      - name: Build signed IPA
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          flutter pub get
+          flutter build ipa --release \
+            --export-options-plist="$RUNNER_TEMP/ExportOptions.plist" \
+            --build-name="${{ needs.meta.outputs.version }}" \
+            --build-number="${{ needs.meta.outputs.build_number }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: flutter_app/build/ios/ipa/*.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+  macos:
+    needs: meta
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-flutter-rust
+      - uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.MACOS_P12_BASE64 }}
+          p12-password: ${{ secrets.MACOS_P12_PASSWORD }}
+      - id: profile
+        name: Install macOS provisioning profile
+        env:
+          MACOS_PROVISION_PROFILE_BASE64: ${{ secrets.MACOS_PROVISION_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z ${MACOS_PROVISION_PROFILE_BASE64:-} ]]; then
+            echo "缺少 MACOS_PROVISION_PROFILE_BASE64" >&2
+            exit 1
+          fi
+          PROFILE="$RUNNER_TEMP/macos.mobileprovision"
+          printf '%s' "$MACOS_PROVISION_PROFILE_BASE64" | base64 --decode >"$PROFILE"
+          bash .github/scripts/install-provision-profile.sh "$PROFILE"
+      - name: Check Apple team
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [[ -z ${APPLE_TEAM_ID:-} ]]; then
+            echo "缺少 APPLE_TEAM_ID" >&2
+            exit 1
+          fi
+          if [[ $APPLE_TEAM_ID != "${{ steps.profile.outputs.team }}" ]]; then
+            echo "APPLE_TEAM_ID ($APPLE_TEAM_ID) 与描述文件 Team (${{ steps.profile.outputs.team }}) 不一致" >&2
+            exit 1
+          fi
+      - name: Configure macOS manual signing
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          {
+            echo ""
+            echo "CODE_SIGN_STYLE = Manual"
+            echo "DEVELOPMENT_TEAM = $APPLE_TEAM_ID"
+            echo "CODE_SIGN_IDENTITY = Developer ID Application"
+            echo "PROVISIONING_PROFILE_SPECIFIER = ${{ steps.profile.outputs.name }}"
+          } >>flutter_app/macos/Runner/Configs/AppInfo.xcconfig
+      - name: Build signed macOS app
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          flutter pub get
+          flutter build macos --release \
+            --build-name="${{ needs.meta.outputs.version }}" \
+            --build-number="${{ needs.meta.outputs.build_number }}"
+          APP="build/macos/Build/Products/Release/health_workout_export.app"
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/health_workout_export-macos.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-app
+          path: ${{ runner.temp }}/health_workout_export-macos.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  github-release:
+    needs: [meta, android, ios, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Flatten artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find artifacts -type f \( -name '*.apk' -o -name '*.ipa' -o -name '*.zip' \) -exec cp {} dist/ \;
+          ls -la dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.meta.outputs.tag }}
+          name: ${{ needs.meta.outputs.tag }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: dist/*

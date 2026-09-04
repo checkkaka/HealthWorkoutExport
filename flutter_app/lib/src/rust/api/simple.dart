@@ -6,9 +6,9 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `begin`, `begin`, `operation_error_response`, `remote_activity_error`, `remote_activity_result`, `remote_activity_speed_result`, `remote_operation_error`, `reserve_for_refresh`, `reserve`, `reserve`, `token_result`, `upload_ffi_response`, `upload_operations`, `xingzhe_list_operation_error`, `xingzhe_list_operations`
+// These functions are ignored because they are not marked as `pub`: `begin`, `begin`, `operation_error_response`, `remote_activity_error`, `remote_activity_result`, `remote_activity_speed_result`, `remote_operation_error`, `reserve_for_refresh`, `reserve`, `reserve`, `token_result`, `upload_ffi_response`, `upload_operations`, `weather_air_density`, `xingzhe_list_operation_error`, `xingzhe_list_operations`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `UploadOperationEntry`, `UploadOperationError`, `UploadOperationRegistry`, `UploadOperationState`, `UploadOperation`, `XingzheListOperationEntry`, `XingzheListOperationError`, `XingzheListOperationRegistry`, `XingzheListOperationState`, `XingzheListOperation`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
 
 /// Flutter 调用的最小同步入口，直接复用已测试的核心规则。
 bool isCommute({double? distanceMeters, required double durationSeconds}) =>
@@ -129,6 +129,65 @@ Future<Uint8List> onelapDownloadFit({
   token: token,
   uid: uid,
   activityId: activityId,
+);
+
+/// 读取行者 stream 并编码为标准 Activity FIT。必须先预留列表句柄以便取消。
+Future<Uint8List> xingzheDownloadFit({
+  required String operationHandle,
+  required String sessionId,
+  required String workoutId,
+  required String title,
+  required double startTimeSeconds,
+  required double durationSeconds,
+  double? distanceMeters,
+  required int timezoneOffsetSeconds,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleXingzheDownloadFit(
+  operationHandle: operationHandle,
+  sessionId: sessionId,
+  workoutId: workoutId,
+  title: title,
+  startTimeSeconds: startTimeSeconds,
+  durationSeconds: durationSeconds,
+  distanceMeters: distanceMeters,
+  timezoneOffsetSeconds: timezoneOffsetSeconds,
+);
+
+/// 主源优先补传感器。`alignment` 为 `absolute` / `auto` / `manual`。
+Uint8List mergeFitFiles({
+  required List<int> primary,
+  required List<Uint8List> supplements,
+  required bool sensorsOnly,
+  required String alignment,
+  required int manualOffsetSeconds,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleMergeFitFiles(
+  primary: primary,
+  supplements: supplements,
+  sensorsOnly: sensorsOnly,
+  alignment: alignment,
+  manualOffsetSeconds: manualOffsetSeconds,
+);
+
+/// 修复已证明的 GPS 速度尖峰。
+Uint8List fixFitSpeedSpikes({required List<int> data}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleFixFitSpeedSpikes(data: data);
+
+/// 把中国境内 GCJ-02 坐标改写为 WGS-84。
+Uint8List rewriteFitGcjCoordinates({required List<int> data}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleRewriteFitGcjCoordinates(
+      data: data,
+    );
+
+/// 上传前固定顺序：补源合并 → 尖峰 → GCJ → 虚拟功率。
+Future<PreparedFitResult> prepareFitForUpload({
+  required List<int> primary,
+  required List<Uint8List> supplements,
+  required bool gcjEnabled,
+  VirtualPowerFillInput? virtualPower,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimplePrepareFitForUpload(
+  primary: primary,
+  supplements: supplements,
+  gcjEnabled: gcjEnabled,
+  virtualPower: virtualPower,
 );
 
 /// 预留一个不可复用的行者列表读取句柄。调用方可在请求期间精确取消此代操作。
@@ -438,6 +497,45 @@ class OnelapWorkoutResult {
           distanceMeters == other.distanceMeters;
 }
 
+class PreparedFitResult {
+  final Uint8List data;
+  final int repairedSpeedCount;
+  final int rewrittenCoordinateCount;
+  final int virtualPowerFilledCount;
+  final bool powerSourceVirtual;
+  final String? activityDescription;
+
+  const PreparedFitResult({
+    required this.data,
+    required this.repairedSpeedCount,
+    required this.rewrittenCoordinateCount,
+    required this.virtualPowerFilledCount,
+    required this.powerSourceVirtual,
+    this.activityDescription,
+  });
+
+  @override
+  int get hashCode =>
+      data.hashCode ^
+      repairedSpeedCount.hashCode ^
+      rewrittenCoordinateCount.hashCode ^
+      virtualPowerFilledCount.hashCode ^
+      powerSourceVirtual.hashCode ^
+      activityDescription.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PreparedFitResult &&
+          runtimeType == other.runtimeType &&
+          data == other.data &&
+          repairedSpeedCount == other.repairedSpeedCount &&
+          rewrittenCoordinateCount == other.rewrittenCoordinateCount &&
+          virtualPowerFilledCount == other.virtualPowerFilledCount &&
+          powerSourceVirtual == other.powerSourceVirtual &&
+          activityDescription == other.activityDescription;
+}
+
 /// Flutter 侧用于异常速度复查的官方活动摘要。
 class StravaActivitySpeedResult {
   final String id;
@@ -652,6 +750,37 @@ class StravaUploadRetry {
 }
 
 enum StravaUploadRetryStage { upload, poll }
+
+class VirtualPowerFillInput {
+  final bool includeInertia;
+  final double riderMassKg;
+  final double bikeMassKg;
+  final double cda;
+
+  const VirtualPowerFillInput({
+    required this.includeInertia,
+    required this.riderMassKg,
+    required this.bikeMassKg,
+    required this.cda,
+  });
+
+  @override
+  int get hashCode =>
+      includeInertia.hashCode ^
+      riderMassKg.hashCode ^
+      bikeMassKg.hashCode ^
+      cda.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is VirtualPowerFillInput &&
+          runtimeType == other.runtimeType &&
+          includeInertia == other.includeInertia &&
+          riderMassKg == other.riderMassKg &&
+          bikeMassKg == other.bikeMassKg &&
+          cda == other.cda;
+}
 
 class XingzheListReservation {
   final String handle;

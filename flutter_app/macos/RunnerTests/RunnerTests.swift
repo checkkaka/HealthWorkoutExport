@@ -2,11 +2,34 @@ import Cocoa
 import FlutterMacOS
 import XCTest
 
-class RunnerTests: XCTestCase {
+@testable import health_workout_export
 
-  func testExample() {
-    // If you add code to the Runner application, consider adding tests here.
-    // See https://developer.apple.com/documentation/xctest for more information about using XCTest.
+class RunnerTests: XCTestCase {
+  func testPreferencesAllowlistRejectsUnknownKeys() {
+    let plugin = PreferencesPlugin()
+    let recorder = PluginResultRecorder()
+    plugin.handle(
+      FlutterMethodCall(methodName: "read", arguments: ["key": "not.allowed"]),
+      result: recorder.callback
+    )
+    XCTAssertEqual(recorder.errorCode, "invalid_arguments")
   }
 
+  func testFilesPluginChannelNameIsSharedWithDart() {
+    XCTAssertTrue(StravaWebPlugin.isSafeUploadFilename("ride.fit"))
+    XCTAssertFalse(StravaWebPlugin.isSafeUploadFilename("../ride.fit"))
+    XCTAssertEqual(
+      StravaWebPlugin.extractCSRFToken(from: #"<meta name="csrf-token" content="abc">"#),
+      "abc"
+    )
+  }
+}
+
+private final class PluginResultRecorder {
+  var errorCode: String?
+  var callback: FlutterResult {
+    { [weak self] value in
+      self?.errorCode = (value as? FlutterError)?.code
+    }
+  }
 }

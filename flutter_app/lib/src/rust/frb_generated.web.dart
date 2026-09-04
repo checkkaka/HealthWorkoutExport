@@ -55,6 +55,11 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   int dco_decode_box_autoadd_u_32(dynamic raw);
 
   @protected
+  VirtualPowerFillInput dco_decode_box_autoadd_virtual_power_fill_input(
+    dynamic raw,
+  );
+
+  @protected
   double dco_decode_f_64(dynamic raw);
 
   @protected
@@ -73,6 +78,9 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   List<ActivityIntervalInput> dco_decode_list_activity_interval_input(
     dynamic raw,
   );
+
+  @protected
+  List<Uint8List> dco_decode_list_list_prim_u_8_strict(dynamic raw);
 
   @protected
   List<OnelapWorkoutResult> dco_decode_list_onelap_workout_result(dynamic raw);
@@ -122,6 +130,14 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
 
   @protected
+  VirtualPowerFillInput? dco_decode_opt_box_autoadd_virtual_power_fill_input(
+    dynamic raw,
+  );
+
+  @protected
+  PreparedFitResult dco_decode_prepared_fit_result(dynamic raw);
+
+  @protected
   StravaActivitySpeedResult dco_decode_strava_activity_speed_result(
     dynamic raw,
   );
@@ -163,6 +179,9 @@ abstract class WorkoutCoreRustLibApiImplPlatform
 
   @protected
   void dco_decode_unit(dynamic raw);
+
+  @protected
+  VirtualPowerFillInput dco_decode_virtual_power_fill_input(dynamic raw);
 
   @protected
   XingzheListReservation dco_decode_xingzhe_list_reservation(dynamic raw);
@@ -208,6 +227,11 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
 
   @protected
+  VirtualPowerFillInput sse_decode_box_autoadd_virtual_power_fill_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   double sse_decode_f_64(SseDeserializer deserializer);
 
   @protected
@@ -224,6 +248,11 @@ abstract class WorkoutCoreRustLibApiImplPlatform
 
   @protected
   List<ActivityIntervalInput> sse_decode_list_activity_interval_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<Uint8List> sse_decode_list_list_prim_u_8_strict(
     SseDeserializer deserializer,
   );
 
@@ -281,6 +310,16 @@ abstract class WorkoutCoreRustLibApiImplPlatform
 
   @protected
   int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
+  VirtualPowerFillInput? sse_decode_opt_box_autoadd_virtual_power_fill_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  PreparedFitResult sse_decode_prepared_fit_result(
+    SseDeserializer deserializer,
+  );
 
   @protected
   StravaActivitySpeedResult sse_decode_strava_activity_speed_result(
@@ -342,6 +381,11 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   void sse_decode_unit(SseDeserializer deserializer);
 
   @protected
+  VirtualPowerFillInput sse_decode_virtual_power_fill_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   XingzheListReservation sse_decode_xingzhe_list_reservation(
     SseDeserializer deserializer,
   );
@@ -394,6 +438,12 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_virtual_power_fill_input(
+    VirtualPowerFillInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_f_64(double self, SseSerializer serializer);
 
   @protected
@@ -414,6 +464,12 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   @protected
   void sse_encode_list_activity_interval_input(
     List<ActivityIntervalInput> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_list_prim_u_8_strict(
+    List<Uint8List> self,
     SseSerializer serializer,
   );
 
@@ -484,6 +540,18 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_virtual_power_fill_input(
+    VirtualPowerFillInput? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_prepared_fit_result(
+    PreparedFitResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_strava_activity_speed_result(
     StravaActivitySpeedResult self,
     SseSerializer serializer,
@@ -551,6 +619,12 @@ abstract class WorkoutCoreRustLibApiImplPlatform
 
   @protected
   void sse_encode_unit(void self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_virtual_power_fill_input(
+    VirtualPowerFillInput self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_xingzhe_list_reservation(

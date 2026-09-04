@@ -71,8 +71,6 @@ void main() {
     expect(find.text('晨骑'), findsOneWidget);
     expect(find.text('not-a-displayable-password'), findsNothing);
     expect(find.textContaining('token'), findsNothing);
-    expect(find.textContaining('FIT'), findsNothing);
-    expect(find.textContaining('同步'), findsNothing);
   });
 
   testWidgets('已登录行者仅按范围加载列表', (tester) async {
@@ -119,7 +117,7 @@ void main() {
 
     expect(loads, 1);
     expect(find.text('周末骑行'), findsOneWidget);
-    expect(find.text('导出'), findsNothing);
-    expect(find.textContaining('Strava'), findsNothing);
+    expect(find.text('退出登录'), findsOneWidget);
+    expect(find.text('自动同步所选'), findsOneWidget);
   });
 }

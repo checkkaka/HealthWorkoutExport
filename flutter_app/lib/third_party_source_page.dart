@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'auto_sync_page.dart';
 import 'date_range.dart';
 import 'native_channels.dart';
 import 'src/rust/api/simple.dart';
+import 'workout_source.dart';
 
 enum ThirdPartySourceType { xingzhe, onelap }
 
@@ -77,6 +79,7 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
   var _requestId = 0;
   String? _error;
   List<ThirdPartyWorkout> _workouts = const [];
+  final _selected = <String>{};
 
   @override
   void initState() {
@@ -197,14 +200,8 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
         ),
         const Spacer(),
         TextButton(
-          onPressed: _loggingIn
-              ? null
-              : () => setState(() {
-                  _configured = false;
-                  _workouts = const [];
-                  _error = null;
-                }),
-          child: const Text('重新登录'),
+          onPressed: _loggingIn ? null : () => unawaited(_logout()),
+          child: const Text('退出登录'),
         ),
       ],
     ),
@@ -217,7 +214,64 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
         child: Padding(padding: EdgeInsets.all(16), child: Text('当前时间范围内没有活动')),
       )
     else
-      for (final workout in _workouts) _workoutCard(workout, source),
+      ...[
+        Row(
+          children: [
+            Text('已选择 ${_selected.length}/${_workouts.length}'),
+            const Spacer(),
+            TextButton(
+              onPressed: () => setState(() {
+                _selected
+                  ..clear()
+                  ..addAll(_workouts.map((workout) => workout.id));
+              }),
+              child: const Text('全选'),
+            ),
+            TextButton(
+              onPressed: () => setState(_selected.clear),
+              child: const Text('取消全选'),
+            ),
+          ],
+        ),
+        for (final workout in _workouts) _workoutCard(workout, source),
+        FilledButton(
+          onPressed: _selected.isEmpty
+              ? null
+              : () {
+                  final sourceId = source == ThirdPartySourceType.xingzhe
+                      ? WorkoutSourceId.xingzhe
+                      : WorkoutSourceId.onelap;
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => AutoSyncPage(
+                        entrySource: sourceId,
+                        selected: [
+                          for (final workout in _workouts)
+                            if (_selected.contains(workout.id))
+                              WorkoutActivity(
+                                id: workout.id,
+                                sourceId: sourceId,
+                                title: workout.title,
+                                start: DateTime.fromMillisecondsSinceEpoch(
+                                  (workout.startTimeSeconds * 1000).round(),
+                                ),
+                                end: DateTime.fromMillisecondsSinceEpoch(
+                                  ((workout.startTimeSeconds +
+                                              workout.durationSeconds) *
+                                          1000)
+                                      .round(),
+                                ),
+                                durationSeconds: workout.durationSeconds,
+                                distanceMeters: workout.distanceMeters,
+                              ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+          child: const Text('自动同步所选'),
+        ),
+      ],
   ];
 
   Widget _errorCard(String error) => Card(
@@ -231,8 +285,11 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
     final distance = workout.distanceMeters;
     return Card(
       key: ValueKey('${source.name}-${workout.id}'),
-      child: ListTile(
-        leading: const Icon(Icons.directions_bike),
+      child: CheckboxListTile(
+        value: _selected.contains(workout.id),
+        onChanged: (_) => setState(() {
+          if (!_selected.add(workout.id)) _selected.remove(workout.id);
+        }),
         title: Text(workout.title),
         subtitle: Text(
           '${_dateTimeText(start)} · ${_durationText(workout.durationSeconds)}'
@@ -267,6 +324,24 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
         });
       }
     }
+  }
+
+  Future<void> _logout() async {
+    try {
+      switch (widget.source) {
+        case ThirdPartySourceType.xingzhe:
+          await widget.xingzheVault.clearAuthorization();
+        case ThirdPartySourceType.onelap:
+          await widget.onelapVault.clearAuthorization();
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _configured = false;
+      _workouts = const [];
+      _selected.clear();
+      _error = null;
+    });
   }
 
   Future<void> _login() async {
@@ -315,6 +390,7 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
       if (!mounted || requestId != _requestId) return;
       setState(() {
         _workouts = workouts;
+        _selected.clear();
         _loading = false;
       });
     } catch (_) {

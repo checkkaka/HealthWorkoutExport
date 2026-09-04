@@ -81,7 +81,9 @@ pub fn virtual_power_watts(
     params: VirtualPowerParams,
     cadence_rpm: Option<f64>,
 ) -> f64 {
-    if cadence_rpm.is_some_and(|cadence| cadence < COASTING_MAX_CADENCE_RPM) || ground_speed_mps <= 0.1 {
+    if cadence_rpm.is_some_and(|cadence| cadence < COASTING_MAX_CADENCE_RPM)
+        || ground_speed_mps <= 0.1
+    {
         return 0.0;
     }
 
@@ -304,10 +306,7 @@ pub fn is_commute(distance_meters: Option<f64>, duration_seconds: f64) -> bool {
 }
 
 /// 通勤路肩遮蔽 0.7，开阔公路 1.0。叠在 10 m→骑手高度折减之上。
-pub fn commute_wind_shelter_factor(
-    distance_meters: Option<f64>,
-    duration_seconds: f64,
-) -> f64 {
+pub fn commute_wind_shelter_factor(distance_meters: Option<f64>, duration_seconds: f64) -> f64 {
     if is_commute(distance_meters, duration_seconds) {
         COMMUTE_WIND_SHELTER_FACTOR
     } else {
@@ -360,8 +359,8 @@ mod tests {
     use super::{
         ActivityInterval, VirtualPowerParams, activity_match_score, air_density, bearing_degrees,
         best_activity_match_index, commute_wind_shelter_factor, grade_percent, headwind_mps,
-        is_commute, is_gps_speed_glitch, rider_height_wind_mps,
-        replace_glitch_speeds_with_previous, sanitized_acceleration_mps2, stable_dedupe_matches,
+        is_commute, is_gps_speed_glitch, replace_glitch_speeds_with_previous,
+        rider_height_wind_mps, sanitized_acceleration_mps2, stable_dedupe_matches,
         sync_fingerprint, virtual_power_watts,
     };
 

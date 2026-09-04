@@ -28,5 +28,18 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>用于按时间范围读取并导出你的体能训练、心率与路线数据，仅在本机生成文件。</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.checkkaka.HealthWorkoutExport</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>healthworkoutexport</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

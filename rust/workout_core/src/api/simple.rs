@@ -210,6 +210,212 @@ pub async fn onelap_download_fit(
         .map_err(|error| error.to_string())
 }
 
+/// 读取行者 stream 并编码为标准 Activity FIT。必须先预留列表句柄以便取消。
+pub async fn xingzhe_download_fit(
+    operation_handle: String,
+    session_id: String,
+    workout_id: String,
+    title: String,
+    start_time_seconds: f64,
+    duration_seconds: f64,
+    distance_meters: Option<f64>,
+    timezone_offset_seconds: i32,
+) -> Result<Vec<u8>, String> {
+    let operation =
+        XingzheListOperation::begin(operation_handle).map_err(xingzhe_list_operation_error)?;
+    let client = crate::xingzhe::XingzheActivityClient::new().map_err(|error| error.to_string())?;
+    client
+        .download_fit(
+            &session_id,
+            &workout_id,
+            &title,
+            start_time_seconds,
+            duration_seconds,
+            distance_meters,
+            timezone_offset_seconds,
+            &operation.cancellation,
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+const VIRTUAL_POWER_DESCRIPTION: &str =
+    "功率计还在许愿清单里，本场瓦特是风、坡和速度一起算的，看看就好～（出自 HealthWorkoutExport）";
+
+#[derive(Clone, Debug)]
+pub struct VirtualPowerFillInput {
+    pub include_inertia: bool,
+    pub rider_mass_kg: f64,
+    pub bike_mass_kg: f64,
+    pub cda: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct PreparedFitResult {
+    pub data: Vec<u8>,
+    pub repaired_speed_count: u32,
+    pub rewritten_coordinate_count: u32,
+    pub virtual_power_filled_count: u32,
+    pub power_source_virtual: bool,
+    pub activity_description: Option<String>,
+}
+
+/// 主源优先补传感器。`alignment` 为 `absolute` / `auto` / `manual`。
+#[flutter_rust_bridge::frb(sync)]
+pub fn merge_fit_files(
+    primary: Vec<u8>,
+    supplements: Vec<Vec<u8>>,
+    sensors_only: bool,
+    alignment: String,
+    manual_offset_seconds: i32,
+) -> Result<Vec<u8>, String> {
+    let refs: Vec<&[u8]> = supplements.iter().map(Vec::as_slice).collect();
+    if alignment == "auto" && sensors_only {
+        return crate::fit::merge_fit_for_sync(&primary, &refs)
+            .map_err(|error| format!("{error:?}"));
+    }
+    let alignment = match alignment.as_str() {
+        "absolute" => crate::fit_alignment::FitStaticAlignment::Absolute,
+        "manual" => crate::fit_alignment::FitStaticAlignment::Manual(manual_offset_seconds),
+        "auto" => {
+            return crate::fit::merge_fit_for_sync(&primary, &refs)
+                .map_err(|error| format!("{error:?}"));
+        }
+        _ => return Err("未知 FIT 对齐模式".to_owned()),
+    };
+    crate::fit::merge_fit(
+        &primary,
+        &refs,
+        &crate::fit::FitMergeOptions {
+            supplement_mode: if sensors_only {
+                crate::fit::FitSupplementMode::SensorsOnly
+            } else {
+                crate::fit::FitSupplementMode::FillRecords
+            },
+            alignment,
+        },
+    )
+    .map_err(|error| format!("{error:?}"))
+}
+
+/// 修复已证明的 GPS 速度尖峰。
+#[flutter_rust_bridge::frb(sync)]
+pub fn fix_fit_speed_spikes(data: Vec<u8>) -> Result<Vec<u8>, String> {
+    crate::fit::fix_fit_speed_spikes(&data)
+        .map(|result| result.data)
+        .map_err(|error| format!("{error:?}"))
+}
+
+/// 把中国境内 GCJ-02 坐标改写为 WGS-84。
+#[flutter_rust_bridge::frb(sync)]
+pub fn rewrite_fit_gcj_coordinates(data: Vec<u8>) -> Result<Vec<u8>, String> {
+    crate::fit::rewrite_fit_gcj_coordinates(&data)
+        .map(|result| result.data)
+        .map_err(|error| format!("{error:?}"))
+}
+
+/// 上传前固定顺序：补源合并 → 尖峰 → GCJ → 虚拟功率。
+pub async fn prepare_fit_for_upload(
+    primary: Vec<u8>,
+    supplements: Vec<Vec<u8>>,
+    gcj_enabled: bool,
+    virtual_power: Option<VirtualPowerFillInput>,
+) -> Result<PreparedFitResult, String> {
+    let refs: Vec<&[u8]> = supplements.iter().map(Vec::as_slice).collect();
+    let merged = if refs.is_empty() {
+        primary
+    } else {
+        crate::fit::merge_fit_for_sync(&primary, &refs).map_err(|error| format!("{error:?}"))?
+    };
+    let spike = crate::fit::fix_fit_speed_spikes(&merged).map_err(|error| format!("{error:?}"))?;
+    let repaired_speed_count = u32::try_from(spike.fixed_count).unwrap_or(u32::MAX);
+    let mut data = spike.data;
+    let mut rewritten_coordinate_count = 0;
+    if gcj_enabled {
+        let rewritten =
+            crate::fit::rewrite_fit_gcj_coordinates(&data).map_err(|error| format!("{error:?}"))?;
+        rewritten_coordinate_count = u32::try_from(rewritten.rewritten_count).unwrap_or(u32::MAX);
+        data = rewritten.data;
+    }
+    let mut virtual_power_filled_count = 0;
+    let mut power_source_virtual = false;
+    let mut activity_description = None;
+    if let Some(input) = virtual_power {
+        if input.rider_mass_kg > 0.0 && input.bike_mass_kg > 0.0 && input.cda > 0.0 {
+            let air_density = weather_air_density(&data).await.unwrap_or(1.225);
+            let filled = crate::fit::fill_fit_virtual_power(
+                &data,
+                crate::fit::FitVirtualPowerFillOptions {
+                    params: crate::VirtualPowerParams {
+                        total_mass_kg: input.rider_mass_kg + input.bike_mass_kg,
+                        cda: input.cda,
+                        crr: 0.005,
+                        drivetrain_loss_percent: 2.0,
+                        air_density,
+                    },
+                    include_inertia: input.include_inertia,
+                    mode: crate::fit::FitVirtualPowerFillMode::Overwrite,
+                },
+            )
+            .map_err(|error| format!("{error:?}"))?;
+            virtual_power_filled_count = u32::try_from(filled.filled_count).unwrap_or(u32::MAX);
+            power_source_virtual = filled.power_source_virtual && !filled.activity_rejected;
+            if power_source_virtual {
+                activity_description = Some(VIRTUAL_POWER_DESCRIPTION.to_owned());
+            }
+            if !filled.activity_rejected {
+                data = filled.data;
+            }
+        }
+    }
+    Ok(PreparedFitResult {
+        data,
+        repaired_speed_count,
+        rewritten_coordinate_count,
+        virtual_power_filled_count,
+        power_source_virtual,
+        activity_description,
+    })
+}
+
+async fn weather_air_density(data: &[u8]) -> Result<f64, String> {
+    let Some((latitude, longitude)) =
+        crate::fit::first_fit_coordinate(data).map_err(|error| format!("{error:?}"))?
+    else {
+        return Ok(1.225);
+    };
+    let Some((start, end)) =
+        crate::fit::fit_time_range_unix_seconds(data).map_err(|error| format!("{error:?}"))?
+    else {
+        return Ok(1.225);
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(end);
+    let client =
+        crate::weather::OpenMeteoWeatherClient::new().map_err(|error| error.to_string())?;
+    let samples = client
+        .fetch_hourly(
+            latitude,
+            longitude,
+            start,
+            end.max(start + 1),
+            now,
+            &crate::weather::WeatherCancellation::new(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    let Some(sample) = samples.first() else {
+        return Ok(1.225);
+    };
+    Ok(crate::air_density(
+        sample.temperature_c,
+        sample.pressure_msl_hpa,
+        sample.relative_humidity_percent,
+    ))
+}
+
 #[derive(Clone, Debug)]
 pub struct XingzheListReservation {
     pub handle: String,
@@ -446,6 +652,27 @@ mod xingzhe_list_ffi_tests {
         assert_ne!(first.handle, second.handle);
         assert!(!xingzhe_cancel_list(first.handle));
         assert!(xingzhe_release_list(second.handle));
+    }
+}
+
+#[cfg(test)]
+mod prepare_fit_ffi_tests {
+    use super::prepare_fit_for_upload;
+
+    #[tokio::test]
+    async fn prepare_without_supplements_keeps_valid_fit() {
+        let json = br#"{
+            "uuid":"prep","startMs":1700000000000,"endMs":1700000060000,
+            "durationSeconds":60.0,"activityType":13,"events":[],"series":{},
+            "route":[{"latitude":39.9,"longitude":116.4,"timestampMs":1700000000000}]
+        }"#;
+        let primary = crate::fit::encode_health_workout_bundle_json(json, 0).unwrap();
+        let prepared = prepare_fit_for_upload(primary.clone(), Vec::new(), false, None)
+            .await
+            .unwrap();
+        assert!(crate::fit::is_valid_fit(&prepared.data));
+        assert_eq!(prepared.virtual_power_filled_count, 0);
+        assert!(!prepared.power_source_virtual);
     }
 }
 

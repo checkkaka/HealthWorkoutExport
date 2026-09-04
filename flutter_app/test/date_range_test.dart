@@ -36,4 +36,15 @@ void main() {
       DateInterval(DateTime(2026, 8, 8), DateTime(2026, 8, 12)),
     );
   });
+
+  test('当天按本地日历半开区间，近90天以当前时刻为终点', () {
+    expect(
+      ActivityDatePreset.today.resolve(now: now),
+      DateInterval(DateTime(2026, 8, 11), DateTime(2026, 8, 12)),
+    );
+    expect(
+      ActivityDatePreset.days90.resolve(now: now),
+      DateInterval(DateTime(2026, 5, 13, 15, 30), now),
+    );
+  });
 }

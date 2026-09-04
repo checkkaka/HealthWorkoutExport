@@ -1,7 +1,7 @@
 use super::{FitDecodeError, FitDocument};
 use crate::{
-    COASTING_MAX_CADENCE_RPM, VirtualPowerParams, grade_percent, replace_glitch_speeds_with_previous,
-    sanitized_acceleration_mps2, virtual_power_watts,
+    COASTING_MAX_CADENCE_RPM, VirtualPowerParams, grade_percent,
+    replace_glitch_speeds_with_previous, sanitized_acceleration_mps2, virtual_power_watts,
 };
 
 const RECORD: u16 = 20;

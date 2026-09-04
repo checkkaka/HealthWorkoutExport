@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 2138426051;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1243129252;
 
 // Section: executor
 
@@ -184,6 +184,36 @@ fn wire__crate__api__simple__fit_content_summary_impl(
         },
     )
 }
+fn wire__crate__api__simple__fix_fit_speed_spikes_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "fix_fit_speed_spikes",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_data = <Vec<u8>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok = crate::api::simple::fix_fit_speed_spikes(api_data)?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__simple__is_commute_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -243,6 +273,46 @@ fn wire__crate__api__simple__is_valid_fit_impl(
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
                 let output_ok = Result::<_, ()>::Ok(crate::api::simple::is_valid_fit(api_data))?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__simple__merge_fit_files_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "merge_fit_files",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_primary = <Vec<u8>>::sse_decode(&mut deserializer);
+            let api_supplements = <Vec<Vec<u8>>>::sse_decode(&mut deserializer);
+            let api_sensors_only = <bool>::sse_decode(&mut deserializer);
+            let api_alignment = <String>::sse_decode(&mut deserializer);
+            let api_manual_offset_seconds = <i32>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok = crate::api::simple::merge_fit_files(
+                    api_primary,
+                    api_supplements,
+                    api_sensors_only,
+                    api_alignment,
+                    api_manual_offset_seconds,
+                )?;
                 Ok(output_ok)
             })())
         },
@@ -376,6 +446,52 @@ fn wire__crate__api__simple__onelap_login_impl(
         },
     )
 }
+fn wire__crate__api__simple__prepare_fit_for_upload_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "prepare_fit_for_upload",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_primary = <Vec<u8>>::sse_decode(&mut deserializer);
+            let api_supplements = <Vec<Vec<u8>>>::sse_decode(&mut deserializer);
+            let api_gcj_enabled = <bool>::sse_decode(&mut deserializer);
+            let api_virtual_power =
+                <Option<crate::api::simple::VirtualPowerFillInput>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, String>(
+                    (move || async move {
+                        let output_ok = crate::api::simple::prepare_fit_for_upload(
+                            api_primary,
+                            api_supplements,
+                            api_gcj_enabled,
+                            api_virtual_power,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__simple__reencode_fit_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -401,6 +517,36 @@ fn wire__crate__api__simple__reencode_fit_impl(
             deserializer.end();
             transform_result_sse::<_, String>((move || {
                 let output_ok = crate::api::simple::reencode_fit(api_data)?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__simple__rewrite_fit_gcj_coordinates_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "rewrite_fit_gcj_coordinates",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_data = <Vec<u8>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok = crate::api::simple::rewrite_fit_gcj_coordinates(api_data)?;
                 Ok(output_ok)
             })())
         },
@@ -1129,6 +1275,59 @@ fn wire__crate__api__simple__xingzhe_cancel_list_impl(
         },
     )
 }
+fn wire__crate__api__simple__xingzhe_download_fit_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "xingzhe_download_fit",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_operation_handle = <String>::sse_decode(&mut deserializer);
+            let api_session_id = <String>::sse_decode(&mut deserializer);
+            let api_workout_id = <String>::sse_decode(&mut deserializer);
+            let api_title = <String>::sse_decode(&mut deserializer);
+            let api_start_time_seconds = <f64>::sse_decode(&mut deserializer);
+            let api_duration_seconds = <f64>::sse_decode(&mut deserializer);
+            let api_distance_meters = <Option<f64>>::sse_decode(&mut deserializer);
+            let api_timezone_offset_seconds = <i32>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, String>(
+                    (move || async move {
+                        let output_ok = crate::api::simple::xingzhe_download_fit(
+                            api_operation_handle,
+                            api_session_id,
+                            api_workout_id,
+                            api_title,
+                            api_start_time_seconds,
+                            api_duration_seconds,
+                            api_distance_meters,
+                            api_timezone_offset_seconds,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__simple__xingzhe_list_workouts_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1367,6 +1566,18 @@ impl SseDecode for Vec<crate::api::simple::ActivityIntervalInput> {
     }
 }
 
+impl SseDecode for Vec<Vec<u8>> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<Vec<u8>>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::simple::OnelapWorkoutResult> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1520,6 +1731,39 @@ impl SseDecode for Option<u32> {
         } else {
             return None;
         }
+    }
+}
+
+impl SseDecode for Option<crate::api::simple::VirtualPowerFillInput> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::simple::VirtualPowerFillInput>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for crate::api::simple::PreparedFitResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_data = <Vec<u8>>::sse_decode(deserializer);
+        let mut var_repairedSpeedCount = <u32>::sse_decode(deserializer);
+        let mut var_rewrittenCoordinateCount = <u32>::sse_decode(deserializer);
+        let mut var_virtualPowerFilledCount = <u32>::sse_decode(deserializer);
+        let mut var_powerSourceVirtual = <bool>::sse_decode(deserializer);
+        let mut var_activityDescription = <Option<String>>::sse_decode(deserializer);
+        return crate::api::simple::PreparedFitResult {
+            data: var_data,
+            repaired_speed_count: var_repairedSpeedCount,
+            rewritten_coordinate_count: var_rewrittenCoordinateCount,
+            virtual_power_filled_count: var_virtualPowerFilledCount,
+            power_source_virtual: var_powerSourceVirtual,
+            activity_description: var_activityDescription,
+        };
     }
 }
 
@@ -1696,6 +1940,22 @@ impl SseDecode for () {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {}
 }
 
+impl SseDecode for crate::api::simple::VirtualPowerFillInput {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_includeInertia = <bool>::sse_decode(deserializer);
+        let mut var_riderMassKg = <f64>::sse_decode(deserializer);
+        let mut var_bikeMassKg = <f64>::sse_decode(deserializer);
+        let mut var_cda = <f64>::sse_decode(deserializer);
+        return crate::api::simple::VirtualPowerFillInput {
+            include_inertia: var_includeInertia,
+            rider_mass_kg: var_riderMassKg,
+            bike_mass_kg: var_bikeMassKg,
+            cda: var_cda,
+        };
+    }
+}
+
 impl SseDecode for crate::api::simple::XingzheListReservation {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1739,44 +1999,52 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        7 => wire__crate__api__simple__onelap_download_fit_impl(port, ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__simple__onelap_list_workouts_impl(port, ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__simple__onelap_login_impl(port, ptr, rust_vec_len, data_len),
-        14 => {
+        9 => wire__crate__api__simple__onelap_download_fit_impl(port, ptr, rust_vec_len, data_len),
+        10 => {
+            wire__crate__api__simple__onelap_list_workouts_impl(port, ptr, rust_vec_len, data_len)
+        }
+        11 => wire__crate__api__simple__onelap_login_impl(port, ptr, rust_vec_len, data_len),
+        12 => {
+            wire__crate__api__simple__prepare_fit_for_upload_impl(port, ptr, rust_vec_len, data_len)
+        }
+        18 => {
             wire__crate__api__simple__strava_exchange_code_impl(port, ptr, rust_vec_len, data_len)
         }
-        15 => wire__crate__api__simple__strava_fetch_remote_activity_speed_impl(
+        19 => wire__crate__api__simple__strava_fetch_remote_activity_speed_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        16 => wire__crate__api__simple__strava_list_remote_activities_impl(
+        20 => wire__crate__api__simple__strava_list_remote_activities_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        17 => {
+        21 => {
             wire__crate__api__simple__strava_refresh_token_impl(port, ptr, rust_vec_len, data_len)
         }
-        22 => wire__crate__api__simple__strava_resume_upload_poll_after_refresh_impl(
+        26 => wire__crate__api__simple__strava_resume_upload_poll_after_refresh_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        23 => wire__crate__api__simple__strava_retry_upload_after_refresh_impl(
+        27 => wire__crate__api__simple__strava_retry_upload_after_refresh_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        24 => wire__crate__api__simple__strava_upload_fit_impl(port, ptr, rust_vec_len, data_len),
-        30 => {
+        28 => wire__crate__api__simple__strava_upload_fit_impl(port, ptr, rust_vec_len, data_len),
+        34 => {
+            wire__crate__api__simple__xingzhe_download_fit_impl(port, ptr, rust_vec_len, data_len)
+        }
+        35 => {
             wire__crate__api__simple__xingzhe_list_workouts_impl(port, ptr, rust_vec_len, data_len)
         }
-        31 => wire__crate__api__simple__xingzhe_login_impl(port, ptr, rust_vec_len, data_len),
+        36 => wire__crate__api__simple__xingzhe_login_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1792,27 +2060,32 @@ fn pde_ffi_dispatcher_sync_impl(
         1 => wire__crate__api__simple__activity_match_score_impl(ptr, rust_vec_len, data_len),
         2 => wire__crate__api__simple__best_activity_match_index_impl(ptr, rust_vec_len, data_len),
         4 => wire__crate__api__simple__fit_content_summary_impl(ptr, rust_vec_len, data_len),
-        5 => wire__crate__api__simple__is_commute_impl(ptr, rust_vec_len, data_len),
-        6 => wire__crate__api__simple__is_valid_fit_impl(ptr, rust_vec_len, data_len),
-        10 => wire__crate__api__simple__reencode_fit_impl(ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__simple__stable_dedupe_matches_impl(ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__simple__strava_cancel_remote_read_impl(ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__simple__strava_cancel_upload_impl(ptr, rust_vec_len, data_len),
-        18 => {
+        5 => wire__crate__api__simple__fix_fit_speed_spikes_impl(ptr, rust_vec_len, data_len),
+        6 => wire__crate__api__simple__is_commute_impl(ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__simple__is_valid_fit_impl(ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__simple__merge_fit_files_impl(ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__simple__reencode_fit_impl(ptr, rust_vec_len, data_len),
+        14 => {
+            wire__crate__api__simple__rewrite_fit_gcj_coordinates_impl(ptr, rust_vec_len, data_len)
+        }
+        15 => wire__crate__api__simple__stable_dedupe_matches_impl(ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__simple__strava_cancel_remote_read_impl(ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__simple__strava_cancel_upload_impl(ptr, rust_vec_len, data_len),
+        22 => {
             wire__crate__api__simple__strava_release_remote_read_impl(ptr, rust_vec_len, data_len)
         }
-        19 => wire__crate__api__simple__strava_release_upload_impl(ptr, rust_vec_len, data_len),
-        20 => {
+        23 => wire__crate__api__simple__strava_release_upload_impl(ptr, rust_vec_len, data_len),
+        24 => {
             wire__crate__api__simple__strava_reserve_remote_read_impl(ptr, rust_vec_len, data_len)
         }
-        21 => wire__crate__api__simple__strava_reserve_upload_impl(ptr, rust_vec_len, data_len),
-        25 => wire__crate__api__simple__sync_fingerprint_impl(ptr, rust_vec_len, data_len),
-        26 => wire__crate__api__simple__sync_recovery_apply_impl(ptr, rust_vec_len, data_len),
-        27 => wire__crate__api__simple__sync_recovery_reencode_impl(ptr, rust_vec_len, data_len),
-        28 => wire__crate__api__simple__sync_state_apply_impl(ptr, rust_vec_len, data_len),
-        29 => wire__crate__api__simple__xingzhe_cancel_list_impl(ptr, rust_vec_len, data_len),
-        32 => wire__crate__api__simple__xingzhe_release_list_impl(ptr, rust_vec_len, data_len),
-        33 => wire__crate__api__simple__xingzhe_reserve_list_impl(ptr, rust_vec_len, data_len),
+        25 => wire__crate__api__simple__strava_reserve_upload_impl(ptr, rust_vec_len, data_len),
+        29 => wire__crate__api__simple__sync_fingerprint_impl(ptr, rust_vec_len, data_len),
+        30 => wire__crate__api__simple__sync_recovery_apply_impl(ptr, rust_vec_len, data_len),
+        31 => wire__crate__api__simple__sync_recovery_reencode_impl(ptr, rust_vec_len, data_len),
+        32 => wire__crate__api__simple__sync_state_apply_impl(ptr, rust_vec_len, data_len),
+        33 => wire__crate__api__simple__xingzhe_cancel_list_impl(ptr, rust_vec_len, data_len),
+        37 => wire__crate__api__simple__xingzhe_release_list_impl(ptr, rust_vec_len, data_len),
+        38 => wire__crate__api__simple__xingzhe_reserve_list_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1906,6 +2179,31 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::OnelapWorkoutResult>
     for crate::api::simple::OnelapWorkoutResult
 {
     fn into_into_dart(self) -> crate::api::simple::OnelapWorkoutResult {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::simple::PreparedFitResult {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.data.into_into_dart().into_dart(),
+            self.repaired_speed_count.into_into_dart().into_dart(),
+            self.rewritten_coordinate_count.into_into_dart().into_dart(),
+            self.virtual_power_filled_count.into_into_dart().into_dart(),
+            self.power_source_virtual.into_into_dart().into_dart(),
+            self.activity_description.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::simple::PreparedFitResult
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::PreparedFitResult>
+    for crate::api::simple::PreparedFitResult
+{
+    fn into_into_dart(self) -> crate::api::simple::PreparedFitResult {
         self
     }
 }
@@ -2139,6 +2437,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::StravaUploadRetryStag
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::simple::VirtualPowerFillInput {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.include_inertia.into_into_dart().into_dart(),
+            self.rider_mass_kg.into_into_dart().into_dart(),
+            self.bike_mass_kg.into_into_dart().into_dart(),
+            self.cda.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::simple::VirtualPowerFillInput
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::VirtualPowerFillInput>
+    for crate::api::simple::VirtualPowerFillInput
+{
+    fn into_into_dart(self) -> crate::api::simple::VirtualPowerFillInput {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::simple::XingzheListReservation {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [self.handle.into_into_dart().into_dart()].into_dart()
@@ -2250,6 +2571,16 @@ impl SseEncode for Vec<crate::api::simple::ActivityIntervalInput> {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::simple::ActivityIntervalInput>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<Vec<u8>> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <Vec<u8>>::sse_encode(item, serializer);
         }
     }
 }
@@ -2371,6 +2702,28 @@ impl SseEncode for Option<u32> {
         if let Some(value) = self {
             <u32>::sse_encode(value, serializer);
         }
+    }
+}
+
+impl SseEncode for Option<crate::api::simple::VirtualPowerFillInput> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::simple::VirtualPowerFillInput>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for crate::api::simple::PreparedFitResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Vec<u8>>::sse_encode(self.data, serializer);
+        <u32>::sse_encode(self.repaired_speed_count, serializer);
+        <u32>::sse_encode(self.rewritten_coordinate_count, serializer);
+        <u32>::sse_encode(self.virtual_power_filled_count, serializer);
+        <bool>::sse_encode(self.power_source_virtual, serializer);
+        <Option<String>>::sse_encode(self.activity_description, serializer);
     }
 }
 
@@ -2517,6 +2870,16 @@ impl SseEncode for u8 {
 impl SseEncode for () {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {}
+}
+
+impl SseEncode for crate::api::simple::VirtualPowerFillInput {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.include_inertia, serializer);
+        <f64>::sse_encode(self.rider_mass_kg, serializer);
+        <f64>::sse_encode(self.bike_mass_kg, serializer);
+        <f64>::sse_encode(self.cda, serializer);
+    }
 }
 
 impl SseEncode for crate::api::simple::XingzheListReservation {

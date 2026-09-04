@@ -15,21 +15,35 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.checkkaka.health_workout_export"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        minSdk = maxOf(flutter.minSdkVersion, 26)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
+    val uploadKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+    if (!uploadKeystorePath.isNullOrBlank()) {
+        signingConfigs.create("release") {
+            storeFile = file(uploadKeystorePath)
+            storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                ?: error("ANDROID_KEYSTORE_PASSWORD is required when ANDROID_KEYSTORE_PATH is set")
+            keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                ?: error("ANDROID_KEY_ALIAS is required when ANDROID_KEYSTORE_PATH is set")
+            keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+                ?: error("ANDROID_KEY_PASSWORD is required when ANDROID_KEYSTORE_PATH is set")
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // CI 注入 keystore；本地未配置时仍用 debug 签名，方便 flutter run --release。
+            signingConfig =
+                if (!uploadKeystorePath.isNullOrBlank()) {
+                    signingConfigs.getByName("release")
+                } else {
+                    signingConfigs.getByName("debug")
+                }
         }
     }
 }
@@ -42,4 +56,9 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    implementation("androidx.browser:browser:1.8.0")
+    testImplementation("junit:junit:4.13.2")
 }

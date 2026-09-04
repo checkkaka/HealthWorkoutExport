@@ -4,12 +4,17 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'auto_sync_controller.dart';
+import 'auto_sync_page.dart';
+import 'auto_sync_session.dart';
 import 'date_range.dart';
+import 'fit_merge_page.dart';
 import 'native_channels.dart';
 import 'src/rust/frb_generated.dart';
 import 'strava_settings_page.dart';
+import 'sync_history_page.dart';
 import 'third_party_source_page.dart';
 import 'workout_export.dart';
+import 'workout_source.dart';
 
 Future<void> main() => startApp();
 
@@ -37,7 +42,9 @@ class HealthWorkoutExportApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final platformHealthKit =
         healthKit ??
-        (defaultTargetPlatform == TargetPlatform.iOS
+        (defaultTargetPlatform == TargetPlatform.iOS ||
+                defaultTargetPlatform == TargetPlatform.macOS ||
+                defaultTargetPlatform == TargetPlatform.android
             ? const HealthKitChannel()
             : null);
     return MaterialApp(
@@ -50,7 +57,9 @@ class HealthWorkoutExportApp extends StatelessWidget {
         healthKit: platformHealthKit,
         stravaSettingsEnabled:
             stravaSettingsEnabled ??
-            defaultTargetPlatform == TargetPlatform.iOS,
+            (defaultTargetPlatform == TargetPlatform.iOS ||
+                defaultTargetPlatform == TargetPlatform.macOS ||
+                defaultTargetPlatform == TargetPlatform.android),
       ),
     );
   }
@@ -87,10 +96,32 @@ class _RootTabsPageState extends State<_RootTabsPage> {
       const ThirdPartySourcePage(source: ThirdPartySourceType.onelap),
     ];
     const titles = ['健康训练', '行者活动', '顽鹿活动'];
-    return Scaffold(
+    return ListenableBuilder(
+      listenable: AutoSyncSession.instance,
+      builder: (context, _) {
+        final session = AutoSyncSession.instance;
+        return Scaffold(
       appBar: AppBar(
         title: Text(titles[_selectedIndex]),
         actions: [
+          IconButton(
+            tooltip: '合并 FIT',
+            icon: const Icon(Icons.merge_type),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const FitMergePage()),
+              );
+            },
+          ),
+          IconButton(
+            tooltip: '同步记录',
+            icon: const Icon(Icons.history),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const SyncHistoryPage()),
+              );
+            },
+          ),
           if (widget.stravaSettingsEnabled)
             IconButton(
               tooltip: 'Strava 设置',
@@ -105,11 +136,52 @@ class _RootTabsPageState extends State<_RootTabsPage> {
             ),
         ],
       ),
-      body: IndexedStack(
-        index: _selectedIndex,
+      body: Stack(
         children: [
-          for (var index = 0; index < pages.length; index++)
-            TickerMode(enabled: index == _selectedIndex, child: pages[index]),
+          IndexedStack(
+            index: _selectedIndex,
+            children: [
+              for (var index = 0; index < pages.length; index++)
+                TickerMode(enabled: index == _selectedIndex, child: pages[index]),
+            ],
+          ),
+          if (session.isRunning)
+            Align(
+              alignment: Alignment.topCenter,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Material(
+                  elevation: 2,
+                  borderRadius: BorderRadius.circular(24),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          session.progress.message.isEmpty
+                              ? '同步进行中…'
+                              : session.progress.message,
+                        ),
+                        TextButton(
+                          onPressed: session.cancel,
+                          child: const Text('停止'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -123,6 +195,8 @@ class _RootTabsPageState extends State<_RootTabsPage> {
           NavigationDestination(icon: Icon(Icons.flag), label: '顽鹿'),
         ],
       ),
+        );
+      },
     );
   }
 }
@@ -394,6 +468,39 @@ class _SourcePageState extends State<_SourcePage> {
             : () => unawaited(_confirmAndSync()),
         icon: const Icon(Icons.sync),
         label: Text(_syncing ? '正在首次同步…' : '开始首次同步'),
+      ),
+      const SizedBox(height: 8),
+      OutlinedButton.icon(
+        onPressed: _exporting || _syncing
+            ? null
+            : () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => AutoSyncPage(
+                      entrySource: WorkoutSourceId.healthkit,
+                      selected: [
+                        for (final workout in _workouts)
+                          if (_selectedWorkoutIds.contains(workout.uuid))
+                            WorkoutActivity(
+                              id: workout.uuid,
+                              sourceId: WorkoutSourceId.healthkit,
+                              title: workout.activityName,
+                              start: DateTime.fromMillisecondsSinceEpoch(
+                                workout.startMs,
+                              ),
+                              end: DateTime.fromMillisecondsSinceEpoch(
+                                workout.endMs,
+                              ),
+                              durationSeconds: workout.durationSeconds,
+                              distanceMeters: workout.totalDistanceMeters,
+                            ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+        icon: const Icon(Icons.sync_alt),
+        label: const Text('完整自动同步'),
       ),
       if (_syncing || _syncTotal > 0) ...[
         const SizedBox(height: 8),

@@ -695,6 +695,22 @@ class RunnerTests: XCTestCase {
         URL(string: "https://evil.example/login")!
       ))
   }
+
+  func testStravaWebUploadParsesCSRFAndRejectsUnsafeFilenames() {
+    XCTAssertEqual(
+      StravaWebPlugin.extractCSRFToken(
+        from: #"<meta name="csrf-token" content="token-1">"#
+      ),
+      "token-1"
+    )
+    XCTAssertTrue(StravaWebPlugin.isSafeUploadFilename("ride.fit"))
+    XCTAssertFalse(StravaWebPlugin.isSafeUploadFilename("../ride.fit"))
+    XCTAssertFalse(StravaWebPlugin.isSafeUploadFilename("ride.fit.exe"))
+    XCTAssertEqual(
+      StravaWebPlugin.duplicateActivityId(from: #"duplicate of <a href="/activities/42">"#),
+      "42"
+    )
+  }
 }
 
 private actor ConcurrencyProbe {

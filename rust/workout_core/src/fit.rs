@@ -10,7 +10,7 @@ mod health_fit;
 pub use fit_document::{FitDocument, FitMessage, MAX_FIT_BYTES};
 pub use fit_merge::{
     FitMergeError, FitMergeOptions, FitSupplementMode, MAX_MERGE_INPUT_BYTES,
-    MAX_MERGE_SUPPLEMENTS, merge_fit, merge_fit_sensors,
+    MAX_MERGE_SUPPLEMENTS, merge_fit, merge_fit_for_sync, merge_fit_sensors,
 };
 pub use fit_virtual_power::{
     FitVirtualPowerFillMode, FitVirtualPowerFillOptions, FitVirtualPowerFillResult,
@@ -203,6 +203,65 @@ pub fn rewrite_fit_gcj_coordinates(
         data: document.to_bytes()?,
         rewritten_count,
     })
+}
+
+/// 读取第一条有效 GPS，供天气网格请求使用。
+pub fn first_fit_coordinate(data: &[u8]) -> Result<Option<(f64, f64)>, FitDecodeError> {
+    let document = FitDocument::parse(data)?;
+    for (index, message) in document.messages().iter().enumerate() {
+        if message.global_number() != 20 {
+            continue;
+        }
+        let (Some(latitude), Some(longitude)) =
+            (document.read_i32(index, 0), document.read_i32(index, 1))
+        else {
+            continue;
+        };
+        if latitude == i32::MAX || longitude == i32::MAX {
+            continue;
+        }
+        let latitude = f64::from(latitude) / SEMICIRCLES_PER_DEGREE;
+        let longitude = f64::from(longitude) / SEMICIRCLES_PER_DEGREE;
+        if (-90.0..=90.0).contains(&latitude) && (-180.0..=180.0).contains(&longitude) {
+            return Ok(Some((latitude, longitude)));
+        }
+    }
+    Ok(None)
+}
+
+/// 读取 Session 起止 Unix 秒；没有 Session 时回退到 Record 时间戳。
+pub fn fit_time_range_unix_seconds(data: &[u8]) -> Result<Option<(i64, i64)>, FitDecodeError> {
+    const FIT_EPOCH: i64 = 631_065_600;
+    let document = FitDocument::parse(data)?;
+    for (index, message) in document.messages().iter().enumerate() {
+        if message.global_number() != 18 {
+            continue;
+        }
+        if let (Some(start), Some(timestamp)) =
+            (document.read_u32(index, 2), document.read_u32(index, 253))
+        {
+            let start = i64::from(start) + FIT_EPOCH;
+            let end = i64::from(timestamp) + FIT_EPOCH;
+            if end > start {
+                return Ok(Some((start, end)));
+            }
+        }
+    }
+    let mut min_ts = None;
+    let mut max_ts = None;
+    for (index, message) in document.messages().iter().enumerate() {
+        if message.global_number() != 20 {
+            continue;
+        }
+        let Some(timestamp) = document.read_u32(index, 253) else {
+            continue;
+        };
+        min_ts = Some(min_ts.map_or(timestamp, |value: u32| value.min(timestamp)));
+        max_ts = Some(max_ts.map_or(timestamp, |value: u32| value.max(timestamp)));
+    }
+    Ok(min_ts
+        .zip(max_ts)
+        .map(|(start, end)| (i64::from(start) + FIT_EPOCH, i64::from(end) + FIT_EPOCH)))
 }
 
 fn rewrite_gcj_coordinate_pair(

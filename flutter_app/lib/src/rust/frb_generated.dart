@@ -70,7 +70,7 @@ class WorkoutCoreRustLib
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 2138426051;
+  int get rustContentHash => 1243129252;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -99,12 +99,22 @@ abstract class WorkoutCoreRustLibApi extends BaseApi {
 
   FitProbeSummary crateApiSimpleFitContentSummary({required List<int> data});
 
+  Uint8List crateApiSimpleFixFitSpeedSpikes({required List<int> data});
+
   bool crateApiSimpleIsCommute({
     double? distanceMeters,
     required double durationSeconds,
   });
 
   bool crateApiSimpleIsValidFit({required List<int> data});
+
+  Uint8List crateApiSimpleMergeFitFiles({
+    required List<int> primary,
+    required List<Uint8List> supplements,
+    required bool sensorsOnly,
+    required String alignment,
+    required int manualOffsetSeconds,
+  });
 
   Future<Uint8List> crateApiSimpleOnelapDownloadFit({
     required String token,
@@ -125,7 +135,16 @@ abstract class WorkoutCoreRustLibApi extends BaseApi {
     required String password,
   });
 
+  Future<PreparedFitResult> crateApiSimplePrepareFitForUpload({
+    required List<int> primary,
+    required List<Uint8List> supplements,
+    required bool gcjEnabled,
+    VirtualPowerFillInput? virtualPower,
+  });
+
   Uint8List crateApiSimpleReencodeFit({required List<int> data});
+
+  Uint8List crateApiSimpleRewriteFitGcjCoordinates({required List<int> data});
 
   bool crateApiSimpleStableDedupeMatches({
     required double startASeconds,
@@ -230,6 +249,17 @@ abstract class WorkoutCoreRustLibApi extends BaseApi {
   });
 
   bool crateApiSimpleXingzheCancelList({required String operationHandle});
+
+  Future<Uint8List> crateApiSimpleXingzheDownloadFit({
+    required String operationHandle,
+    required String sessionId,
+    required String workoutId,
+    required String title,
+    required double startTimeSeconds,
+    required double durationSeconds,
+    double? distanceMeters,
+    required int timezoneOffsetSeconds,
+  });
 
   Future<List<XingzheWorkoutResult>> crateApiSimpleXingzheListWorkouts({
     required String operationHandle,
@@ -378,6 +408,32 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
       const TaskConstMeta(debugName: "fit_content_summary", argNames: ["data"]);
 
   @override
+  Uint8List crateApiSimpleFixFitSpeedSpikes({required List<int> data}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(data, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleFixFitSpeedSpikesConstMeta,
+        argValues: [data],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleFixFitSpeedSpikesConstMeta =>
+      const TaskConstMeta(
+        debugName: "fix_fit_speed_spikes",
+        argNames: ["data"],
+      );
+
+  @override
   bool crateApiSimpleIsCommute({
     double? distanceMeters,
     required double durationSeconds,
@@ -388,7 +444,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_opt_box_autoadd_f_64(distanceMeters, serializer);
           sse_encode_f_64(durationSeconds, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -413,7 +469,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(data, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -428,6 +484,54 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
 
   TaskConstMeta get kCrateApiSimpleIsValidFitConstMeta =>
       const TaskConstMeta(debugName: "is_valid_fit", argNames: ["data"]);
+
+  @override
+  Uint8List crateApiSimpleMergeFitFiles({
+    required List<int> primary,
+    required List<Uint8List> supplements,
+    required bool sensorsOnly,
+    required String alignment,
+    required int manualOffsetSeconds,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(primary, serializer);
+          sse_encode_list_list_prim_u_8_strict(supplements, serializer);
+          sse_encode_bool(sensorsOnly, serializer);
+          sse_encode_String(alignment, serializer);
+          sse_encode_i_32(manualOffsetSeconds, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleMergeFitFilesConstMeta,
+        argValues: [
+          primary,
+          supplements,
+          sensorsOnly,
+          alignment,
+          manualOffsetSeconds,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleMergeFitFilesConstMeta =>
+      const TaskConstMeta(
+        debugName: "merge_fit_files",
+        argNames: [
+          "primary",
+          "supplements",
+          "sensorsOnly",
+          "alignment",
+          "manualOffsetSeconds",
+        ],
+      );
 
   @override
   Future<Uint8List> crateApiSimpleOnelapDownloadFit({
@@ -445,7 +549,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 9,
             port: port_,
           );
         },
@@ -486,7 +590,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 8,
+            funcId: 10,
             port: port_,
           );
         },
@@ -527,7 +631,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 9,
+            funcId: 11,
             port: port_,
           );
         },
@@ -548,13 +652,55 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   );
 
   @override
+  Future<PreparedFitResult> crateApiSimplePrepareFitForUpload({
+    required List<int> primary,
+    required List<Uint8List> supplements,
+    required bool gcjEnabled,
+    VirtualPowerFillInput? virtualPower,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(primary, serializer);
+          sse_encode_list_list_prim_u_8_strict(supplements, serializer);
+          sse_encode_bool(gcjEnabled, serializer);
+          sse_encode_opt_box_autoadd_virtual_power_fill_input(
+            virtualPower,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 12,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_prepared_fit_result,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimplePrepareFitForUploadConstMeta,
+        argValues: [primary, supplements, gcjEnabled, virtualPower],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimplePrepareFitForUploadConstMeta =>
+      const TaskConstMeta(
+        debugName: "prepare_fit_for_upload",
+        argNames: ["primary", "supplements", "gcjEnabled", "virtualPower"],
+      );
+
+  @override
   Uint8List crateApiSimpleReencodeFit({required List<int> data}) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(data, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
@@ -569,6 +715,32 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
 
   TaskConstMeta get kCrateApiSimpleReencodeFitConstMeta =>
       const TaskConstMeta(debugName: "reencode_fit", argNames: ["data"]);
+
+  @override
+  Uint8List crateApiSimpleRewriteFitGcjCoordinates({required List<int> data}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(data, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleRewriteFitGcjCoordinatesConstMeta,
+        argValues: [data],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleRewriteFitGcjCoordinatesConstMeta =>
+      const TaskConstMeta(
+        debugName: "rewrite_fit_gcj_coordinates",
+        argNames: ["data"],
+      );
 
   @override
   bool crateApiSimpleStableDedupeMatches({
@@ -589,7 +761,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           sse_encode_f_64(distanceBMeters, serializer);
           sse_encode_opt_box_autoadd_f_64(durationASeconds, serializer);
           sse_encode_opt_box_autoadd_f_64(durationBSeconds, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -629,7 +801,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationHandle, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -655,7 +827,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationHandle, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -690,7 +862,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 14,
+            funcId: 18,
             port: port_,
           );
         },
@@ -728,7 +900,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 15,
+            funcId: 19,
             port: port_,
           );
         },
@@ -769,7 +941,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 16,
+            funcId: 20,
             port: port_,
           );
         },
@@ -811,7 +983,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 17,
+            funcId: 21,
             port: port_,
           );
         },
@@ -841,7 +1013,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationHandle, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -867,7 +1039,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationHandle, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -895,7 +1067,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationId, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 24)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_strava_upload_reservation,
@@ -923,7 +1095,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationId, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_strava_upload_reservation,
@@ -961,7 +1133,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 22,
+            funcId: 26,
             port: port_,
           );
         },
@@ -1007,7 +1179,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 23,
+            funcId: 27,
             port: port_,
           );
         },
@@ -1068,7 +1240,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 24,
+            funcId: 28,
             port: port_,
           );
         },
@@ -1122,7 +1294,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           sse_encode_f_64(startDateUnixSeconds, serializer);
           sse_encode_list_String(supplementSourceIds, serializer);
           sse_encode_String(destination, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 29)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -1164,7 +1336,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(recoveryJson, serializer);
           sse_encode_list_prim_u_8_loose(commandJson, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 26)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 30)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
@@ -1192,7 +1364,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(recoveryJson, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 27)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 31)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
@@ -1222,7 +1394,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(stateJson, serializer);
           sse_encode_list_prim_u_8_loose(commandJson, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 28)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 32)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
@@ -1248,7 +1420,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationHandle, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 29)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -1265,6 +1437,71 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
       const TaskConstMeta(
         debugName: "xingzhe_cancel_list",
         argNames: ["operationHandle"],
+      );
+
+  @override
+  Future<Uint8List> crateApiSimpleXingzheDownloadFit({
+    required String operationHandle,
+    required String sessionId,
+    required String workoutId,
+    required String title,
+    required double startTimeSeconds,
+    required double durationSeconds,
+    double? distanceMeters,
+    required int timezoneOffsetSeconds,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(operationHandle, serializer);
+          sse_encode_String(sessionId, serializer);
+          sse_encode_String(workoutId, serializer);
+          sse_encode_String(title, serializer);
+          sse_encode_f_64(startTimeSeconds, serializer);
+          sse_encode_f_64(durationSeconds, serializer);
+          sse_encode_opt_box_autoadd_f_64(distanceMeters, serializer);
+          sse_encode_i_32(timezoneOffsetSeconds, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 34,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleXingzheDownloadFitConstMeta,
+        argValues: [
+          operationHandle,
+          sessionId,
+          workoutId,
+          title,
+          startTimeSeconds,
+          durationSeconds,
+          distanceMeters,
+          timezoneOffsetSeconds,
+        ],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleXingzheDownloadFitConstMeta =>
+      const TaskConstMeta(
+        debugName: "xingzhe_download_fit",
+        argNames: [
+          "operationHandle",
+          "sessionId",
+          "workoutId",
+          "title",
+          "startTimeSeconds",
+          "durationSeconds",
+          "distanceMeters",
+          "timezoneOffsetSeconds",
+        ],
       );
 
   @override
@@ -1285,7 +1522,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 30,
+            funcId: 35,
             port: port_,
           );
         },
@@ -1320,7 +1557,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 31,
+            funcId: 36,
             port: port_,
           );
         },
@@ -1347,7 +1584,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationHandle, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 32)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 37)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -1375,7 +1612,7 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(operationId, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 38)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_xingzhe_list_reservation,
@@ -1462,6 +1699,14 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  VirtualPowerFillInput dco_decode_box_autoadd_virtual_power_fill_input(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_virtual_power_fill_input(raw);
+  }
+
+  @protected
   double dco_decode_f_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as double;
@@ -1506,6 +1751,12 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
     return (raw as List<dynamic>)
         .map(dco_decode_activity_interval_input)
         .toList();
+  }
+
+  @protected
+  List<Uint8List> dco_decode_list_list_prim_u_8_strict(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_list_prim_u_8_strict).toList();
   }
 
   @protected
@@ -1618,6 +1869,32 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_u_32(raw);
+  }
+
+  @protected
+  VirtualPowerFillInput? dco_decode_opt_box_autoadd_virtual_power_fill_input(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_virtual_power_fill_input(raw);
+  }
+
+  @protected
+  PreparedFitResult dco_decode_prepared_fit_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return PreparedFitResult(
+      data: dco_decode_list_prim_u_8_strict(arr[0]),
+      repairedSpeedCount: dco_decode_u_32(arr[1]),
+      rewrittenCoordinateCount: dco_decode_u_32(arr[2]),
+      virtualPowerFilledCount: dco_decode_u_32(arr[3]),
+      powerSourceVirtual: dco_decode_bool(arr[4]),
+      activityDescription: dco_decode_opt_String(arr[5]),
+    );
   }
 
   @protected
@@ -1757,6 +2034,20 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  VirtualPowerFillInput dco_decode_virtual_power_fill_input(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return VirtualPowerFillInput(
+      includeInertia: dco_decode_bool(arr[0]),
+      riderMassKg: dco_decode_f_64(arr[1]),
+      bikeMassKg: dco_decode_f_64(arr[2]),
+      cda: dco_decode_f_64(arr[3]),
+    );
+  }
+
+  @protected
   XingzheListReservation dco_decode_xingzhe_list_reservation(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -1854,6 +2145,14 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  VirtualPowerFillInput sse_decode_box_autoadd_virtual_power_fill_input(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_virtual_power_fill_input(deserializer));
+  }
+
+  @protected
   double sse_decode_f_64(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getFloat64();
@@ -1906,6 +2205,20 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
     var ans_ = <ActivityIntervalInput>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_activity_interval_input(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<Uint8List> sse_decode_list_list_prim_u_8_strict(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <Uint8List>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_list_prim_u_8_strict(deserializer));
     }
     return ans_;
   }
@@ -2072,6 +2385,40 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  VirtualPowerFillInput? sse_decode_opt_box_autoadd_virtual_power_fill_input(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_virtual_power_fill_input(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  PreparedFitResult sse_decode_prepared_fit_result(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_data = sse_decode_list_prim_u_8_strict(deserializer);
+    var var_repairedSpeedCount = sse_decode_u_32(deserializer);
+    var var_rewrittenCoordinateCount = sse_decode_u_32(deserializer);
+    var var_virtualPowerFilledCount = sse_decode_u_32(deserializer);
+    var var_powerSourceVirtual = sse_decode_bool(deserializer);
+    var var_activityDescription = sse_decode_opt_String(deserializer);
+    return PreparedFitResult(
+      data: var_data,
+      repairedSpeedCount: var_repairedSpeedCount,
+      rewrittenCoordinateCount: var_rewrittenCoordinateCount,
+      virtualPowerFilledCount: var_virtualPowerFilledCount,
+      powerSourceVirtual: var_powerSourceVirtual,
+      activityDescription: var_activityDescription,
+    );
+  }
+
+  @protected
   StravaActivitySpeedResult sse_decode_strava_activity_speed_result(
     SseDeserializer deserializer,
   ) {
@@ -2230,6 +2577,23 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  VirtualPowerFillInput sse_decode_virtual_power_fill_input(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_includeInertia = sse_decode_bool(deserializer);
+    var var_riderMassKg = sse_decode_f_64(deserializer);
+    var var_bikeMassKg = sse_decode_f_64(deserializer);
+    var var_cda = sse_decode_f_64(deserializer);
+    return VirtualPowerFillInput(
+      includeInertia: var_includeInertia,
+      riderMassKg: var_riderMassKg,
+      bikeMassKg: var_bikeMassKg,
+      cda: var_cda,
+    );
+  }
+
+  @protected
   XingzheListReservation sse_decode_xingzhe_list_reservation(
     SseDeserializer deserializer,
   ) {
@@ -2331,6 +2695,15 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  void sse_encode_box_autoadd_virtual_power_fill_input(
+    VirtualPowerFillInput self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_virtual_power_fill_input(self, serializer);
+  }
+
+  @protected
   void sse_encode_f_64(double self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putFloat64(self);
@@ -2377,6 +2750,18 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_activity_interval_input(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_list_prim_u_8_strict(
+    List<Uint8List> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_list_prim_u_8_strict(item, serializer);
     }
   }
 
@@ -2532,6 +2917,33 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_virtual_power_fill_input(
+    VirtualPowerFillInput? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_virtual_power_fill_input(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_prepared_fit_result(
+    PreparedFitResult self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_prim_u_8_strict(self.data, serializer);
+    sse_encode_u_32(self.repairedSpeedCount, serializer);
+    sse_encode_u_32(self.rewrittenCoordinateCount, serializer);
+    sse_encode_u_32(self.virtualPowerFilledCount, serializer);
+    sse_encode_bool(self.powerSourceVirtual, serializer);
+    sse_encode_opt_String(self.activityDescription, serializer);
+  }
+
+  @protected
   void sse_encode_strava_activity_speed_result(
     StravaActivitySpeedResult self,
     SseSerializer serializer,
@@ -2655,6 +3067,18 @@ class WorkoutCoreRustLibApiImpl extends WorkoutCoreRustLibApiImplPlatform
   @protected
   void sse_encode_unit(void self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
+  }
+
+  @protected
+  void sse_encode_virtual_power_fill_input(
+    VirtualPowerFillInput self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bool(self.includeInertia, serializer);
+    sse_encode_f_64(self.riderMassKg, serializer);
+    sse_encode_f_64(self.bikeMassKg, serializer);
+    sse_encode_f_64(self.cda, serializer);
   }
 
   @protected

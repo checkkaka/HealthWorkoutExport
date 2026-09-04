@@ -22,6 +22,7 @@ use tokio::sync::Notify;
 
 const LOGIN_URL: &str = "https://www.imxingzhe.com/api/v1/user/login/";
 const LIST_URL: &str = "https://www.imxingzhe.com/api/v1/pgworkout/";
+const STREAM_URL: &str = "https://www.imxingzhe.com/api/v1/pgworkout/";
 const ORIGIN_VALUE: &str = "https://www.imxingzhe.com";
 const REFERER_VALUE: &str = "https://www.imxingzhe.com/user/login";
 const USER_AGENT_VALUE: &str =
@@ -88,6 +89,8 @@ pub enum XingzheActivityError {
     InvalidResponse,
     RateLimited,
     Cancelled,
+    EmptyTrack,
+    EncodeFailed,
 }
 
 impl fmt::Display for XingzheActivityError {
@@ -103,6 +106,8 @@ impl fmt::Display for XingzheActivityError {
             Self::InvalidResponse => "行者活动响应无效",
             Self::RateLimited => "行者请求限流，请稍后再试",
             Self::Cancelled => "行者活动请求已取消",
+            Self::EmptyTrack => "行者无轨迹点",
+            Self::EncodeFailed => "行者 FIT 编码失败",
         };
         f.write_str(message)
     }
@@ -202,7 +207,11 @@ impl XingzheActivityClient {
                 cancellation.sleep(PAGE_INTERVAL).await?;
             }
             let offset = page * LIST_PAGE_SIZE;
-            let root = self.get_page(session_id, offset, cancellation).await?;
+            let mut url = self.list_endpoint.clone();
+            url.query_pairs_mut()
+                .append_pair("offset", &offset.to_string())
+                .append_pair("limit", &LIST_PAGE_SIZE.to_string());
+            let root = self.get_json(url, session_id, cancellation).await?;
             let (mut entries, all_older, entry_count) =
                 parse_workout_page(&root, from_seconds, to_seconds);
             results.append(&mut entries);
@@ -215,22 +224,46 @@ impl XingzheActivityClient {
         Ok(results)
     }
 
-    async fn get_page(
+    /// 读取行者 stream 并编码为与健康导出相同的 Activity FIT。
+    pub async fn download_fit(
         &self,
         session_id: &str,
-        offset: u32,
+        workout_id: &str,
+        title: &str,
+        start_time_seconds: f64,
+        duration_seconds: f64,
+        distance_meters: Option<f64>,
+        timezone_offset_seconds: i32,
+        cancellation: &XingzheCancellation,
+    ) -> Result<Vec<u8>, XingzheActivityError> {
+        validate_list_input(session_id, 0, 1)?;
+        let url = stream_url(workout_id)?;
+        let root = self.get_json(url, session_id, cancellation).await?;
+        let stream = root.get("data").unwrap_or(&root);
+        let bundle = stream_to_health_bundle(
+            workout_id,
+            title,
+            start_time_seconds,
+            duration_seconds,
+            distance_meters,
+            stream,
+        )?;
+        crate::fit::encode_health_workout_bundle_json(&bundle, timezone_offset_seconds)
+            .map_err(|_| XingzheActivityError::EncodeFailed)
+    }
+
+    async fn get_json(
+        &self,
+        url: Url,
+        session_id: &str,
         cancellation: &XingzheCancellation,
     ) -> Result<serde_json::Value, XingzheActivityError> {
         for attempt in 0..MAX_REQUEST_ATTEMPTS {
-            let mut url = self.list_endpoint.clone();
-            url.query_pairs_mut()
-                .append_pair("offset", &offset.to_string())
-                .append_pair("limit", &LIST_PAGE_SIZE.to_string());
             let cookie = format!("sessionid={session_id}; _XingzheWeb_Token=true");
             let mut response = match cancellation
                 .run(
                     self.client
-                        .get(url)
+                        .get(url.clone())
                         .header("Cookie", cookie)
                         .header("Accept", "application/json")
                         .send(),
@@ -306,6 +339,127 @@ fn fixed_list_url() -> Result<Url, XingzheActivityError> {
         && url.password().is_none())
     .then_some(url)
     .ok_or(XingzheActivityError::ClientBuild)
+}
+
+fn stream_url(workout_id: &str) -> Result<Url, XingzheActivityError> {
+    if workout_id.is_empty()
+        || workout_id.len() > 64
+        || !workout_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(XingzheActivityError::InvalidInput);
+    }
+    let url = Url::parse(&format!("{STREAM_URL}{workout_id}/stream/"))
+        .map_err(|_| XingzheActivityError::InvalidInput)?;
+    (url.scheme() == "https"
+        && url.host_str() == Some("www.imxingzhe.com")
+        && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none())
+    .then_some(url)
+    .ok_or(XingzheActivityError::InvalidInput)
+}
+
+/// 把行者 stream JSON 转成 HealthKit bundle，供既有 FIT 编码器复用。
+fn stream_to_health_bundle(
+    workout_id: &str,
+    _title: &str,
+    start_time_seconds: f64,
+    duration_seconds: f64,
+    distance_meters: Option<f64>,
+    stream: &serde_json::Value,
+) -> Result<Vec<u8>, XingzheActivityError> {
+    if !start_time_seconds.is_finite() || start_time_seconds <= 0.0 {
+        return Err(XingzheActivityError::InvalidInput);
+    }
+    let locations = stream.get("location").and_then(serde_json::Value::as_array);
+    let timestamps = stream
+        .get("timestamp")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let altitudes = stream
+        .get("altitude")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let heartrates = stream
+        .get("heartrate")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let location_count = locations.map(Vec::len).unwrap_or(0);
+    let count = location_count.max(timestamps.len());
+    if count == 0 {
+        return Err(XingzheActivityError::EmptyTrack);
+    }
+    let start_ms = (start_time_seconds * 1000.0).round() as i64;
+    let duration = duration_seconds.max(1.0);
+    let end_ms = start_ms + (duration * 1000.0).round() as i64;
+    let mut route = Vec::new();
+    let mut heart_samples = Vec::new();
+    for index in 0..count {
+        let timestamp_ms = if let Some(raw) = timestamps
+            .get(index)
+            .and_then(|value| json_number(Some(value)))
+        {
+            if raw > 1_000_000_000_000.0 {
+                raw.round() as i64
+            } else {
+                (raw * 1000.0).round() as i64
+            }
+        } else {
+            start_ms + (index as i64) * 1000
+        };
+        if let Some(pair) = locations.and_then(|values| values.get(index)) {
+            let values = pair.as_array();
+            let longitude = values
+                .and_then(|values| json_number(values.first()))
+                .unwrap_or(0.0);
+            let latitude = values
+                .and_then(|values| json_number(values.get(1)))
+                .unwrap_or(0.0);
+            let altitude = altitudes
+                .get(index)
+                .and_then(|value| json_number(Some(value)));
+            route.push(serde_json::json!({
+                "latitude": latitude,
+                "longitude": longitude,
+                "altitudeMeters": altitude,
+                "timestampMs": timestamp_ms,
+            }));
+        }
+        if let Some(heart_rate) = heartrates
+            .get(index)
+            .and_then(|value| json_number(Some(value)))
+            .filter(|value| *value > 0.0)
+        {
+            heart_samples.push(serde_json::json!({
+                "dateMs": timestamp_ms,
+                "value": heart_rate,
+            }));
+        }
+    }
+    let mut series = serde_json::Map::new();
+    if !heart_samples.is_empty() {
+        series.insert(
+            "HKQuantityTypeIdentifierHeartRate".to_owned(),
+            serde_json::Value::Array(heart_samples),
+        );
+    }
+    let bundle = serde_json::json!({
+        "uuid": workout_id,
+        "startMs": start_ms,
+        "endMs": end_ms,
+        "durationSeconds": duration,
+        "activityType": 13,
+        "totalDistanceMeters": distance_meters.filter(|value| value.is_finite() && *value > 0.0),
+        "events": [],
+        "series": series,
+        "route": route,
+    });
+    serde_json::to_vec(&bundle).map_err(|_| XingzheActivityError::EncodeFailed)
 }
 
 fn validate_list_input(
@@ -586,7 +740,8 @@ mod tests {
     use super::{
         MAX_ACCOUNT_BYTES, MAX_PASSWORD_BYTES, XingzheActivityError, XingzheCancellation,
         XingzheLoginError, encrypt_password, extract_session_id, fixed_list_url,
-        parse_workout_page, rate_limit_wait, validate_input, validate_list_input,
+        parse_workout_page, rate_limit_wait, stream_to_health_bundle, stream_url, validate_input,
+        validate_list_input,
     };
     use reqwest::StatusCode;
     use reqwest::header::{HeaderMap, HeaderValue, SET_COOKIE};
@@ -654,6 +809,59 @@ mod tests {
         assert_eq!(url.scheme(), "https");
         assert_eq!(url.host_str(), Some("www.imxingzhe.com"));
         assert!(url.port().is_none());
+    }
+
+    #[test]
+    fn stream_url_only_accepts_safe_workout_ids() {
+        let url = stream_url("12345").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://www.imxingzhe.com/api/v1/pgworkout/12345/stream/"
+        );
+        assert_eq!(
+            stream_url("../etc"),
+            Err(XingzheActivityError::InvalidInput)
+        );
+        assert_eq!(stream_url(""), Err(XingzheActivityError::InvalidInput));
+    }
+
+    #[test]
+    fn stream_bundle_uses_lng_lat_and_ms_or_seconds_timestamps() {
+        let stream = serde_json::json!({
+            "location": [[116.4, 39.9], [116.41, 39.91]],
+            "timestamp": [1_700_000_000, 1_700_000_001_000_i64],
+            "altitude": [10, 11],
+            "heartrate": [0, 140]
+        });
+        let bytes = stream_to_health_bundle(
+            "ride-1",
+            "夜骑",
+            1_700_000_000.0,
+            90.0,
+            Some(1200.0),
+            &stream,
+        )
+        .unwrap();
+        let bundle: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(bundle["activityType"], 13);
+        assert_eq!(bundle["route"][0]["longitude"], 116.4);
+        assert_eq!(bundle["route"][0]["latitude"], 39.9);
+        assert_eq!(bundle["route"][0]["timestampMs"], 1_700_000_000_000_i64);
+        assert_eq!(bundle["route"][1]["timestampMs"], 1_700_000_001_000_i64);
+        assert_eq!(
+            bundle["series"]["HKQuantityTypeIdentifierHeartRate"][0]["value"],
+            140.0
+        );
+        let fit = crate::fit::encode_health_workout_bundle_json(&bytes, 28_800).unwrap();
+        assert!(crate::fit::is_valid_fit(&fit));
+    }
+
+    #[test]
+    fn empty_stream_is_rejected() {
+        assert_eq!(
+            stream_to_health_bundle("1", "空", 1.0, 1.0, None, &serde_json::json!({})),
+            Err(XingzheActivityError::EmptyTrack)
+        );
     }
 
     #[test]

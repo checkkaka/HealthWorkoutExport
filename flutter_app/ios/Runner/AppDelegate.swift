@@ -33,5 +33,8 @@ import UIKit
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "SyncFilesPlugin") {
       SyncFilesPlugin.register(with: registrar)
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "FilesPlugin") {
+      FilesPlugin.register(with: registrar)
+    }
   }
 }

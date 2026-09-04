@@ -61,6 +61,73 @@ pub fn merge_fit_sensors(primary: &[u8], supplements: &[&[u8]]) -> Result<Vec<u8
     merge_fit(primary, supplements, &FitMergeOptions::default())
 }
 
+/// 同步上传用：先估时钟偏移再只补传感器；对齐失败时退回绝对时间。
+pub fn merge_fit_for_sync(primary: &[u8], supplements: &[&[u8]]) -> Result<Vec<u8>, FitMergeError> {
+    if supplements.is_empty() {
+        return Ok(primary.to_vec());
+    }
+    let primary_doc = FitDocument::parse(primary)?;
+    let (primary_speeds, primary_distances) = alignment_samples(&primary_doc);
+    let mut offsets = Vec::with_capacity(supplements.len());
+    for data in supplements {
+        let document = FitDocument::parse(data)?;
+        let (speeds, distances) = alignment_samples(&document);
+        let offset = crate::fit_alignment::estimate_fit_offset(
+            &primary_speeds,
+            &speeds,
+            &primary_distances,
+            &distances,
+        )
+        .unwrap_or(0);
+        offsets.push(offset);
+    }
+    merge_fit(
+        primary,
+        supplements,
+        &FitMergeOptions {
+            supplement_mode: FitSupplementMode::SensorsOnly,
+            alignment: FitStaticAlignment::PerFile(offsets),
+        },
+    )
+}
+
+fn alignment_samples(
+    document: &FitDocument,
+) -> (
+    Vec<crate::fit_alignment::FitAlignmentSample>,
+    Vec<crate::fit_alignment::FitAlignmentSample>,
+) {
+    let mut speeds = Vec::new();
+    let mut distances = Vec::new();
+    for (index, message) in document.messages().iter().enumerate() {
+        if message.global_number() != 20 {
+            continue;
+        }
+        let Some(timestamp) = document.read_u32(index, 253) else {
+            continue;
+        };
+        if let Some(speed) = document
+            .read_u16(index, 6)
+            .filter(|value| *value != u16::MAX)
+        {
+            speeds.push(crate::fit_alignment::FitAlignmentSample {
+                timestamp_seconds: timestamp,
+                value: f64::from(speed) / 1_000.0,
+            });
+        }
+        if let Some(distance) = document
+            .read_u32(index, 5)
+            .filter(|value| *value != u32::MAX)
+        {
+            distances.push(crate::fit_alignment::FitAlignmentSample {
+                timestamp_seconds: timestamp,
+                value: f64::from(distance) / 100.0,
+            });
+        }
+    }
+    (speeds, distances)
+}
+
 /// 主源优先的完整 FIT 合并；偏移值会加到每个补源时间戳后再参与对齐。
 pub fn merge_fit(
     primary: &[u8],

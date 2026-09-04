@@ -1,9 +1,11 @@
-enum ActivityDatePreset { days7, days30, thisYear, all, custom }
+enum ActivityDatePreset { today, days7, days30, days90, thisYear, all, custom }
 
 extension ActivityDatePresetValue on ActivityDatePreset {
   String get title => switch (this) {
+    ActivityDatePreset.today => '当天',
     ActivityDatePreset.days7 => '近7天',
     ActivityDatePreset.days30 => '近30天',
+    ActivityDatePreset.days90 => '近90天',
     ActivityDatePreset.thisYear => '今年',
     ActivityDatePreset.all => '全部',
     ActivityDatePreset.custom => '自定义',
@@ -16,8 +18,13 @@ extension ActivityDatePresetValue on ActivityDatePreset {
     DateTime? customEnd,
   }) {
     return switch (this) {
+      ActivityDatePreset.today => DateInterval(
+        _startOfDay(now),
+        _addDays(_startOfDay(now), 1),
+      ),
       ActivityDatePreset.days7 => DateInterval(_addDays(now, -7), now),
       ActivityDatePreset.days30 => DateInterval(_addDays(now, -30), now),
+      ActivityDatePreset.days90 => DateInterval(_addDays(now, -90), now),
       ActivityDatePreset.thisYear => DateInterval(DateTime(now.year), now),
       ActivityDatePreset.all => DateInterval(DateTime(2000), now),
       ActivityDatePreset.custom => _customRange(

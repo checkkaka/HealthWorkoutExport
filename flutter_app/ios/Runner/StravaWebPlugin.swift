@@ -68,6 +68,8 @@ final class StravaWebPlugin: NSObject, FlutterPlugin {
       DispatchQueue.main.async { self.reportCookieReadiness(result: result) }
     case "clearCookies":
       DispatchQueue.main.async { self.clearCookies(result: result) }
+    case "uploadFit":
+      DispatchQueue.main.async { self.uploadFit(arguments: call.arguments, result: result) }
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -473,6 +475,163 @@ final class StravaWebPlugin: NSObject, FlutterPlugin {
       message: SecCopyErrorMessageString(status, nil) as String? ?? "Keychain operation failed",
       details: ["status": Int(status)]
     )
+  }
+
+  private func uploadFit(arguments: Any?, result: @escaping FlutterResult) {
+    dispatchPrecondition(condition: .onQueue(.main))
+    guard operation == .idle else {
+      result(error("web_operation_in_progress", "Strava 网页操作正在进行，请稍后重试", retryable: true))
+      return
+    }
+    guard
+      let arguments = arguments as? [String: Any],
+      let filename = arguments["filename"] as? String,
+      Self.isSafeUploadFilename(filename),
+      let data = Self.fitData(from: arguments["data"]),
+      !data.isEmpty
+    else {
+      result(error("invalid_arguments", "网页上传需要 FIT 字节和安全文件名"))
+      return
+    }
+    let stored = readCookieHeader()
+    if let storedError = stored.error {
+      result(storedError)
+      return
+    }
+    guard let cookieHeader = Self.normalizedStoredCookieHeader(stored.value) else {
+      result(error("web_not_ready", "Strava 网页登录已失效，请重新登录"))
+      return
+    }
+    operation = .probing
+    Task {
+      do {
+        let payload = try await Self.performCookieUpload(
+          data: data,
+          filename: filename,
+          cookieHeader: cookieHeader
+        )
+        await MainActor.run {
+          self.operation = .idle
+          result(payload)
+        }
+      } catch {
+        await MainActor.run {
+          self.operation = .idle
+          result(self.error("web_upload_failed", "Strava 网页上传失败，请重新登录后重试", retryable: true))
+        }
+      }
+    }
+  }
+
+  static func isSafeUploadFilename(_ filename: String) -> Bool {
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+    return !filename.isEmpty
+      && filename.utf8.count <= 128
+      && filename.lowercased().hasSuffix(".fit")
+      && filename.rangeOfCharacter(from: allowed.inverted) == nil
+      && !filename.contains("..")
+  }
+
+  static func extractCSRFToken(from html: String) -> String? {
+    if let range = html.range(of: #"name="csrf-token" content="([^"]+)""#, options: .regularExpression) {
+      let tag = String(html[range])
+      if let tokenRange = tag.range(of: #"content="([^"]+)""#, options: .regularExpression) {
+        let token = String(tag[tokenRange])
+          .replacingOccurrences(of: "content=\"", with: "")
+          .replacingOccurrences(of: "\"", with: "")
+        if !token.isEmpty { return token }
+      }
+    }
+    if let range = html.range(
+      of: #"name="authenticity_token" value="([^"]+)""#,
+      options: .regularExpression
+    ) {
+      let tag = String(html[range])
+      if let tokenRange = tag.range(of: #"value="([^"]+)""#, options: .regularExpression) {
+        let token = String(tag[tokenRange])
+          .replacingOccurrences(of: "value=\"", with: "")
+          .replacingOccurrences(of: "\"", with: "")
+        if !token.isEmpty { return token }
+      }
+    }
+    return nil
+  }
+
+  static func duplicateActivityId(from body: String) -> String? {
+    guard let range = body.range(of: #"/activities/(\d+)"#, options: .regularExpression) else {
+      return nil
+    }
+    let match = String(body[range])
+    return match.split(separator: "/").last.map(String.init)
+  }
+
+  private static func fitData(from value: Any?) -> Data? {
+    if let typed = value as? FlutterStandardTypedData { return typed.data }
+    return value as? Data
+  }
+
+  private static func performCookieUpload(
+    data: Data,
+    filename: String,
+    cookieHeader: String
+  ) async throws -> [String: Any] {
+    let csrf = try await fetchCSRFToken(cookieHeader: cookieHeader)
+    let boundary = "Boundary-\(UUID().uuidString)"
+    var body = Data()
+    func field(_ name: String, _ value: String) {
+      body.append(Data("--\(boundary)\r\n".utf8))
+      body.append(Data("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".utf8))
+      body.append(Data("\(value)\r\n".utf8))
+    }
+    field("_method", "post")
+    field("authenticity_token", csrf)
+    body.append(Data("--\(boundary)\r\n".utf8))
+    body.append(
+      Data("Content-Disposition: form-data; name=\"files[]\"; filename=\"\(filename)\"\r\n".utf8)
+    )
+    body.append(Data("Content-Type: application/octet-stream\r\n\r\n".utf8))
+    body.append(data)
+    body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+    var request = URLRequest(url: URL(string: "https://www.strava.com/upload/files")!)
+    request.httpMethod = "POST"
+    request.httpShouldHandleCookies = false
+    request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+    request.setValue(csrf, forHTTPHeaderField: "X-CSRF-Token")
+    request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
+    request.setValue("https://www.strava.com", forHTTPHeaderField: "Origin")
+    request.setValue("https://www.strava.com/upload/select", forHTTPHeaderField: "Referer")
+    request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+    request.httpBody = body
+    let (respData, response) = try await URLSession.shared.data(for: request)
+    guard let http = response as? HTTPURLResponse else {
+      throw URLError(.badServerResponse)
+    }
+    let text = String(data: respData, encoding: .utf8) ?? ""
+    if text.localizedCaseInsensitiveContains("duplicate") {
+      return [
+        "remoteId": duplicateActivityId(from: text) as Any,
+        "isDuplicate": true,
+      ]
+    }
+    guard (200..<300).contains(http.statusCode) else {
+      throw URLError(.badServerResponse)
+    }
+    return ["isDuplicate": false]
+  }
+
+  private static func fetchCSRFToken(cookieHeader: String) async throws -> String {
+    for path in ["/about", "/upload/select"] {
+      var request = URLRequest(url: URL(string: "https://www.strava.com\(path)")!)
+      request.httpShouldHandleCookies = false
+      request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+      let (data, response) = try await URLSession.shared.data(for: request)
+      guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+        let html = String(data: data, encoding: .utf8),
+        let token = extractCSRFToken(from: html)
+      else { continue }
+      return token
+    }
+    throw URLError(.userAuthenticationRequired)
   }
 
   private func error(

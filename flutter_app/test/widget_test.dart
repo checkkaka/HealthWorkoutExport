@@ -18,6 +18,15 @@ void main() {
     messenger.setMockMethodCallHandler(healthKitChannel, null);
   });
 
+  setUp(() {
+    messenger.setMockMethodCallHandler(healthKitChannel, (call) async {
+      return switch (call.method) {
+        'isAvailable' => false,
+        _ => throw MissingPluginException(call.method),
+      };
+    });
+  });
+
   testWidgets('启动 UI 前先初始化 Rust', (tester) async {
     var initialized = false;
     await startApp(
@@ -60,8 +69,8 @@ void main() {
     expect(find.text('行者活动'), findsAtLeastNWidgets(1));
   });
 
-  testWidgets('非 iOS 平台明确提示 HealthKit 不可用且不调用原生通道', (tester) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+  testWidgets('非 Apple 且非 Android 平台明确提示 HealthKit 不可用且不调用原生通道', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     final calls = <MethodCall>[];
     messenger.setMockMethodCallHandler(healthKitChannel, (call) async {
       calls.add(call);

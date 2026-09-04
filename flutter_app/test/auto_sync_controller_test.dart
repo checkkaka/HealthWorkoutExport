@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:health_workout_export/auto_sync_controller.dart';
 import 'package:health_workout_export/src/rust/api/simple.dart' as rust;
 import 'package:health_workout_export/sync_state_store.dart';
+import 'package:health_workout_export/workout_source.dart';
 
 const _uuid = 'A4B64E8C-0012-4A0B-993E-140FC6B721C0';
 
@@ -356,6 +357,100 @@ void main() {
       messenger.setMockMethodCallHandler(syncChannel, null);
     }
   });
+
+  test('批次同步会合并补源、允许单条补源失败，并按取消停止后续条目', () async {
+    final order = <String>[];
+    WorkoutActivity activity(String id) => WorkoutActivity(
+      id: id,
+      sourceId: WorkoutSourceId.healthkit,
+      title: id,
+      start: DateTime.fromMillisecondsSinceEpoch(1704067200000),
+      end: DateTime.fromMillisecondsSinceEpoch(1704070800000),
+      durationSeconds: 3600,
+      distanceMeters: 1234.5,
+    );
+    final primary = _FakeSource(
+      WorkoutSourceId.healthkit,
+      [activity('one'), activity('two')],
+      Uint8List.fromList(const [1]),
+    );
+    final supplement = _FakeSource(
+      WorkoutSourceId.xingzhe,
+      [activity('one')],
+      Uint8List.fromList(const [2]),
+      failFetchIds: {'one'},
+    );
+    final results = await AutoSyncController(
+      fingerprint:
+          ({
+            required primarySourceId,
+            required primaryActivityId,
+            required startDateUnixSeconds,
+            required supplementSourceIds,
+            required destination,
+          }) => fingerprint,
+      persist: ({required record, required fit}) async {
+        order.add('pending-${record.primaryActivityId}');
+        expect(fit, Uint8List.fromList(const [9]));
+      },
+      upload:
+          ({
+            required logicalOperationId,
+            required fit,
+            required externalId,
+            required filename,
+            required commute,
+          }) async {
+            order.add('upload-$filename');
+            return const rust.StravaUploadFfiResponse(
+              status: rust.StravaUploadFfiStatus.completed,
+              remoteId: '7',
+              isDuplicate: false,
+            );
+          },
+      markUploaded:
+          ({
+            required fingerprint,
+            required updatedAt,
+            required remoteId,
+            required isDuplicate,
+            required distanceMeters,
+            required durationSeconds,
+          }) async {
+            order.add('uploaded');
+          },
+      isLocallyUploaded: (_) async => false,
+      remoteActivities: ({required after, required before}) async => const [],
+      commute: ({distanceMeters, required durationSeconds}) => false,
+      prepareFit:
+          ({
+            required primary,
+            required supplements,
+            required gcjEnabled,
+            virtualPower,
+          }) async {
+            expect(supplements, isEmpty, reason: '补源失败不得拖垮主活动');
+            return rust.PreparedFitResult(
+              data: Uint8List.fromList(const [9]),
+              repairedSpeedCount: 0,
+              rewrittenCoordinateCount: 0,
+              virtualPowerFilledCount: 0,
+              powerSourceVirtual: false,
+            );
+          },
+      matchIndex: ({required primary, required candidates}) =>
+          candidates.isEmpty ? null : 0,
+    ).syncBatch(
+      primary: primary,
+      supplements: [supplement],
+      activities: [activity('one'), activity('two')],
+      cancelled: () => order.contains('uploaded'),
+    );
+
+    expect(results, hasLength(1));
+    expect(results.single.succeeded, isTrue);
+    expect(order, ['pending-one', 'upload-one.fit', 'uploaded']);
+  });
 }
 
 Map<String, Object?> _bundle() => const {
@@ -374,3 +469,35 @@ Map<String, Object?> _bundle() => const {
   'series': <String, Object?>{},
   'route': <Object?>[],
 };
+
+final class _FakeSource implements WorkoutSource {
+  _FakeSource(
+    this.id,
+    this.activities,
+    this.fit, {
+    this.failFetchIds = const {},
+  });
+
+  @override
+  final WorkoutSourceId id;
+  final List<WorkoutActivity> activities;
+  final Uint8List fit;
+  final Set<String> failFetchIds;
+
+  @override
+  Future<bool> isAuthenticated() async => true;
+
+  @override
+  Future<void> logout() async {}
+
+  @override
+  Future<List<WorkoutActivity>> listActivities(interval) async => activities;
+
+  @override
+  Future<Uint8List> fetchFit(WorkoutActivity activity) async {
+    if (failFetchIds.contains(activity.id)) {
+      throw StateError('supplement missing');
+    }
+    return fit;
+  }
+}
