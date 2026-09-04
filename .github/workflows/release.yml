@@ -62,8 +62,6 @@ jobs:
     needs: meta
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    env:
-      ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/upload-keystore.jks
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-flutter-rust
@@ -82,7 +80,8 @@ jobs:
             echo "缺少 ANDROID_KEYSTORE_BASE64" >&2
             exit 1
           fi
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d >"$ANDROID_KEYSTORE_PATH"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/upload-keystore.jks" >>"$GITHUB_ENV"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d >"$RUNNER_TEMP/upload-keystore.jks"
       - name: Add Android Rust targets
         run: rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
       - name: Build signed APKs
@@ -249,11 +248,11 @@ jobs:
             --build-name="${{ needs.meta.outputs.version }}" \
             --build-number="${{ needs.meta.outputs.build_number }}"
           APP="build/macos/Build/Products/Release/health_workout_export.app"
-          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/health_workout_export-macos.zip"
+          ditto -c -k --keepParent "$APP" "build/macos/health_workout_export-macos.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: macos-app
-          path: ${{ runner.temp }}/health_workout_export-macos.zip
+          path: flutter_app/build/macos/health_workout_export-macos.zip
           if-no-files-found: error
           retention-days: 14
 
