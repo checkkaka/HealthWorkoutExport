@@ -25,6 +25,7 @@ xcuserdata/
 
 # 本机代码签名
 Signing.local.xcconfig
+signing/local/
 
 # 编辑器 / Agent
 .idea/

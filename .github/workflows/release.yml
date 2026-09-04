@@ -4,16 +4,12 @@
 #
 # 仓库 Secrets（不要提交证书）：
 #   ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD
-#   IOS_P12_BASE64（Apple Distribution）/ IOS_P12_PASSWORD / IOS_ADHOC_PROFILE_BASE64
-#   MACOS_P12_BASE64（Developer ID Application）/ MACOS_P12_PASSWORD / MACOS_PROVISION_PROFILE_BASE64
+#   IOS_P12_BASE64（Apple Development）/ IOS_P12_PASSWORD / IOS_ADHOC_PROFILE_BASE64（iOS 开发描述文件）
+#   MACOS_P12_BASE64 / MACOS_P12_PASSWORD（可与 iOS 同一份开发证书）
+#   MACOS_PROVISION_PROFILE_BASE64（可选；没有则去掉 HealthKit 后用开发证书签）
 #   APPLE_TEAM_ID
 #
-# 本机转 base64：
-#   base64 -i release.keystore | pbcopy
-#   base64 -i distribution.p12 | pbcopy
-#   base64 -i AdHoc.mobileprovision | pbcopy
-#
-# iOS Ad Hoc 只能装到描述文件里登记过的设备。macOS 包未公证，用户可能需右键打开。
+# iOS 开发描述文件只能装到其中登记过的设备。macOS 包未公证，用户可能需右键打开。
 
 name: Release
 
@@ -150,7 +146,7 @@ jobs:
             echo ""
             echo "CODE_SIGN_STYLE=Manual"
             echo "DEVELOPMENT_TEAM=$APPLE_TEAM_ID"
-            echo "CODE_SIGN_IDENTITY=Apple Distribution"
+            echo "CODE_SIGN_IDENTITY=Apple Development"
             echo "PROVISIONING_PROFILE_SPECIFIER=${{ steps.profile.outputs.name }}"
           } >>flutter_app/ios/Flutter/Release.xcconfig
       - name: Write ExportOptions.plist
@@ -167,11 +163,11 @@ jobs:
             '<dict/>' \
             '</plist>' \
             >"$EXPORT"
-          /usr/libexec/PlistBuddy -c "Add :method string ad-hoc" "$EXPORT"
+          /usr/libexec/PlistBuddy -c "Add :method string development" "$EXPORT"
           /usr/libexec/PlistBuddy -c "Add :teamID string $APPLE_TEAM_ID" "$EXPORT"
           /usr/libexec/PlistBuddy -c "Add :signingStyle string manual" "$EXPORT"
           /usr/libexec/PlistBuddy -c "Add :compileBitcode bool false" "$EXPORT"
-          /usr/libexec/PlistBuddy -c "Add :signingCertificate string Apple Distribution" "$EXPORT"
+          /usr/libexec/PlistBuddy -c "Add :signingCertificate string Apple Development" "$EXPORT"
           /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$EXPORT"
           /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:com.checkkaka.HealthWorkoutExport string '$PROFILE_NAME'" "$EXPORT"
       - name: Build signed IPA
@@ -208,12 +204,14 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z ${MACOS_PROVISION_PROFILE_BASE64:-} ]]; then
-            echo "缺少 MACOS_PROVISION_PROFILE_BASE64" >&2
-            exit 1
+            echo "has_profile=false" >>"$GITHUB_OUTPUT"
+            echo "没有 Mac 描述文件，将去掉 HealthKit 后用 Apple Development 签名"
+            exit 0
           fi
           PROFILE="$RUNNER_TEMP/macos.mobileprovision"
           printf '%s' "$MACOS_PROVISION_PROFILE_BASE64" | base64 --decode >"$PROFILE"
           bash .github/scripts/install-provision-profile.sh "$PROFILE"
+          echo "has_profile=true" >>"$GITHUB_OUTPUT"
       - name: Check Apple team
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -223,22 +221,27 @@ jobs:
             echo "缺少 APPLE_TEAM_ID" >&2
             exit 1
           fi
-          if [[ $APPLE_TEAM_ID != "${{ steps.profile.outputs.team }}" ]]; then
+          if [[ "${{ steps.profile.outputs.has_profile }}" == true && $APPLE_TEAM_ID != "${{ steps.profile.outputs.team }}" ]]; then
             echo "APPLE_TEAM_ID ($APPLE_TEAM_ID) 与描述文件 Team (${{ steps.profile.outputs.team }}) 不一致" >&2
             exit 1
           fi
       - name: Configure macOS manual signing
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          HAS_PROFILE: ${{ steps.profile.outputs.has_profile }}
         run: |
           set -euo pipefail
           {
             echo ""
             echo "CODE_SIGN_STYLE = Manual"
             echo "DEVELOPMENT_TEAM = $APPLE_TEAM_ID"
-            echo "CODE_SIGN_IDENTITY = Developer ID Application"
-            echo "PROVISIONING_PROFILE_SPECIFIER = ${{ steps.profile.outputs.name }}"
+            echo "CODE_SIGN_IDENTITY = Apple Development"
           } >>flutter_app/macos/Runner/Configs/AppInfo.xcconfig
+          if [[ $HAS_PROFILE == true ]]; then
+            echo "PROVISIONING_PROFILE_SPECIFIER = ${{ steps.profile.outputs.name }}" >>flutter_app/macos/Runner/Configs/AppInfo.xcconfig
+          else
+            /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.healthkit' flutter_app/macos/Runner/Release.entitlements || true
+          fi
       - name: Build signed macOS app
         working-directory: flutter_app
         run: |
