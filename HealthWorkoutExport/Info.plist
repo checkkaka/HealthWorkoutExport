@@ -24,6 +24,8 @@
 	<true/>
 	<key>NSHealthShareUsageDescription</key>
 	<string>用于按时间范围读取并导出你的体能训练、心率与路线数据，仅在本机生成文件。</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>用于把行者、顽鹿等运动记录写入苹果健康（体能训练、心率与路线），仅在本机进行。</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

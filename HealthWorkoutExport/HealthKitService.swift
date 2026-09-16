@@ -1,5 +1,6 @@
 import Foundation
 import HealthKit
+import CoreLocation
 
 enum HealthKitServiceError: LocalizedError {
     case unavailable
@@ -9,7 +10,7 @@ enum HealthKitServiceError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unavailable: return "此设备不支持 HealthKit"
-        case .unauthorized: return "未获得健康数据读取权限"
+        case .unauthorized: return "未获得健康数据权限"
         case .queryFailed(let message): return message
         }
     }
@@ -60,10 +61,218 @@ final class HealthKitService: @unchecked Sendable {
         .swimmingStrokeCount
     ]
 
-    /// 请求健康数据读取授权。
-    func requestAuthorization() async throws {
+    private var writeTypes: Set<HKSampleType> {
+        var types: Set<HKSampleType> = [
+            HKObjectType.workoutType(),
+            HKSeriesType.workoutRoute()
+        ]
+        for id in [
+            HKQuantityTypeIdentifier.heartRate,
+            .activeEnergyBurned,
+            .distanceWalkingRunning,
+            .distanceCycling,
+            .distanceSwimming,
+            .runningSpeed,
+            .cyclingSpeed,
+            .cyclingCadence,
+            .runningPower,
+            .cyclingPower
+        ] {
+            if let t = HKObjectType.quantityType(forIdentifier: id) {
+                types.insert(t)
+            }
+        }
+        return types
+    }
+
+    /// 请求健康数据授权。默认只读；写入训练时再要 share 类型，避免改到日常健康页授权。
+    func requestAuthorization(writeWorkouts: Bool = false) async throws {
         guard isHealthDataAvailable else { throw HealthKitServiceError.unavailable }
-        try await store.requestAuthorization(toShare: [], read: readTypes)
+        let share: Set<HKSampleType> = writeWorkouts ? writeTypes : []
+        try await store.requestAuthorization(toShare: share, read: readTypes)
+    }
+
+    /// 时间窗内已有训练，供写入前做接近确认。
+    func nearbyWorkouts(from start: Date, to end: Date) async throws -> [HealthNearbyWorkout] {
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
+        let workouts: [HKWorkout] = try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: .workoutType(),
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [sort]
+            ) { _, samples, error in
+                if let error {
+                    continuation.resume(throwing: HealthKitServiceError.queryFailed(error.localizedDescription))
+                    return
+                }
+                continuation.resume(returning: (samples as? [HKWorkout]) ?? [])
+            }
+            store.execute(query)
+        }
+        return workouts.map { workout in
+            HealthNearbyWorkout(
+                uuid: workout.uuid,
+                startDate: workout.startDate,
+                endDate: workout.endDate,
+                duration: workout.duration,
+                distanceMeters: workout.totalDistance?.doubleValue(for: .meter()),
+                sourceName: workout.sourceRevision.source.name,
+                syncIdentifier: workout.metadata?[HKMetadataKeySyncIdentifier] as? String
+            )
+        }
+    }
+
+    /// 把 FIT 草稿写成一条本 App 来源的健康训练（摘要 + 序列 + 路线）。
+    func save(_ draft: HealthWorkoutDraft) async throws -> UUID {
+        guard isHealthDataAvailable else { throw HealthKitServiceError.unavailable }
+        let configuration = HKWorkoutConfiguration()
+        configuration.activityType = draft.activityType
+        configuration.locationType = draft.locations.count >= 2 ? .outdoor : .indoor
+        let builder = HKWorkoutBuilder(healthStore: store, configuration: configuration, device: .local())
+        var start = draft.start
+        var end = max(draft.end, draft.start.addingTimeInterval(1))
+        let sampleDates = draft.heartRate.map(\.date)
+            + draft.cadence.map(\.date)
+            + draft.power.map(\.date)
+            + draft.speed.map(\.date)
+            + draft.locations.compactMap(\.timestamp)
+            + draft.events.map(\.date)
+        if let earliest = sampleDates.min() { start = min(start, earliest) }
+        if let latest = sampleDates.max() { end = max(end, latest.addingTimeInterval(1)) }
+
+        try await builder.beginCollection(at: start)
+        try await builder.addMetadata([
+            HKMetadataKeySyncIdentifier: draft.fingerprint,
+            HKMetadataKeySyncVersion: NSNumber(value: 1)
+        ])
+
+        var samples: [HKSample] = []
+        samples.append(contentsOf: quantitySamples(
+            identifier: .heartRate,
+            unit: HKUnit.count().unitDivided(by: .minute()),
+            points: draft.heartRate
+        ))
+        if draft.activityType == .cycling {
+            samples.append(contentsOf: quantitySamples(
+                identifier: .cyclingCadence,
+                unit: HKUnit.count().unitDivided(by: .second()),
+                points: draft.cadence,
+                transform: { $0 / 60 }
+            ))
+            samples.append(contentsOf: quantitySamples(
+                identifier: .cyclingPower,
+                unit: .watt(),
+                points: draft.power
+            ))
+            samples.append(contentsOf: quantitySamples(
+                identifier: .cyclingSpeed,
+                unit: HKUnit.meter().unitDivided(by: .second()),
+                points: draft.speed
+            ))
+        } else {
+            samples.append(contentsOf: quantitySamples(
+                identifier: .runningPower,
+                unit: .watt(),
+                points: draft.power
+            ))
+            samples.append(contentsOf: quantitySamples(
+                identifier: .runningSpeed,
+                unit: HKUnit.meter().unitDivided(by: .second()),
+                points: draft.speed
+            ))
+        }
+        if let meters = draft.distanceMeters, meters > 0,
+           let distanceType = distanceIdentifier(for: draft.activityType),
+           let quantityType = HKQuantityType.quantityType(forIdentifier: distanceType) {
+            samples.append(HKQuantitySample(
+                type: quantityType,
+                quantity: HKQuantity(unit: .meter(), doubleValue: meters),
+                start: start,
+                end: end
+            ))
+        }
+        if let kcal = draft.energyKilocalories, kcal > 0,
+           let energyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) {
+            samples.append(HKQuantitySample(
+                type: energyType,
+                quantity: HKQuantity(unit: .kilocalorie(), doubleValue: kcal),
+                start: start,
+                end: end
+            ))
+        }
+        if !samples.isEmpty {
+            try await builder.addSamples(samples)
+        }
+        let events: [HKWorkoutEvent] = draft.events.compactMap { event in
+            let type: HKWorkoutEventType
+            switch event.type {
+            case "pause", "motionPaused": type = .pause
+            case "resume", "motionResumed": type = .resume
+            default: return nil
+            }
+            return HKWorkoutEvent(
+                type: type,
+                dateInterval: DateInterval(start: event.date, duration: 1),
+                metadata: nil
+            )
+        }
+        if !events.isEmpty {
+            try await builder.addWorkoutEvents(events)
+        }
+        try await builder.endCollection(at: end)
+        guard let workout = try await builder.finishWorkout() else {
+            throw HealthKitServiceError.queryFailed("写入健康失败")
+        }
+        let locations = draft.locations.compactMap { point -> CLLocation? in
+            let timestamp = point.timestamp ?? start
+            return CLLocation(
+                coordinate: CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude),
+                altitude: point.altitude ?? 0,
+                horizontalAccuracy: 5,
+                verticalAccuracy: point.altitude == nil ? -1 : 3,
+                timestamp: timestamp
+            )
+        }
+        if locations.count >= 2 {
+            do {
+                let routeBuilder = HKWorkoutRouteBuilder(healthStore: store, device: .local())
+                for chunk in stride(from: 0, to: locations.count, by: 100) {
+                    let endIndex = min(chunk + 100, locations.count)
+                    try await routeBuilder.insertRouteData(Array(locations[chunk..<endIndex]))
+                }
+                _ = try await routeBuilder.finishRoute(with: workout, metadata: nil)
+            } catch {
+                // ponytail: 路线失败时训练已落盘（带 sync id）。再抛会让上层记失败，下次 alreadyImported 跳过，GPS 再也补不上。
+            }
+        }
+        return workout.uuid
+    }
+
+    private func distanceIdentifier(for type: HKWorkoutActivityType) -> HKQuantityTypeIdentifier? {
+        switch type {
+        case .cycling: return .distanceCycling
+        case .swimming: return .distanceSwimming
+        default: return .distanceWalkingRunning
+        }
+    }
+
+    private func quantitySamples(
+        identifier: HKQuantityTypeIdentifier,
+        unit: HKUnit,
+        points: [TimedSample],
+        transform: (Double) -> Double = { $0 }
+    ) -> [HKQuantitySample] {
+        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else { return [] }
+        return points.map { point in
+            HKQuantitySample(
+                type: type,
+                quantity: HKQuantity(unit: unit, doubleValue: transform(point.value)),
+                start: point.date,
+                end: point.date
+            )
+        }
     }
 
     /// 按时间范围查询训练摘要列表（不含样本明细）。

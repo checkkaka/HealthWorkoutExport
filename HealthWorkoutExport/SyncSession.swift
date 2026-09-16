@@ -60,6 +60,10 @@ struct SyncJobConfig: Equatable, Sendable {
     /// 本批自定义 Strava 标题；空则通勤用「通勤🚲」，其它用源标题。
     var customTitle: String? = nil
     var previewPolicy: SyncPreviewPolicy = .saved
+    /// 是否上传 Strava；默认开，保持现有同步行为。
+    var uploadToStrava: Bool = true
+    /// 是否写入苹果健康；可与 Strava 同时执行或单独执行。
+    var writeToAppleHealth: Bool = false
 }
 
 /// App 级同步会话：进度跨页面可见，支持取消、继续与整批重试。
@@ -78,16 +82,19 @@ final class SyncSession {
     /// 供界面展示；真正决策走 UIKit 置顶弹窗，避免 sheet 挡住。
     var duplicatePrompt: StravaDuplicatePrompt?
     private var duplicateContinuation: CheckedContinuation<StravaDuplicateDecision, Never>?
+    var healthNearbyPrompt: AppleHealthNearbyPrompt?
+    private var healthNearbyContinuation: CheckedContinuation<AppleHealthNearbyDecision, Never>?
     var previewPrompt: SyncPreviewPrompt?
     private var previewContinuation: CheckedContinuation<SyncPreviewDecision, Never>?
     private weak var duplicateAlert: UIAlertController?
+    private weak var healthNearbyAlert: UIAlertController?
     private var runningTask: Task<Void, Never>?
     private let engine = AutoSyncEngine()
 
     private init() {}
 
     func start(_ job: SyncJobConfig) {
-        guard !isRunning else { return }
+        guard !isRunning, job.uploadToStrava || job.writeToAppleHealth else { return }
         lastJob = job
         wasInterrupted = false
         lastError = nil
@@ -101,36 +108,72 @@ final class SyncSession {
                 self.runningTask = nil
             }
             do {
-                // 调用 AutoSyncEngine.run：按任务配置执行同步。
-                let result = try await engine.run(
-                    primarySourceId: job.primarySourceId,
-                    supplementSourceIds: job.supplementSourceIds,
-                    mode: job.mode,
-                    historyRange: job.historyRange,
-                    customStart: job.customStart,
-                    customEnd: job.customEnd,
-                    skipIfHistoryExists: job.skipIfHistoryExists,
-                    selectedActivityIds: job.selectedActivityIds,
-                    selectedStart: job.selectedStart,
-                    selectedEnd: job.selectedEnd,
-                    customTitle: job.customTitle,
-                    previewPolicy: job.previewPolicy,
-                    onProgress: { [weak self] p in
-                        self?.progress = p
-                    },
-                    onDuplicate: { [weak self] prompt in
-                        guard let self else { return .skip }
-                        return await self.awaitDuplicateDecision(prompt)
-                    },
-                    onPreview: { [weak self] prompt in
-                        guard let self else { return .skip }
-                        return await self.awaitPreviewDecision(prompt)
+                var text = ""
+                if job.uploadToStrava {
+                    // 调用 AutoSyncEngine.run：按任务配置上传 Strava。
+                    let result = try await engine.run(
+                        primarySourceId: job.primarySourceId,
+                        supplementSourceIds: job.supplementSourceIds,
+                        mode: job.mode,
+                        historyRange: job.historyRange,
+                        customStart: job.customStart,
+                        customEnd: job.customEnd,
+                        skipIfHistoryExists: job.skipIfHistoryExists,
+                        selectedActivityIds: job.selectedActivityIds,
+                        selectedStart: job.selectedStart,
+                        selectedEnd: job.selectedEnd,
+                        customTitle: job.customTitle,
+                        previewPolicy: job.previewPolicy,
+                        onProgress: { [weak self] p in
+                            self?.progress = p
+                        },
+                        onDuplicate: { [weak self] prompt in
+                            guard let self else { return .skip }
+                            return await self.awaitDuplicateDecision(prompt)
+                        },
+                        onPreview: { [weak self] prompt in
+                            guard let self else { return .skip }
+                            return await self.awaitPreviewDecision(prompt)
+                        }
+                    )
+                    try Task.checkCancellation()
+                    text = "Strava：上传 \(result.uploaded)，去重 \(result.deduped)，失败 \(result.failed)。"
+                    if !result.notes.isEmpty {
+                        text += "\n" + result.notes.prefix(8).joined(separator: "\n")
                     }
-                )
-                try Task.checkCancellation()
-                var text = "完成：上传 \(result.uploaded)，去重 \(result.deduped)，失败 \(result.failed)。"
-                if !result.notes.isEmpty {
-                    text += "\n" + result.notes.prefix(8).joined(separator: "\n")
+                }
+                if job.writeToAppleHealth, job.primarySourceId != HealthKitDataSource.sourceId {
+                    do {
+                        let health = try await AppleHealthImportPass().run(
+                            job: job,
+                            progressSeed: self.progress,
+                            onProgress: { [weak self] p in
+                                self?.progress = p
+                            },
+                            onNearby: { [weak self] prompt in
+                                guard let self else { return .skipOnce }
+                                return await self.awaitHealthNearbyDecision(prompt)
+                            }
+                        )
+                        if !text.isEmpty { text += "\n" }
+                        text += "健康：写入 \(health.written)，跳过 \(health.skipped)，失败 \(health.failed)。"
+                        if !health.notes.isEmpty {
+                            text += "\n" + health.notes.prefix(8).joined(separator: "\n")
+                        }
+                    } catch is CancellationError {
+                        self.lastResultText = text
+                        self.wasInterrupted = true
+                        self.lastError = job.uploadToStrava
+                            ? "健康写入已取消，Strava 已完成。可再开同步补写健康。"
+                            : "健康写入已取消。"
+                        self.resolveHealthNearby(.cancelBatch)
+                        return
+                    } catch {
+                        text += "\n健康写入出错：\(error.localizedDescription)"
+                        self.lastResultText = text
+                        self.wasInterrupted = false
+                        return
+                    }
                 }
                 self.lastResultText = text
                 self.wasInterrupted = false
@@ -139,18 +182,25 @@ final class SyncSession {
                 self.lastError = "同步已取消，可点「继续上次同步」接着跑（已上传的会跳过）"
                 self.resolveDuplicate(.skip)
                 self.resolvePreview(.stopBatch)
+                self.resolveHealthNearby(.cancelBatch)
             } catch {
                 self.wasInterrupted = true
                 self.lastError = error.localizedDescription
                 self.resolveDuplicate(.skip)
                 self.resolvePreview(.stopBatch)
+                self.resolveHealthNearby(.cancelBatch)
             }
         }
     }
 
     /// 勾选重传：默认覆盖不弹窗；与普通自动同步互斥。
-    func startResync(fingerprints: [String], customTitle: String? = nil) {
-        guard !isRunning else { return }
+    func startResync(
+        fingerprints: [String],
+        customTitle: String? = nil,
+        uploadToStrava: Bool = true,
+        writeToAppleHealth: Bool = false
+    ) {
+        guard !isRunning, uploadToStrava || writeToAppleHealth else { return }
         guard !fingerprints.isEmpty else { return }
         wasInterrupted = false
         lastError = nil
@@ -164,17 +214,38 @@ final class SyncSession {
                 self.runningTask = nil
             }
             do {
-                // 调用 AutoSyncEngine.resyncFingerprints：只重传勾选记录。
-                let result = try await engine.resyncFingerprints(
-                    fingerprints,
-                    customTitle: customTitle
-                ) { [weak self] p in
-                    self?.progress = p
+                var text = ""
+                if uploadToStrava {
+                    // 调用 AutoSyncEngine.resyncFingerprints：只重传勾选记录。
+                    let result = try await engine.resyncFingerprints(
+                        fingerprints,
+                        customTitle: customTitle
+                    ) { [weak self] p in
+                        self?.progress = p
+                    }
+                    try Task.checkCancellation()
+                    text = "Strava：上传 \(result.uploaded)，去重 \(result.deduped)，失败 \(result.failed)。"
+                    if !result.notes.isEmpty {
+                        text += "\n" + result.notes.prefix(8).joined(separator: "\n")
+                    }
                 }
-                try Task.checkCancellation()
-                var text = "勾选重传完成：上传 \(result.uploaded)，去重 \(result.deduped)，失败 \(result.failed)。"
-                if !result.notes.isEmpty {
-                    text += "\n" + result.notes.prefix(8).joined(separator: "\n")
+                if writeToAppleHealth {
+                    let health = try await AppleHealthImportPass().run(
+                        fingerprints: fingerprints,
+                        progressSeed: self.progress,
+                        onProgress: { [weak self] p in
+                            self?.progress = p
+                        },
+                        onNearby: { [weak self] prompt in
+                            guard let self else { return .skipOnce }
+                            return await self.awaitHealthNearbyDecision(prompt)
+                        }
+                    )
+                    if !text.isEmpty { text += "\n" }
+                    text += "健康：写入 \(health.written)，跳过 \(health.skipped)，失败 \(health.failed)。"
+                    if !health.notes.isEmpty {
+                        text += "\n" + health.notes.prefix(8).joined(separator: "\n")
+                    }
                 }
                 self.lastResultText = text
                 self.wasInterrupted = false
@@ -209,6 +280,7 @@ final class SyncSession {
         progress.message = "正在取消…"
         resolveDuplicate(.skip)
         resolvePreview(.stopBatch)
+        resolveHealthNearby(.cancelBatch)
     }
 
     func resolveDuplicate(_ decision: StravaDuplicateDecision) {
@@ -249,6 +321,67 @@ final class SyncSession {
             previewContinuation = continuation
             previewPrompt = prompt
         }
+    }
+
+    func resolveHealthNearby(_ decision: AppleHealthNearbyDecision) {
+        if let alert = healthNearbyAlert {
+            healthNearbyAlert = nil
+            alert.dismiss(animated: true)
+        }
+        guard let continuation = healthNearbyContinuation else {
+            healthNearbyPrompt = nil
+            return
+        }
+        healthNearbyContinuation = nil
+        healthNearbyPrompt = nil
+        continuation.resume(returning: decision)
+    }
+
+    private func awaitHealthNearbyDecision(_ prompt: AppleHealthNearbyPrompt) async -> AppleHealthNearbyDecision {
+        await withCheckedContinuation { continuation in
+            healthNearbyContinuation = continuation
+            healthNearbyPrompt = prompt
+            presentHealthNearbyAlert(prompt)
+        }
+    }
+
+    private func presentHealthNearbyAlert(_ prompt: AppleHealthNearbyPrompt) {
+        guard let host = topViewController() else {
+            resolveHealthNearby(.skipOnce)
+            return
+        }
+        let alert = UIAlertController(
+            title: "健康已有接近训练：\(prompt.activityTitle)",
+            message: "\(prompt.nearbySummary)\n「本批一律…」只对这次同步的健康写入有效，不影响 Strava。",
+            preferredStyle: .actionSheet
+        )
+        alert.addAction(UIAlertAction(title: "写入", style: .default) { [weak self] _ in
+            self?.healthNearbyAlert = nil
+            self?.resolveHealthNearby(.write)
+        })
+        alert.addAction(UIAlertAction(title: "本批都写", style: .default) { [weak self] _ in
+            self?.healthNearbyAlert = nil
+            self?.resolveHealthNearby(.writeRestOfBatch)
+        })
+        alert.addAction(UIAlertAction(title: "跳过", style: .default) { [weak self] _ in
+            self?.healthNearbyAlert = nil
+            self?.resolveHealthNearby(.skip)
+        })
+        alert.addAction(UIAlertAction(title: "本批都跳过", style: .default) { [weak self] _ in
+            self?.healthNearbyAlert = nil
+            self?.resolveHealthNearby(.skipRestOfBatch)
+        })
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel) { [weak self] _ in
+            self?.healthNearbyAlert = nil
+            self?.resolveHealthNearby(.skipOnce)
+        })
+        if let pop = alert.popoverPresentationController {
+            pop.sourceView = host.view
+            pop.sourceRect = CGRect(x: host.view.bounds.midX, y: host.view.bounds.midY, width: 1, height: 1)
+            pop.permittedArrowDirections = []
+        }
+        healthNearbyAlert = alert
+        host.present(alert, animated: true)
     }
 
     /// 用 key window 最顶层 VC 弹 ActionSheet，不被自动同步/同步记录 sheet 挡住。
