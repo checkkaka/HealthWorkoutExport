@@ -18,6 +18,9 @@ bool Json(const std::string& value) {
 
 int main() {
   using namespace native_channels;
+  for (const auto* method : {"readHealthPreparedFit", "writeHealthPreparedFit", "deleteHealthPreparedFit"})
+    Check(IsHealthPreparedFitMethod(method), "health preparation method is recognized separately");
+  Check(!IsHealthPreparedFitMethod("readSyncedFit"), "uploaded archive is not health preparation");
   Check(IsFingerprint(std::string(64, 'a')), "lowercase fingerprint accepted");
   Check(IsFingerprint(std::string(64, '0')), "numeric fingerprint accepted");
   for (const auto& value : {std::string(), std::string(63, 'a'), std::string(65, 'a'),

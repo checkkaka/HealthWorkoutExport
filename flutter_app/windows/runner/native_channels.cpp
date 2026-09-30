@@ -429,12 +429,12 @@ void HandleSyncFiles(const Call& call, Result* result) {
     filename = L"auto-sync-batch.json"; limit = 4 * 1024 * 1024; json = true;
   } else if (method == "readState" || method == "writeState" || method == "deleteState") {
     filename = L"sync_state.json"; limit = native_channels::kStateLimit; json = true;
-  } else if (method == "readSyncedFit" || method == "writeSyncedFit" || method == "deleteSyncedFit" ||
+  } else if (native_channels::IsHealthPreparedFitMethod(method) || method == "readSyncedFit" || method == "writeSyncedFit" || method == "deleteSyncedFit" ||
              method == "readRecovery" || method == "writeRecovery" || method == "deleteRecovery") {
     const auto* fingerprint = Text(call, "fingerprint");
     if (!fingerprint || !native_channels::IsFingerprint(*fingerprint)) { Invalid(result); return; }
     json = method.find("Recovery") != std::string::npos;
-    directory = json ? L"pending_resync" : L"synced_fits";
+    directory = native_channels::IsHealthPreparedFitMethod(method) ? L"health_prepared" : (json ? L"pending_resync" : L"synced_fits");
     filename = Wide(*fingerprint) + (json ? L".json" : L".fit");
     limit = json ? native_channels::kRecoveryLimit : native_channels::kFitLimit;
   } else { result->NotImplemented(); return; }

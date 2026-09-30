@@ -240,6 +240,7 @@ class NativeChannels {
             if (kind == "batch") return File(root, "auto-sync-batch.json")
             val fingerprint = call.argument<String>("fingerprint")
             require(fingerprint != null && fingerprint.matches(Regex("^[a-f0-9]{64}$")))
+            if (kind == "health") return NativeSyncFiles.healthPreparedFile(root, fingerprint)
             return if (kind == "fit") File(root, "synced_fits/$fingerprint.fit")
                 else File(root, "pending_resync/$fingerprint.json")
         }
@@ -252,6 +253,7 @@ class NativeChannels {
         val operations = mapOf(
             "readBatchSession" to ("read" to "batch"), "writeBatchSession" to ("write" to "batch"), "deleteBatchSession" to ("delete" to "batch"),
             "readState" to ("read" to "state"), "writeState" to ("write" to "state"), "deleteState" to ("delete" to "state"),
+            "readHealthPreparedFit" to ("read" to "health"), "writeHealthPreparedFit" to ("write" to "health"), "deleteHealthPreparedFit" to ("delete" to "health"),
             "readSyncedFit" to ("read" to "fit"), "writeSyncedFit" to ("write" to "fit"), "deleteSyncedFit" to ("delete" to "fit"),
             "readRecovery" to ("read" to "recovery"), "writeRecovery" to ("write" to "recovery"), "deleteRecovery" to ("delete" to "recovery"),
         )
@@ -260,7 +262,7 @@ class NativeChannels {
             val (verb, kind) = operation
             val file = fileFor(kind)
             val maximum = when (kind) {
-                "fit" -> NativeSyncFiles.MAX_FIT_BYTES
+                "fit", "health" -> NativeSyncFiles.MAX_FIT_BYTES
                 "state" -> NativeSyncFiles.MAX_STATE_BYTES
                 "recovery" -> NativeSyncFiles.MAX_RECOVERY_BYTES
                 else -> NativeSyncFiles.MAX_JSON_BYTES
@@ -268,7 +270,7 @@ class NativeChannels {
             when (verb) {
                 "read" -> {
                     val bytes = NativeSyncFiles.read(file, maximum)
-                    if (kind != "fit") {
+                    if (kind != "fit" && kind != "health") {
                         try { requireJsonObject(bytes) }
                         catch (_: Exception) { result.error("sync_file_corrupt", "同步文件不是有效的 JSON 对象", null); return }
                     }
@@ -277,7 +279,7 @@ class NativeChannels {
                 "write" -> {
                     val bytes = call.bytes()
                     if (bytes.size > maximum) { result.error("sync_file_too_large", "同步文件超过大小限制", null); return }
-                    if (kind != "fit") {
+                    if (kind != "fit" && kind != "health") {
                         try { requireJsonObject(bytes) }
                         catch (_: Exception) { result.error("invalid_json", "写入的同步文件不是 JSON 对象", null); return }
                     }

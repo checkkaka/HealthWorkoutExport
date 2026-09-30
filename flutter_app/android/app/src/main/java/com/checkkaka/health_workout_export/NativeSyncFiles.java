@@ -21,6 +21,13 @@ public final class NativeSyncFiles {
     public static final int MAX_FIT_BYTES = 64 * 1024 * 1024;
     private NativeSyncFiles() {}
 
+    public static File healthPreparedFile(File root, String fingerprint) {
+        if (fingerprint == null || !fingerprint.matches("^[a-f0-9]{64}$")) {
+            throw new IllegalArgumentException("Invalid fingerprint");
+        }
+        return new File(root, "health_prepared/" + fingerprint + ".fit");
+    }
+
     public static byte[] read(File file, int maximumBytes) throws IOException {
         rejectSymlink(file.toPath());
         if (!file.exists()) throw new FileNotFoundException("Missing sync file");

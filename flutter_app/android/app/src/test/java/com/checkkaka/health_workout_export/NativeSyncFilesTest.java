@@ -50,6 +50,21 @@ public class NativeSyncFilesTest {
         } finally { removeTree(root); }
     }
 
+    @Test public void healthPreparedDoesNotOverwriteUploadedFit() throws Exception {
+        Path root = Files.createTempDirectory("health-prepared-test-");
+        try {
+            String fingerprint = "a".repeat(64);
+            File uploaded = root.resolve("synced_fits/" + fingerprint + ".fit").toFile();
+            File health = NativeSyncFiles.healthPreparedFile(root.toFile(), fingerprint);
+            NativeSyncFiles.write(uploaded, new byte[]{1,2,3}, NativeSyncFiles.MAX_FIT_BYTES);
+            NativeSyncFiles.write(health, new byte[]{8,9}, NativeSyncFiles.MAX_FIT_BYTES);
+            assertArrayEquals(new byte[]{1,2,3}, NativeSyncFiles.read(uploaded, NativeSyncFiles.MAX_FIT_BYTES));
+            assertEquals("health_prepared", health.getParentFile().getName());
+            NativeSyncFiles.delete(health);
+            assertTrue(uploaded.exists());
+        } finally { removeTree(root); }
+    }
+
     private static void removeTree(Path root) throws IOException {
         try (java.util.stream.Stream<Path> paths = Files.walk(root)) {
             for (Path path : paths.sorted(Comparator.reverseOrder()).toArray(Path[]::new)) Files.deleteIfExists(path);

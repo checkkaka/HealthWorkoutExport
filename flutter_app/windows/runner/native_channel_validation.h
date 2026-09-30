@@ -29,6 +29,9 @@ inline bool IsActivityId(std::string_view value) {
   return !value.empty() && value.size() <= 32 &&
          std::all_of(value.begin(), value.end(), [](char c) { return c >= '0' && c <= '9'; });
 }
+inline bool IsHealthPreparedFitMethod(std::string_view method) {
+  return method == "readHealthPreparedFit" || method == "writeHealthPreparedFit" || method == "deleteHealthPreparedFit";
+}
 inline bool IsPreferenceKey(std::string_view key) {
   return key == "strava.uploadMode" || key == "strava.gcjCorrectionEnabled" ||
          key == "virtualPower.enabled" || key == "virtualPower.includeInertia" ||
