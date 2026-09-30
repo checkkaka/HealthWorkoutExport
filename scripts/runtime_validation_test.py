@@ -107,11 +107,11 @@ class RuntimeValidationTests(unittest.TestCase):
         runtime = module()
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)
-            payload = {"phase": "seed", "pid": 123, "checks": ["bundled-rust-ffi-encode-and-preview", "native-health-capability-probe-no-authorization", "production-root-tabs-navigation-and-back", "native-preferences-roundtrip", "automatic-alignment-rejects-underconstrained-fixture", "synthetic-file-selection-cancel-real-fit-import-rust-merge-export", "real-detail-preview-export-cancel-and-return", "durable-recovery-seed-before-host-process-termination"], "screenshots": ["screen.png"]}
+            payload = {"phase": "seed", "phaseCompleted": True, "pid": 123, "checks": ["bundled-rust-ffi-encode-and-preview", "native-health-capability-probe-no-authorization", "production-root-tabs-navigation-and-back", "native-preferences-roundtrip", "automatic-alignment-rejects-underconstrained-fixture", "synthetic-file-selection-cancel-real-fit-import-rust-merge-export", "real-detail-preview-export-cancel-and-return", "durable-recovery-seed-before-host-process-termination"], "screenshots": ["durable-seed.png"]}
             (folder / "results.json").write_text(json.dumps(payload))
             with self.assertRaisesRegex(RuntimeError, "screenshot"):
                 runtime.validate_report(folder, "seed")
-            (folder / "screen.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"evidence")
+            (folder / "durable-seed.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"evidence")
             self.assertEqual(runtime.validate_report(folder, "seed")["pid"], 123)
             with self.assertRaisesRegex(RuntimeError, "phase"):
                 runtime.validate_report(folder, "verify")
@@ -120,10 +120,36 @@ class RuntimeValidationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "checks"):
                 runtime.validate_report(folder, "seed")
 
+    def test_driver_success_text_cannot_mask_framework_failure(self):
+        runtime = module()
+        for log in ("I/flutter (3520): runtime startup [E]\nAll tests passed.",
+                    "I/flutter (3520): TimeoutException: Test timed out after 4 minutes.\nAll tests passed.",
+                    "I/flutter (3520): 04:11 +0 -1: (tearDownAll)\nAll tests passed."):
+            with self.assertRaisesRegex(RuntimeError, "framework failure"):
+                runtime.validate_test_log(log)
+        runtime.validate_test_log("00:01 +1: test passed\nAll tests passed.")
+
+    def test_complete_checklist_cannot_mask_late_timeout(self):
+        runtime = module()
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            payload = {"phase": "startup", "pid": 123,
+                "checks": ["bundled-rust-ffi-encode-and-preview", "native-health-capability-probe-no-authorization", "production-root-tabs-navigation-and-back", "native-preferences-roundtrip"],
+                "screenshots": ["root-startup.png"]}
+            (folder / "root-startup.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"evidence")
+            for completed in (None, False, "true"):
+                payload["phaseCompleted"] = completed
+                (folder / "results.json").write_text(json.dumps(payload))
+                with self.assertRaisesRegex(RuntimeError, "completion"):
+                    runtime.validate_report(folder, "startup")
+            payload["phaseCompleted"] = True
+            (folder / "results.json").write_text(json.dumps(payload))
+            self.assertTrue(runtime.validate_report(folder, "startup")["phaseCompleted"])
+
     def test_report_rejects_paths_outside_phase_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)
-            (folder / "results.json").write_text(json.dumps({"phase": "seed", "pid": 123, "checks": ["bundled-rust-ffi-encode-and-preview", "native-health-capability-probe-no-authorization", "production-root-tabs-navigation-and-back", "native-preferences-roundtrip", "automatic-alignment-rejects-underconstrained-fixture", "synthetic-file-selection-cancel-real-fit-import-rust-merge-export", "real-detail-preview-export-cancel-and-return", "durable-recovery-seed-before-host-process-termination"], "screenshots": ["../secret.png"]}))
+            (folder / "results.json").write_text(json.dumps({"phase": "seed", "phaseCompleted": True, "pid": 123, "checks": ["bundled-rust-ffi-encode-and-preview", "native-health-capability-probe-no-authorization", "production-root-tabs-navigation-and-back", "native-preferences-roundtrip", "automatic-alignment-rejects-underconstrained-fixture", "synthetic-file-selection-cancel-real-fit-import-rust-merge-export", "real-detail-preview-export-cancel-and-return", "durable-recovery-seed-before-host-process-termination"], "screenshots": ["../secret.png"]}))
             with self.assertRaisesRegex(RuntimeError, "screenshot"):
                 module().validate_report(folder, "seed")
 

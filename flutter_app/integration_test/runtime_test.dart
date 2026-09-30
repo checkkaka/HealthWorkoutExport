@@ -188,13 +188,14 @@ void main() {
     expect(tester.takeException(), isNull);
     binding.reportData = {
       'phase': phase,
+      'phaseCompleted': true,
       'phaseBudgetSeconds': phaseBudget.inSeconds,
       'pid': pid,
       'runtimeProfile': syntheticMacHealth
           ? 'macos-synthetic-health-debug'
           : 'instrumented-native-root',
-      'checks': checks,
-      'screenshots': screenshots,
+      'checks': List<String>.of(checks),
+      'screenshots': List<Map<String, String>>.of(screenshots),
       'boundaries': [
         if (syntheticMacHealth)
           'macOS reduced-entitlement Debug test artifact; production HealthKit signed launch unverified',

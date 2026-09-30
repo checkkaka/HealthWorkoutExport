@@ -87,6 +87,13 @@ def drive_command(device, phase):
     ]
 
 
+def validate_test_log(output):
+    # integration_test can miss test-api timeouts in its success response.
+    # Reject explicit framework failures even when the driver exits zero.
+    if re.search(r"\[E\]|Test timed out after|\+\d+\s+-[1-9]\d*:", output):
+        raise RuntimeError("Runtime framework failure in Flutter log; driver success is insufficient")
+
+
 def validate_report(folder, phase):
     file = folder / "results.json"
     if not file.is_file():
@@ -96,6 +103,8 @@ def validate_report(folder, phase):
         raise RuntimeError(f"Unexpected report phase: {report.get('phase')}")
     if not isinstance(report.get("pid"), int) or report["pid"] <= 0:
         raise RuntimeError("Missing target app process identity")
+    if report.get("phaseCompleted") is not True:
+        raise RuntimeError("Missing positive phase completion evidence")
     expected_checks = {
         "bundled-rust-ffi-encode-and-preview",
         "native-health-capability-probe-no-authorization",
@@ -111,7 +120,7 @@ def validate_report(folder, phase):
             "durable-recovery-seed-before-host-process-termination",
         })
     if phase == "verify":
-        expected_checks.add("new-process-native-files-preferences-and-production-session-restoration")
+        expected_checks.update({"new-process-native-files-preferences-and-production-session-restoration", "synthetic-runtime-data-cleanup"})
     checks = report.get("checks")
     if not isinstance(checks, list) or not all(isinstance(item, str) for item in checks):
         raise RuntimeError("Invalid runtime checks report")
@@ -130,6 +139,9 @@ def validate_report(folder, phase):
         image = folder / name
         if not image.is_file() or not image.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
             raise RuntimeError(f"Missing or invalid screenshot: {name}")
+    final_screenshot = "durable-seed.png" if phase == "seed" else f"root-{phase}.png"
+    if final_screenshot not in screenshots:
+        raise RuntimeError("Missing final phase screenshot")
     return report
 
 
@@ -408,7 +420,8 @@ class Runner:
                     # Official Flutter drive_service treats an explicit binary as
                     # prebuilt, so it cannot rebuild using production entitlements.
                     arguments.extend([f"--use-application-binary={binary}", "--dart-define=HWE_SYNTHETIC_HEALTH_RUNTIME=true"])
-                self.command(arguments, f"{phase}/flutter-drive.log", timeout=1800, cwd=APP)
+                drive_output = self.command(arguments, f"{phase}/flutter-drive.log", timeout=1800, cwd=APP)
+                validate_test_log(drive_output)
                 reports[phase] = validate_report(phase_folder, phase)
                 expected_profile = "macos-synthetic-health-debug" if self.platform == "macos" else "instrumented-native-root"
                 if reports[phase].get("runtimeProfile") != expected_profile:

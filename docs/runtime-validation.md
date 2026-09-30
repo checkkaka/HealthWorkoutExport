@@ -105,3 +105,10 @@ Android's on-device phase budget is 12 minutes (other platforms: 4), reported in
 each result. The driver remains bounded at 15 minutes and the host command at
 30 minutes. All required checks still must finish. Software-emulated frame timing
 is infrastructure evidence, not a claim about physical-device app performance.
+
+Acceptance requires an explicit final phase-completion marker written only after
+all awaited screenshots/cleanup and Flutter exception checks. Partial reports are
+retained for diagnosis but cannot pass, even if their mutable checklist is full.
+The host also rejects Flutter framework failure/timeout output when the official
+integration driver incorrectly reports success. Verify requires cleanup, and
+each phase requires its final screenshot.
