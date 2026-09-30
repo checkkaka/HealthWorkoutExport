@@ -44,6 +44,10 @@ def synthetic_health_entitlements(original, configuration):
     return {key: value for key, value in original.items() if key != "com.apple.developer.healthkit"}
 
 
+def android_ready(boot_property, package_service):
+    return boot_property.strip() == "1" and package_service.strip().startswith("package:")
+
+
 def android_acceleration(kvm_accessible):
     # Official documented software emulation is a distinct execution mode; it
     # never accesses KVM or changes host permissions when acceleration is absent.
@@ -139,6 +143,7 @@ class Runner:
         self.emulator = None
         self.emulator_log = None
         self.adb = None
+        self.android_binaries = {}
         self.simulator_booted = False
         self.summary = {"platform": platform, "status": "running", "phases": []}
 
@@ -181,6 +186,8 @@ class Runner:
             "windows": "x86_64-pc-windows-msvc",
         }[self.platform]
         if self.platform == "android":
+            self.command(["rustup", "target", "add", "--toolchain", "1.98.1", target], "rust-target.log", timeout=600)
+            self.command(["cargo", "fetch", "--manifest-path", "rust/workout_core/Cargo.toml", "--locked"], "cargo-fetch.log", timeout=600)
             self.prepare_android()
         elif self.platform == "ios":
             self.prepare_ios()
@@ -195,8 +202,9 @@ class Runner:
             values = desktop.strip().splitlines()
             if len(values) < 2 or values[0].strip().lower() != "true" or int(values[1]) == 0:
                 raise RuntimeError("No interactive Windows desktop session; refusing a headless/mock replacement")
-        self.command(["rustup", "target", "add", "--toolchain", "1.98.1", target], "rust-target.log", timeout=600)
-        self.command(["cargo", "fetch", "--manifest-path", "rust/workout_core/Cargo.toml", "--locked"], "cargo-fetch.log", timeout=600)
+        if self.platform != "android":
+            self.command(["rustup", "target", "add", "--toolchain", "1.98.1", target], "rust-target.log", timeout=600)
+            self.command(["cargo", "fetch", "--manifest-path", "rust/workout_core/Cargo.toml", "--locked"], "cargo-fetch.log", timeout=600)
         self.command(["flutter", "--suppress-analytics", "devices", "--machine"], "flutter-devices.json")
 
     def prepare_android(self):
@@ -233,6 +241,8 @@ class Runner:
         if "no-metrics" not in help_text:
             raise RuntimeError("Installed emulator does not advertise the required metrics-disable switch")
         self.command([emulator, "-no-metrics", "-version"], "android-emulator-version.log")
+        # Do not make an unaccelerated guest compete with Rust/Gradle compilers.
+        self.build_android_phases()
         self.emulator_log = (self.output / "android-emulator.log").open("wb")
         self.emulator = subprocess.Popen(
             [str(emulator), "-avd", "hwe-runtime", "-port", "5554", "-accel", acceleration,
@@ -248,10 +258,29 @@ class Runner:
             if self.emulator.poll() is not None:
                 raise RuntimeError("Android emulator exited before boot; see android-emulator.log")
             boot = self.command([self.adb, "-s", self.device, "shell", "getprop", "sys.boot_completed"], "android-boot.log", timeout=30)
-            if boot.strip() == "1":
+            package = self.command([self.adb, "-s", self.device, "shell", "cmd", "package", "path", "android"], "android-package-service.log", timeout=30, check=False) if boot.strip() == "1" else ""
+            if android_ready(boot, package):
                 return
             time.sleep(3)
         raise RuntimeError("Android boot did not finish; no runtime test was substituted")
+
+    def build_android_phases(self):
+        destination = APP / "build/runtime-apks"
+        destination.mkdir(parents=True, exist_ok=True)
+        manifest = {}
+        for phase in PHASES:
+            self.command(["flutter", "--suppress-analytics", "build", "apk", "--debug", "--no-pub",
+                "--target-platform=android-x64", "--target=integration_test/runtime_test.dart",
+                f"--dart-define=HWE_RUNTIME_PHASE={phase}"], f"{phase}/android-prebuild.log", timeout=1800, cwd=APP)
+            source = APP / "build/app/outputs/flutter-apk/app-debug.apk"
+            if not source.is_file() or source.stat().st_size == 0:
+                raise RuntimeError("Missing Android runtime APK after successful build")
+            target = destination / f"{phase}.apk"
+            shutil.copy2(source, target)
+            self.android_binaries[phase] = str(target.resolve())
+            manifest[phase] = {"sha256": hashlib.sha256(target.read_bytes()).hexdigest(), "bytes": target.stat().st_size}
+        # APKs themselves are not uploaded as test evidence or distributed.
+        (self.output / "android-prebuilt-manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     def prepare_ios(self):
         self.command(["xcodebuild", "-version"], "xcode-version.log")
@@ -369,6 +398,11 @@ class Runner:
                 self.env["HWE_RUNTIME_OUTPUT"] = str(phase_folder.resolve())
                 self.env["HWE_RUNTIME_PHASE"] = phase
                 arguments = drive_command(self.device, phase)
+                if self.platform == "android":
+                    package = self.command([self.adb, "-s", self.device, "shell", "cmd", "package", "path", "android"], f"{phase}/package-service.log", timeout=30, check=False)
+                    if not package.strip().startswith("package:"):
+                        raise RuntimeError("Android package service became unavailable before app installation")
+                    arguments.append(f"--use-application-binary={self.android_binaries[phase]}")
                 if self.platform == "macos":
                     binary = self.build_macos_synthetic(phase)
                     # Official Flutter drive_service treats an explicit binary as

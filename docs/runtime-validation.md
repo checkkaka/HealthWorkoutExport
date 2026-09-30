@@ -93,3 +93,15 @@ launch or native HealthKit capability. The report and screenshots label this
 scope. Production signed HealthKit launch requires a legitimate signing environment.
 All platforms use an integration entry that initializes real Rust and renders the
 production root widgets; this is not the unmodified end-user `startApp()` entry.
+
+Android builds all three x86_64 Debug test APKs before starting the software AVD,
+then installs the exact prebuilt artifact for each phase. This avoids heavy
+Rust/Gradle compilation competing with the unaccelerated Android system server.
+Both boot completion and a responding package service are required; losing the
+service fails the run rather than pretending the app was tested. APK hashes are
+recorded, but the APKs are not uploaded/distributed with the evidence artifacts.
+
+Android's on-device phase budget is 12 minutes (other platforms: 4), reported in
+each result. The driver remains bounded at 15 minutes and the host command at
+30 minutes. All required checks still must finish. Software-emulated frame timing
+is infrastructure evidence, not a claim about physical-device app performance.

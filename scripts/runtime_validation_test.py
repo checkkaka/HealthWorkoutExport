@@ -23,6 +23,45 @@ def module():
 
 
 class RuntimeValidationTests(unittest.TestCase):
+    def test_android_builds_every_phase_before_starting_software_guest(self):
+        runtime = module()
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime.APP = Path(temporary) / "app"
+            runner = runtime.Runner("android", Path(temporary) / "evidence")
+            phases = []
+            def command(args, log, **kwargs):
+                self.assertEqual(args[:4], ["flutter", "--suppress-analytics", "build", "apk"])
+                for flag in ("--debug", "--no-pub", "--target-platform=android-x64"):
+                    self.assertIn(flag, args)
+                phase = next(a.split("=", 2)[2] for a in args if a.startswith("--dart-define=HWE_RUNTIME_PHASE="))
+                phases.append(phase)
+                apk = runtime.APP / "build/app/outputs/flutter-apk/app-debug.apk"
+                apk.parent.mkdir(parents=True, exist_ok=True)
+                apk.write_bytes(b"synthetic-apk-" + phase.encode())
+                return ""
+            runner.command = command
+            runner.build_android_phases()
+            self.assertEqual(phases, list(runtime.PHASES))
+            for phase in runtime.PHASES:
+                self.assertEqual(Path(runner.android_binaries[phase]).read_bytes(), b"synthetic-apk-" + phase.encode())
+            source = SCRIPT.read_text()
+            self.assertLess(source.index("self.build_android_phases()"), source.index("self.emulator = subprocess.Popen"))
+            self.assertNotIn(str(runner.output), runner.android_binaries["seed"])
+
+    def test_android_boot_requires_package_service_not_only_stale_property(self):
+        runtime = module()
+        self.assertFalse(runtime.android_ready("1", "Can't find service: package"))
+        self.assertFalse(runtime.android_ready("0", "package:/system/framework/framework-res.apk"))
+        self.assertTrue(runtime.android_ready("1", "package:/system/framework/framework-res.apk"))
+
+    def test_android_timeout_is_bounded_and_reported(self):
+        entry = (ROOT / "flutter_app/integration_test/runtime_test.dart").read_text()
+        self.assertIn("final phaseBudget = Duration(minutes: Platform.isAndroid ? 12 : 4);", entry)
+        self.assertIn("'phaseBudgetSeconds': phaseBudget.inSeconds", entry)
+        self.assertIn("timeout: Timeout(phaseBudget)", entry)
+        driver = (ROOT / "flutter_app/test_driver/runtime_driver.dart").read_text()
+        self.assertIn("timeout: const Duration(minutes: 15)", driver)
+
     def test_software_emulation_never_requires_kvm_permissions(self):
         self.assertEqual(module().android_acceleration(True), ("on", 300))
         self.assertEqual(module().android_acceleration(False), ("off", 1200))

@@ -23,6 +23,8 @@ import 'package:health_workout_export/workout_export.dart';
 import 'runtime_fixture.dart';
 
 const phase = String.fromEnvironment('HWE_RUNTIME_PHASE');
+// Software Android emulation is slow; retain a hard, reported test-only budget.
+final phaseBudget = Duration(minutes: Platform.isAndroid ? 12 : 4);
 final fingerprint = 'b' * 64;
 final syntheticMacHealth =
     Platform.isMacOS &&
@@ -45,6 +47,7 @@ void main() {
     expect(['startup', 'seed', 'verify'], contains(phase));
     binding.reportData = {
       'phase': phase,
+      'phaseBudgetSeconds': phaseBudget.inSeconds,
       'pid': pid,
       'runtimeProfile': syntheticMacHealth
           ? 'macos-synthetic-health-debug'
@@ -185,6 +188,7 @@ void main() {
     expect(tester.takeException(), isNull);
     binding.reportData = {
       'phase': phase,
+      'phaseBudgetSeconds': phaseBudget.inSeconds,
       'pid': pid,
       'runtimeProfile': syntheticMacHealth
           ? 'macos-synthetic-health-debug'
@@ -200,7 +204,7 @@ void main() {
         'no OAuth, remote uploads or health writes',
       ],
     };
-  }, timeout: const Timeout(Duration(minutes: 4)));
+  }, timeout: Timeout(phaseBudget));
 }
 
 Future<void> screenshot(WidgetTester tester, String name) async {
