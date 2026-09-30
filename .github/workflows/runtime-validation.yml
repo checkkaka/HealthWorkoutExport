@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 90
     concurrency:
       group: runtime-validation-${{ github.ref }}-${{ matrix.platform }}
-      cancel-in-progress: false
+      cancel-in-progress: ${{ matrix.platform == 'android' || matrix.platform == 'ios' }}
     strategy:
       fail-fast: false
       matrix:
