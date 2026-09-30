@@ -6,6 +6,8 @@ Screenshots are Flutter rendered surfaces, not native permission dialogs.
 from pathlib import Path
 import argparse
 import json
+import hashlib
+import plistlib
 import os
 import platform as host_platform
 import re
@@ -30,6 +32,16 @@ SAFE_ENV = {
 # MetricsReporter.cpp then resets the reporter so no metrics are collected.
 # https://android.googlesource.com/platform/external/qemu/+/refs/heads/emu-36-1-release/android/emu/cmdline/include/android/cmdline-options.h
 # https://android.googlesource.com/platform/external/qemu/+/refs/heads/emu-36-1-release/android/emu/metrics/src/android/metrics/MetricsReporter.cpp
+
+
+def synthetic_health_entitlements(original, configuration):
+    if configuration != "Debug":
+        raise ValueError("Synthetic health artifact is restricted to Debug tests")
+    if original.get("com.apple.security.app-sandbox") is not True:
+        raise ValueError("The app sandbox must remain enabled")
+    if original.get("com.apple.developer.healthkit") is not True:
+        raise ValueError("Expected the production HealthKit entitlement")
+    return {key: value for key, value in original.items() if key != "com.apple.developer.healthkit"}
 
 
 def android_acceleration(kvm_accessible):
@@ -98,6 +110,9 @@ def validate_report(folder, phase):
     checks = report.get("checks")
     if not isinstance(checks, list) or not all(isinstance(item, str) for item in checks):
         raise RuntimeError("Invalid runtime checks report")
+    if report.get("runtimeProfile") == "macos-synthetic-health-debug":
+        expected_checks.discard("native-health-capability-probe-no-authorization")
+        expected_checks.add("health-capability-excluded-by-synthetic-test-profile")
     missing = expected_checks - set(checks)
     if missing:
         raise RuntimeError("Missing runtime checks: " + ", ".join(sorted(missing)))
@@ -249,6 +264,51 @@ class Runner:
         self.simulator_booted = True
         self.command(["xcrun", "simctl", "bootstatus", self.device, "-b"], "ios-bootstatus.log", timeout=300)
 
+    def build_macos_synthetic(self, phase):
+        """Build a separately identified Debug test artifact with fewer entitlements.
+
+        Production Debug/Release files are never edited. No OS signing enforcement,
+        sandbox, or other protection is disabled. HealthKit is excluded, not tested.
+        """
+        sources = [APP / "macos/Runner/DebugProfile.entitlements", APP / "macos/Runner/Release.entitlements"]
+        before = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in sources}
+        original = plistlib.loads(sources[0].read_bytes())
+        reduced = synthetic_health_entitlements(original, "Debug")
+        config = self.output / "synthetic-health-debug"
+        config.mkdir(exist_ok=True)
+        entitlements = config / "SyntheticHealthRuntime.entitlements"
+        entitlements.write_bytes(plistlib.dumps(reduced))
+        xcconfig = config / "SyntheticHealthRuntime.xcconfig"
+        xcconfig.write_text(
+            f'CODE_SIGN_ENTITLEMENTS[config=Debug] = "{entitlements.resolve()}"\n'
+            'SWIFT_ACTIVE_COMPILATION_CONDITIONS[config=Debug] = $(inherited) HWE_SYNTHETIC_HEALTH_RUNTIME\n'
+            'PRODUCT_BUNDLE_IDENTIFIER[config=Debug] = com.checkkaka.HealthWorkoutExport.SyntheticHealthRuntime\n', encoding="utf-8")
+        self.command(["flutter", "--suppress-analytics", "build", "macos", "--debug", "--no-pub", "--config-only",
+            "--target=integration_test/runtime_test.dart", f"--dart-define=HWE_RUNTIME_PHASE={phase}",
+            "--dart-define=HWE_SYNTHETIC_HEALTH_RUNTIME=true"], f"{phase}/macos-configure.log", timeout=600, cwd=APP)
+        self.command(["xcodebuild", "-workspace", "macos/Runner.xcworkspace", "-scheme", "Runner",
+            "-configuration", "Debug", "-destination", "platform=macOS", "-derivedDataPath", "build/macos",
+            "-xcconfig", str(xcconfig.resolve()), "-quiet", "-hideShellScriptEnvironment",
+            "COMPILER_INDEX_STORE_ENABLE=NO", "build"], f"{phase}/macos-test-build.log", timeout=1800, cwd=APP)
+        app = APP / "build/macos/Build/Products/Debug/health_workout_export.app"
+        info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+        if info.get("CFBundleIdentifier") != "com.checkkaka.HealthWorkoutExport.SyntheticHealthRuntime":
+            raise RuntimeError("Test artifact bundle identity was not isolated")
+        self.command(["codesign", "--verify", "--deep", "--strict", str(app)], f"{phase}/macos-test-signature.log")
+        signed = self.command(["codesign", "--display", "--entitlements", ":-", str(app)], f"{phase}/macos-test-entitlements.log")
+        start = signed.index("<?xml")
+        end = signed.index("</plist>", start) + len("</plist>")
+        actual = plistlib.loads(signed[start:end].encode("utf-8"))
+        if "com.apple.developer.healthkit" in actual or any(actual.get(key) != value for key, value in reduced.items()):
+            raise RuntimeError("Signed test entitlements do not match the reduced sandboxed profile")
+        after = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in sources}
+        if before != after:
+            raise RuntimeError("Production entitlement source changed during test build")
+        self.summary["runtimeProfile"] = "macos-synthetic-health-debug"
+        self.summary["productionHealthKitLaunch"] = "unverified; requires legitimate development signing"
+        (config / "production-source-hashes.json").write_text(json.dumps(before, indent=2), encoding="utf-8")
+        return str(app.resolve())
+
     def collect_apple_diagnostics(self):
         """Read only this disposable test application's signing/link/crash facts."""
         app = APP / "build/macos/Build/Products/Debug/health_workout_export.app"
@@ -307,8 +367,17 @@ class Runner:
                     raise RuntimeError(f"Existing {phase} results would make evidence stale; use a fresh output directory")
                 self.env["HWE_RUNTIME_OUTPUT"] = str(phase_folder.resolve())
                 self.env["HWE_RUNTIME_PHASE"] = phase
-                self.command(drive_command(self.device, phase), f"{phase}/flutter-drive.log", timeout=1800, cwd=APP)
+                arguments = drive_command(self.device, phase)
+                if self.platform == "macos":
+                    binary = self.build_macos_synthetic(phase)
+                    # Official Flutter drive_service treats an explicit binary as
+                    # prebuilt, so it cannot rebuild using production entitlements.
+                    arguments.extend([f"--use-application-binary={binary}", "--dart-define=HWE_SYNTHETIC_HEALTH_RUNTIME=true"])
+                self.command(arguments, f"{phase}/flutter-drive.log", timeout=1800, cwd=APP)
                 reports[phase] = validate_report(phase_folder, phase)
+                expected_profile = "macos-synthetic-health-debug" if self.platform == "macos" else "instrumented-native-root"
+                if reports[phase].get("runtimeProfile") != expected_profile:
+                    raise RuntimeError("The app report does not identify the expected platform test profile")
                 self.stop_application(phase)
                 self.summary["phases"].append({"phase": phase, "status": "passed", "pid": reports[phase]["pid"]})
                 self.write_summary()

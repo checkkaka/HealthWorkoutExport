@@ -15,7 +15,9 @@ class MainFlutterWindow: NSWindow {
     ThirdPartyVaultPlugin.register(
       with: flutterViewController.registrar(forPlugin: "ThirdPartyVaultPlugin"))
     SyncFilesPlugin.register(with: flutterViewController.registrar(forPlugin: "SyncFilesPlugin"))
-    HealthKitPlugin.register(with: flutterViewController.registrar(forPlugin: "HealthKitPlugin"))
+    #if !HWE_SYNTHETIC_HEALTH_RUNTIME
+      HealthKitPlugin.register(with: flutterViewController.registrar(forPlugin: "HealthKitPlugin"))
+    #endif
     StravaOAuthPlugin.register(
       with: flutterViewController.registrar(forPlugin: "StravaOAuthPlugin"))
     StravaWebPlugin.register(with: flutterViewController.registrar(forPlugin: "StravaWebPlugin"))

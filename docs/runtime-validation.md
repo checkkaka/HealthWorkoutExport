@@ -69,3 +69,25 @@ host driver are `scripts/runtime_validation.py` and
 Runtime acceptance status is the workflow result for the exact PR head. Adding
 these tests does not itself establish a pass; refer to the run and its per-phase
 reports. Existing compile/static/unit-test checks continue separately.
+
+## macOS synthetic-health Debug artifact
+
+The original ad-hoc build was blocked at launch by AMFI: its code signature was
+valid on disk, but the app requested a restricted entitlement without a matching
+provisioning identity. No OS enforcement is disabled to work around that result.
+
+For the approved synthetic boundary, macOS runtime validation creates an explicitly
+identified `com.checkkaka.HealthWorkoutExport.SyntheticHealthRuntime` Debug test
+artifact. Its generated xcconfig is Debug-only; it removes only the HealthKit
+entitlement from a copy of the production Debug entitlements and omits HealthKit
+plugin registration under an explicit test compilation condition. Sandbox and
+all other original entitlements are retained. Release/Profile are rejected by
+the generator. Both production entitlement source hashes must remain unchanged,
+and the built artifact's identity, signature and actual entitlements are checked
+before it is launched. Flutter drives this exact prebuilt artifact.
+
+This artifact tests UI/Rust/files/recovery, not the production HealthKit-enabled
+launch or native HealthKit capability. The report and screenshots label this
+scope. Production signed HealthKit launch requires a legitimate signing environment.
+All platforms use an integration entry that initializes real Rust and renders the
+production root widgets; this is not the unmodified end-user `startApp()` entry.

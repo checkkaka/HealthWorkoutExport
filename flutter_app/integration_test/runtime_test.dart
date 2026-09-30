@@ -24,6 +24,9 @@ import 'runtime_fixture.dart';
 
 const phase = String.fromEnvironment('HWE_RUNTIME_PHASE');
 final fingerprint = 'b' * 64;
+final syntheticMacHealth =
+    Platform.isMacOS &&
+    const bool.fromEnvironment('HWE_SYNTHETIC_HEALTH_RUNTIME');
 const nativeFiles = SyncFilesChannel();
 const healthChannel = MethodChannel('health_workout_export/healthkit');
 final captureKey = GlobalKey();
@@ -43,6 +46,9 @@ void main() {
     binding.reportData = {
       'phase': phase,
       'pid': pid,
+      'runtimeProfile': syntheticMacHealth
+          ? 'macos-synthetic-health-debug'
+          : 'instrumented-native-root',
       'checks': checks,
       'screenshots': screenshots,
     };
@@ -55,12 +61,16 @@ void main() {
     checks.add('bundled-rust-ffi-encode-and-preview');
 
     // Availability does not request authorization or read personal health data.
-    if (!Platform.isWindows) {
+    if (!Platform.isWindows && !syntheticMacHealth) {
       expect(await const HealthKitChannel().isAvailable(), isA<bool>());
     }
     final writable = await const HealthKitChannel().canWriteWorkouts();
     if (Platform.isAndroid || Platform.isWindows) expect(writable, isFalse);
-    checks.add('native-health-capability-probe-no-authorization');
+    checks.add(
+      syntheticMacHealth
+          ? 'health-capability-excluded-by-synthetic-test-profile'
+          : 'native-health-capability-probe-no-authorization',
+    );
 
     const preferences = PreferencesChannel();
     if (phase == 'verify') {
@@ -110,7 +120,19 @@ void main() {
     );
     addTearDown(() => messenger.setMockMethodCallHandler(healthChannel, null));
     await tester.pumpWidget(
-      RepaintBoundary(key: captureKey, child: const HealthWorkoutExportApp()),
+      RepaintBoundary(
+        key: captureKey,
+        child: Directionality(
+          textDirection: TextDirection.ltr,
+          child: Banner(
+            message: syntheticMacHealth
+                ? 'SYNTHETIC HEALTH TEST'
+                : 'SYNTHETIC DATA',
+            location: BannerLocation.topEnd,
+            child: const HealthWorkoutExportApp(),
+          ),
+        ),
+      ),
     );
     await tester.pumpAndSettle();
     expect(find.text('健康训练'), findsOneWidget);
@@ -164,9 +186,14 @@ void main() {
     binding.reportData = {
       'phase': phase,
       'pid': pid,
+      'runtimeProfile': syntheticMacHealth
+          ? 'macos-synthetic-health-debug'
+          : 'instrumented-native-root',
       'checks': checks,
       'screenshots': screenshots,
       'boundaries': [
+        if (syntheticMacHealth)
+          'macOS reduced-entitlement Debug test artifact; production HealthKit signed launch unverified',
         'synthetic health availability for UI only',
         'synthetic file selection',
         'share callback validates file, no OS share sheet',
@@ -251,21 +278,30 @@ Future<void> functionalFlow(WidgetTester tester, Uint8List fit) async {
     selectionGate.complete([first.path, second.path]);
     for (
       var i = 0;
-      i < 100 && find.byKey(const ValueKey('mergeFile-0')).evaluate().isEmpty;
+      i < 100 && find.byKey(const ValueKey('mergeFile-1')).evaluate().isEmpty;
       i++
     ) {
       await tester.pump(const Duration(milliseconds: 100));
     }
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('mergeFile-0')), findsOneWidget);
-    await tapVisible(tester, find.byKey(const ValueKey('mergeFile-0')));
+    expect(find.byKey(const ValueKey('mergeFile-1')), findsOneWidget);
+    final primaryTile = find.byKey(const ValueKey('mergeFile-0'));
+    expect(tester.widget<ListTile>(primaryTile).onTap, isNotNull);
+    await tapVisible(tester, primaryTile);
+    expect(tester.widget<ListTile>(primaryTile).selected, isTrue);
     await tapVisible(tester, find.widgetWithText(FilledButton, '合并 FIT'));
-    // Native async Rust/I/O can need additional frames after the spinner settles.
-    for (var i = 0; i < 100 && find.text('结果已生成').evaluate().isEmpty; i++) {
+    // Wait for native I/O to re-enable the merge action, then materialize the
+    // lazy result section below the current viewport before asserting its text.
+    for (
+      var i = 0;
+      i < 100 && find.widgetWithText(FilledButton, '合并 FIT').evaluate().isEmpty;
+      i++
+    ) {
       await tester.pump(const Duration(milliseconds: 100));
     }
-    expect(find.text('结果已生成'), findsOneWidget);
+    await screenshot(tester, 'merge-after-click');
     await tapVisible(tester, find.text('分享结果'));
+    expect(find.text('结果已生成'), findsOneWidget);
     expect(exported, isNotNull);
     final merged = await exported!.file.readAsBytes();
     final inspection = FitPreviewInspection.decode(

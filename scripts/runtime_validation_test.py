@@ -3,6 +3,7 @@ from pathlib import Path
 import importlib.util
 import json
 import os
+import plistlib
 import sys
 import tempfile
 import unittest
@@ -86,6 +87,52 @@ class RuntimeValidationTests(unittest.TestCase):
             (folder / "results.json").write_text(json.dumps({"phase": "seed", "pid": 123, "checks": ["bundled-rust-ffi-encode-and-preview", "native-health-capability-probe-no-authorization", "production-root-tabs-navigation-and-back", "native-preferences-roundtrip", "synthetic-file-selection-cancel-real-fit-import-rust-merge-export", "real-detail-preview-export-cancel-and-return", "durable-recovery-seed-before-host-process-termination"], "screenshots": ["../secret.png"]}))
             with self.assertRaisesRegex(RuntimeError, "screenshot"):
                 module().validate_report(folder, "seed")
+
+    def test_synthetic_health_config_only_reduces_debug_test_entitlement(self):
+        original = {"com.apple.developer.healthkit": True, "com.apple.security.app-sandbox": True,
+                    "com.apple.security.cs.allow-jit": True, "com.apple.security.network.server": True}
+        reduced = module().synthetic_health_entitlements(original, "Debug")
+        self.assertEqual(reduced, {k: v for k, v in original.items() if k != "com.apple.developer.healthkit"})
+        self.assertTrue(original["com.apple.developer.healthkit"])
+        for mode in ("Release", "Profile", "debug", ""):
+            with self.assertRaisesRegex(ValueError, "Debug"):
+                module().synthetic_health_entitlements(original, mode)
+        with self.assertRaisesRegex(ValueError, "sandbox"):
+            module().synthetic_health_entitlements({"com.apple.developer.healthkit": True}, "Debug")
+
+    def test_macos_test_build_keeps_production_sources_and_rejects_release(self):
+        runtime = module()
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            runtime.APP = base / "app"
+            source = runtime.APP / "macos/Runner"
+            source.mkdir(parents=True)
+            original = {"com.apple.developer.healthkit": True, "com.apple.security.app-sandbox": True,
+                        "com.apple.security.cs.allow-jit": True, "com.apple.security.network.server": True}
+            original_bytes = plistlib.dumps(original)
+            for name in ("DebugProfile.entitlements", "Release.entitlements"):
+                (source / name).write_bytes(original_bytes)
+            runner = runtime.Runner("macos", base / "evidence")
+            calls = []
+            def command(args, log, **kwargs):
+                calls.append(args)
+                if args[0] == "xcodebuild":
+                    self.assertEqual(args[args.index("-configuration") + 1], "Debug")
+                    config = Path(args[args.index("-xcconfig") + 1]).read_text()
+                    self.assertTrue(all("[config=Debug]" in line for line in config.splitlines()))
+                    bundle = runtime.APP / "build/macos/Build/Products/Debug/health_workout_export.app/Contents"
+                    bundle.mkdir(parents=True)
+                    (bundle / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "com.checkkaka.HealthWorkoutExport.SyntheticHealthRuntime"}))
+                if args[:2] == ["codesign", "--display"]:
+                    return plistlib.dumps(runtime.synthetic_health_entitlements(original, "Debug")).decode()
+                return ""
+            runner.command = command
+            binary = runner.build_macos_synthetic("seed")
+            self.assertTrue(binary.endswith("Debug/health_workout_export.app"))
+            self.assertTrue(any("--config-only" in args and "--debug" in args for args in calls))
+            self.assertTrue(any(args[:2] == ["codesign", "--verify"] for args in calls))
+            for name in ("DebugProfile.entitlements", "Release.entitlements"):
+                self.assertEqual((source / name).read_bytes(), original_bytes)
 
     def test_macos_failure_diagnostics_are_read_only_and_app_scoped(self):
         with tempfile.TemporaryDirectory() as temporary:
