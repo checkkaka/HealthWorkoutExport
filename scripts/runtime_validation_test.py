@@ -55,11 +55,11 @@ class RuntimeValidationTests(unittest.TestCase):
         self.assertTrue(runtime.android_ready("1", "package:/system/framework/framework-res.apk"))
 
     def test_android_timeout_is_bounded_and_reported(self):
-        entry = (ROOT / "flutter_app/integration_test/runtime_test.dart").read_text()
+        entry = (ROOT / "flutter_app/integration_test/runtime_test.dart").read_text(encoding="utf-8")
         self.assertIn("final phaseBudget = Duration(minutes: Platform.isAndroid ? 12 : 4);", entry)
         self.assertIn("'phaseBudgetSeconds': phaseBudget.inSeconds", entry)
         self.assertIn("timeout: Timeout(phaseBudget)", entry)
-        driver = (ROOT / "flutter_app/test_driver/runtime_driver.dart").read_text()
+        driver = (ROOT / "flutter_app/test_driver/runtime_driver.dart").read_text(encoding="utf-8")
         self.assertIn("timeout: const Duration(minutes: 15)", driver)
 
     def test_software_emulation_never_requires_kvm_permissions(self):
