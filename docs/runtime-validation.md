@@ -23,8 +23,10 @@ accounts/devices. It is not a physical-device or production-account acceptance.
 
 The host records target PIDs, native termination checks and different seed/verify
 PIDs. Each phase must complete its assertions and provide valid PNG screenshots.
-Failed launches, absent interactive sessions, unavailable emulator acceleration,
-missing simulator runtimes and unavailable components fail honestly.
+Failed launches, absent interactive sessions, missing simulator runtimes and
+unavailable components fail honestly. Android uses documented software emulation
+when KVM is inaccessible, records the mode, and fails if boot does not complete
+within its explicit 20-minute software-mode limit. Host permissions are unchanged.
 
 ## Real and synthetic boundaries
 

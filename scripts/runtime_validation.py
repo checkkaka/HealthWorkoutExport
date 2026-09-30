@@ -32,6 +32,13 @@ SAFE_ENV = {
 # https://android.googlesource.com/platform/external/qemu/+/refs/heads/emu-36-1-release/android/emu/metrics/src/android/metrics/MetricsReporter.cpp
 
 
+def android_acceleration(kvm_accessible):
+    # Official documented software emulation is a distinct execution mode; it
+    # never accesses KVM or changes host permissions when acceleration is absent.
+    # https://developer.android.com/studio/run/emulator-commandline
+    return ("on", 300) if kvm_accessible else ("off", 1200)
+
+
 def safe_environment(base=None):
     return {**(os.environ if base is None else base), **SAFE_ENV}
 
@@ -178,8 +185,16 @@ class Runner:
 
     def prepare_android(self):
         kvm = Path("/dev/kvm")
-        if not kvm.exists() or not os.access(kvm, os.R_OK | os.W_OK):
-            raise RuntimeError("Hosted runner has no accessible /dev/kvm; security permissions were not changed")
+        accessible = kvm.exists() and os.access(kvm, os.R_OK | os.W_OK)
+        acceleration, boot_timeout = android_acceleration(accessible)
+        self.summary["androidEmulation"] = {
+            "mode": "hardware" if accessible else "software",
+            "kvmAccessible": accessible,
+            "bootTimeoutSeconds": boot_timeout,
+            "hostPermissionsChanged": False,
+        }
+        self.write_summary()
+        print(f"Android emulation mode: {self.summary['androidEmulation']['mode']}", flush=True)
         sdk_root = self.env.get("ANDROID_HOME") or self.env.get("ANDROID_SDK_ROOT")
         if not sdk_root:
             raise RuntimeError("Hosted Android SDK is missing")
@@ -204,15 +219,15 @@ class Runner:
         self.command([emulator, "-no-metrics", "-version"], "android-emulator-version.log")
         self.emulator_log = (self.output / "android-emulator.log").open("wb")
         self.emulator = subprocess.Popen(
-            [str(emulator), "-avd", "hwe-runtime", "-port", "5554", "-accel", "on",
+            [str(emulator), "-avd", "hwe-runtime", "-port", "5554", "-accel", acceleration,
              "-no-metrics", "-no-window", "-no-audio", "-no-boot-anim", "-no-snapshot",
              "-gpu", "swiftshader", "-camera-back", "none", "-camera-front", "none"],
             env=self.env, stdin=subprocess.DEVNULL, stdout=self.emulator_log,
             stderr=subprocess.STDOUT,
         )
         self.device = "emulator-5554"
-        self.command([self.adb, "-s", self.device, "wait-for-device"], "android-wait.log", timeout=180)
-        deadline = time.monotonic() + 300
+        deadline = time.monotonic() + boot_timeout
+        self.command([self.adb, "-s", self.device, "wait-for-device"], "android-wait.log", timeout=boot_timeout)
         while time.monotonic() < deadline:
             if self.emulator.poll() is not None:
                 raise RuntimeError("Android emulator exited before boot; see android-emulator.log")

@@ -22,6 +22,10 @@ def module():
 
 
 class RuntimeValidationTests(unittest.TestCase):
+    def test_software_emulation_never_requires_kvm_permissions(self):
+        self.assertEqual(module().android_acceleration(True), ("on", 300))
+        self.assertEqual(module().android_acceleration(False), ("off", 1200))
+
     def test_safe_environment_overrides_opt_in_for_every_subprocess(self):
         env = module().safe_environment({"CI": "false", "BOT": "false", "KEEP": "yes"})
         for key in ("CI", "BOT", "DASH__SUPPRESS_ANALYTICS", "FLUTTER_SUPPRESS_ANALYTICS", "COCOAPODS_DISABLE_STATS"):
