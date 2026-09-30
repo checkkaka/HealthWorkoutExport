@@ -43,6 +43,9 @@ final class SyncFilesPlugin: NSObject, FlutterPlugin {
   }
 
   private let storage: Storage
+  #if os(macOS)
+    private let storageQueue = DispatchQueue(label: "com.checkkaka.HealthWorkoutExport.sync-files")
+  #endif
 
   init(storage: Storage = Storage()) {
     self.storage = storage
@@ -51,18 +54,41 @@ final class SyncFilesPlugin: NSObject, FlutterPlugin {
   static func register(with registrar: FlutterPluginRegistrar) {
     #if os(iOS)
       let messenger = registrar.messenger()
+      let channel = FlutterMethodChannel(
+        name: channelName,
+        binaryMessenger: messenger,
+        codec: FlutterStandardMethodCodec.sharedInstance(),
+        taskQueue: messenger.makeBackgroundTaskQueue?()
+      )
+      let instance = SyncFilesPlugin()
+      channel.setMethodCallHandler(instance.handle)
     #else
-      let messenger = registrar.messenger
+      _ = registerMacOSChannel(messenger: registrar.messenger)
     #endif
-    let channel = FlutterMethodChannel(
-      name: channelName,
-      binaryMessenger: messenger,
-      codec: FlutterStandardMethodCodec.sharedInstance(),
-      taskQueue: messenger.makeBackgroundTaskQueue?()
-    )
-    let instance = SyncFilesPlugin()
-    channel.setMethodCallHandler(instance.handle)
   }
+
+  #if os(macOS)
+    // Flutter 3.47's messenger relay advertises the optional background queue
+    // selector, but its macOS engine does not implement it. Do not call that
+    // selector. Serialize file I/O ourselves and return platform replies on main.
+    static func registerMacOSChannel(
+      messenger: FlutterBinaryMessenger, storage: Storage = Storage()
+    ) -> FlutterMethodChannel {
+      let channel = FlutterMethodChannel(
+        name: channelName, binaryMessenger: messenger,
+        codec: FlutterStandardMethodCodec.sharedInstance()
+      )
+      let instance = SyncFilesPlugin(storage: storage)
+      channel.setMethodCallHandler { call, result in
+        instance.storageQueue.async {
+          instance.handle(call) { response in
+            DispatchQueue.main.async { result(response) }
+          }
+        }
+      }
+      return channel
+    }
+  #endif
 
   func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     do {

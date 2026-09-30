@@ -387,3 +387,65 @@ extension RunnerTests {
   }
   #endif
 }
+
+private final class UnsupportedBackgroundTaskQueue: NSObject, FlutterTaskQueue {}
+private final class RuntimeQueueMessenger: NSObject, FlutterBinaryMessenger {
+  var taskQueueRequests = 0
+  var handler: FlutterBinaryMessageHandler?
+  func makeBackgroundTaskQueue() -> FlutterTaskQueue {
+    taskQueueRequests += 1
+    return UnsupportedBackgroundTaskQueue()
+  }
+  func send(onChannel channel: String, message: Data?) {}
+  func send(onChannel channel: String, message: Data?, binaryReply callback: FlutterBinaryReply?) {}
+  func setMessageHandlerOnChannel(
+    _ channel: String, binaryMessageHandler handler: FlutterBinaryMessageHandler?
+  ) -> FlutterBinaryMessengerConnection {
+    self.handler = handler
+    return 1
+  }
+  func cleanUpConnection(_ connection: FlutterBinaryMessengerConnection) { handler = nil }
+}
+
+extension RunnerTests {
+  func testMacOSSyncRegistrationAvoidsUnsupportedTaskQueueAndSerializesRealFiles() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let messenger = RuntimeQueueMessenger()
+    let channel = SyncFilesPlugin.registerMacOSChannel(
+      messenger: messenger, storage: SyncFilesPlugin.Storage(rootURL: root)
+    )
+    XCTAssertEqual(messenger.taskQueueRequests, 0)
+    let handler = try XCTUnwrap(messenger.handler)
+    let codec = FlutterStandardMethodCodec.sharedInstance()
+    let complete = expectation(description: "ordered native writes and read")
+    complete.expectedFulfillmentCount = 3
+    var replyOrder: [Int] = []
+    withExtendedLifetime(channel) {
+      for sequence in 1...2 {
+        let bytes = Data("{\"sequence\":\(sequence)}".utf8)
+        let call = FlutterMethodCall(methodName: "writeState", arguments: [
+          "bytes": FlutterStandardTypedData(bytes: bytes)
+        ])
+        handler(codec.encode(call)) { reply in
+          XCTAssertTrue(Thread.isMainThread)
+          if let reply { XCTAssertNil(codec.decodeEnvelope(reply)) }
+          else { XCTFail("missing write reply") }
+          replyOrder.append(sequence)
+          complete.fulfill()
+        }
+      }
+      handler(codec.encode(FlutterMethodCall(methodName: "readState", arguments: nil))) { reply in
+        XCTAssertTrue(Thread.isMainThread)
+        if let reply, let data = codec.decodeEnvelope(reply) as? FlutterStandardTypedData {
+          XCTAssertEqual(data.data, Data("{\"sequence\":2}".utf8))
+        } else { XCTFail("missing read payload") }
+        replyOrder.append(3)
+        complete.fulfill()
+      }
+      wait(for: [complete], timeout: 5)
+    }
+    XCTAssertEqual(replyOrder, [1, 2, 3])
+  }
+}
