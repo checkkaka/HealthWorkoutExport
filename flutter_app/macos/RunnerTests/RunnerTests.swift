@@ -346,3 +346,44 @@ extension RunnerTests {
     XCTAssertFalse(defaults.bool(forKey: "write_to_apple_health"))
   }
 }
+
+
+extension RunnerTests {
+  func testHealthPreparedChannelKeepsUploadedArchiveSeparate() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("HealthPreparedTests.\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let storage = SyncFilesPlugin.Storage(rootURL: root)
+    let fingerprint = String(repeating: "a", count: 64)
+    let uploaded = Data([1, 2, 3])
+    let health = Data([8, 9])
+    try storage.write(uploaded, kind: .syncedFIT(fingerprint))
+    let plugin = SyncFilesPlugin(storage: storage)
+    func invoke(_ method: String, bytes: Data? = nil) -> Any? {
+      var arguments: [String: Any] = ["fingerprint": fingerprint]
+      if let bytes { arguments["bytes"] = FlutterStandardTypedData(bytes: bytes) }
+      var response: Any?
+      plugin.handle(FlutterMethodCall(methodName: method, arguments: arguments)) { response = $0 }
+      return response
+    }
+    XCTAssertNil(invoke("writeHealthPreparedFit", bytes: health))
+    XCTAssertEqual(try XCTUnwrap(invoke("readHealthPreparedFit") as? FlutterStandardTypedData).data, health)
+    XCTAssertEqual(try storage.read(.syncedFIT(fingerprint)), uploaded)
+    XCTAssertNil(invoke("deleteHealthPreparedFit"))
+    XCTAssertTrue(invoke("readHealthPreparedFit") is FlutterError)
+    XCTAssertEqual(try storage.read(.syncedFIT(fingerprint)), uploaded)
+  }
+  #if os(macOS)
+  func testSyncFitUsesOwnerOnlyPermissions() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("SyncPermissions.\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let storage = SyncFilesPlugin.Storage(rootURL: root)
+    let kind = SyncFilesPlugin.FileKind.syncedFIT(String(repeating: "a", count: 64))
+    try storage.write(Data([1]), kind: kind)
+    let file = try storage.url(for: kind)
+    let permissions = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
+    XCTAssertEqual(permissions?.intValue, 0o600)
+    let directoryPermissions = try FileManager.default.attributesOfItem(atPath: file.deletingLastPathComponent().path)[.posixPermissions] as? NSNumber
+    XCTAssertEqual(directoryPermissions?.intValue, 0o700)
+  }
+  #endif
+}
