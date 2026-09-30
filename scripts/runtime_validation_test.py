@@ -128,7 +128,7 @@ class RuntimeValidationTests(unittest.TestCase):
                 return ""
             runner.command = command
             binary = runner.build_macos_synthetic("seed")
-            self.assertTrue(binary.endswith("Debug/health_workout_export.app"))
+            self.assertEqual(Path(binary).parts[-2:], ("Debug", "health_workout_export.app"))
             self.assertTrue(any("--config-only" in args and "--debug" in args for args in calls))
             self.assertTrue(any(args[:2] == ["codesign", "--verify"] for args in calls))
             for name in ("DebugProfile.entitlements", "Release.entitlements"):
