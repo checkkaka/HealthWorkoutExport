@@ -54,12 +54,17 @@ struct Failure {
   bool Set(const char* new_code, const char* new_message) {
     code = new_code; message = new_message; return false;
   }
-  bool Win32(DWORD error = GetLastError()) {
+  bool Win32(DWORD error = GetLastError(), const char* operation = "Win32") {
     if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
-      return Set("sync_file_missing", "The sync file does not exist");
-    if (error == ERROR_ACCESS_DENIED || error == ERROR_SHARING_VIOLATION)
-      return Set("sync_file_protected", "The private sync file is currently inaccessible");
-    return Set("sync_file_io", "Local application storage operation failed");
+      Set("sync_file_missing", "The sync file does not exist");
+    else if (error == ERROR_ACCESS_DENIED || error == ERROR_SHARING_VIOLATION)
+      Set("sync_file_protected", "The private sync file is currently inaccessible");
+    else
+      Set("sync_file_io", "Local application storage operation failed");
+    // Bounded operation labels and OS codes aid diagnosis without exposing paths,
+    // file contents, user SIDs, or credentials. Protection remains fail-closed.
+    message += " (" + std::string(operation) + ": " + std::to_string(error) + ")";
+    return false;
   }
   void Reply(Result* result) const { result->Error(code, message); }
 };
@@ -147,7 +152,7 @@ class PrivateStorage {
   bool Read(const std::wstring& filename, size_t limit, Bytes* bytes, Failure* error) {
     Handle file(CreateFileW(Path(filename).c_str(), GENERIC_READ | WRITE_DAC, FILE_SHARE_READ,
                             nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
-    if (!file.valid()) return error->Win32();
+    if (!file.valid()) return error->Win32(GetLastError(), "OpenPrivateFile");
     if (!CheckFile(file.get(), error) || !Protect(file.get(), error)) return false;
     LARGE_INTEGER size;
     if (!GetFileSizeEx(file.get(), &size)) return error->Win32();
@@ -165,17 +170,21 @@ class PrivateStorage {
     const auto temporary = Path(filename + L".tmp-" + suffix);
     Handle file(CreateFileW(temporary.c_str(), GENERIC_WRITE | WRITE_DAC, 0, &attributes_, CREATE_NEW,
                             FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
-    if (!file.valid()) return error->Win32();
+    if (!file.valid()) return error->Win32(GetLastError(), "OpenPrivateFile");
+    if (!CheckFile(file.get(), error) || !Protect(file.get(), error)) {
+      file.Reset();
+      DeleteFileW(temporary.c_str());
+      return false;  // Keep the failing validation operation and its exact code.
+    }
     DWORD written = 0;
-    const bool saved = CheckFile(file.get(), error) && Protect(file.get(), error) &&
-      WriteFile(file.get(), bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr) &&
+    const bool saved = WriteFile(file.get(), bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr) &&
       written == bytes.size() && FlushFileBuffers(file.get());
     const DWORD write_error = saved ? ERROR_SUCCESS : GetLastError();
     file.Reset();
-    if (!saved) { DeleteFileW(temporary.c_str()); return error->Win32(write_error); }
+    if (!saved) { DeleteFileW(temporary.c_str()); return error->Win32(write_error, "WritePrivateFile"); }
     if (!MoveFileExW(temporary.c_str(), Path(filename).c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
       const DWORD move_error = GetLastError();
-      DeleteFileW(temporary.c_str()); return error->Win32(move_error);
+      DeleteFileW(temporary.c_str()); return error->Win32(move_error, "AtomicPrivateReplace");
     }
     return true;
   }
@@ -200,16 +209,16 @@ class PrivateStorage {
   bool Protect(HANDLE object, Failure* error) {
     const DWORD status = SetSecurityInfo(object, SE_FILE_OBJECT,
       DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr, dacl_, nullptr);
-    return status == ERROR_SUCCESS || error->Win32(status);
+    return status == ERROR_SUCCESS || error->Win32(status, "ProtectPrivateAcl");
   }
   bool OpenDirectory(const std::wstring& path, bool create, Failure* error) {
-    if (create && !CreateDirectoryW(path.c_str(), &attributes_) && GetLastError() != ERROR_ALREADY_EXISTS) return error->Win32();
+    if (create && !CreateDirectoryW(path.c_str(), &attributes_) && GetLastError() != ERROR_ALREADY_EXISTS) return error->Win32(GetLastError(), "CreatePrivateDirectory");
     Handle directory(CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES | (create ? WRITE_DAC : 0),
       FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
       FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
-    if (!directory.valid()) return error->Win32();
+    if (!directory.valid()) return error->Win32(GetLastError(), "OpenPrivateDirectory");
     BY_HANDLE_FILE_INFORMATION info;
-    if (!GetFileInformationByHandle(directory.get(), &info)) return error->Win32();
+    if (!GetFileInformationByHandle(directory.get(), &info)) return error->Win32(GetLastError(), "InspectPrivateDirectory");
     if (!(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
       return error->Set("sync_file_protected", "Reparse points are not allowed in private application storage");
     if (create && !Protect(directory.get(), error)) return false;
@@ -217,7 +226,7 @@ class PrivateStorage {
   }
   static bool CheckFile(HANDLE file, Failure* error) {
     BY_HANDLE_FILE_INFORMATION info;
-    if (!GetFileInformationByHandle(file, &info)) return error->Win32();
+    if (!GetFileInformationByHandle(file, &info)) return error->Win32(GetLastError(), "InspectPrivateFile");
     if ((info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) || info.nNumberOfLinks != 1)
       return error->Set("sync_file_protected", "Linked files are not allowed in private application storage");
     return true;

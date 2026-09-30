@@ -249,6 +249,26 @@ class Runner:
         self.simulator_booted = True
         self.command(["xcrun", "simctl", "bootstatus", self.device, "-b"], "ios-bootstatus.log", timeout=300)
 
+    def collect_apple_diagnostics(self):
+        """Read only this disposable test application's signing/link/crash facts."""
+        app = APP / "build/macos/Build/Products/Debug/health_workout_export.app"
+        commands = [
+            (["codesign", "--display", "--verbose=4", "--entitlements", ":-", str(app)], "macos-signing.log"),
+            (["otool", "-L", str(app / "Contents/MacOS/health_workout_export")], "macos-linkage.log"),
+            (["log", "show", "--last", "10m", "--style", "compact", "--predicate",
+              'process == "health_workout_export" OR eventMessage CONTAINS "com.checkkaka.HealthWorkoutExport"'], "macos-app-system.log"),
+        ]
+        for args, filename in commands:
+            try:
+                self.command(args, filename, timeout=30, check=False)
+            except Exception as error:
+                (self.output / filename).write_text(str(error), encoding="utf-8")
+        crash_root = Path.home() / "Library/Logs/DiagnosticReports"
+        reports = sorted(crash_root.glob("health_workout_export*.ips"), key=lambda path: path.stat().st_mtime, reverse=True)[:3]
+        for index, path in enumerate(reports):
+            # Bounded app-specific crash evidence; never copy whole diagnostics.
+            (self.output / f"macos-app-crash-{index}.txt").write_bytes(path.read_bytes()[:120000])
+
     def stop_application(self, phase):
         """Prove a native process boundary without removing persistent app data."""
         if self.platform == "android":
@@ -303,6 +323,8 @@ class Runner:
             raise
         finally:
             self.write_summary()
+            if self.platform == "macos" and self.summary["status"] != "passed":
+                self.collect_apple_diagnostics()
             if self.emulator is not None:
                 if self.adb:
                     try:
@@ -321,6 +343,11 @@ class Runner:
 
 
 def main():
+    # Hosted Windows may inherit a legacy code page; diagnostics must not mask
+    # the actual child failure when Flutter prints Unicode glyphs or Chinese UI.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform", required=True, choices=("android", "ios", "macos", "windows"))
     args = parser.parse_args()

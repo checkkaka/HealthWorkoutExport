@@ -87,6 +87,19 @@ class RuntimeValidationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "screenshot"):
                 module().validate_report(folder, "seed")
 
+    def test_macos_failure_diagnostics_are_read_only_and_app_scoped(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            runner = module().Runner("macos", Path(temporary))
+            commands = []
+            runner.command = lambda args, log, **kwargs: commands.append((args, log)) or ""
+            runner.collect_apple_diagnostics()
+            self.assertTrue(any(args[:2] == ["codesign", "--display"] for args, _ in commands))
+            self.assertTrue(any(args[:2] == ["otool", "-L"] for args, _ in commands))
+            self.assertFalse(any("--sign" in args or "--force" in args for args, _ in commands))
+            logs = [args for args, _ in commands if args[:2] == ["log", "show"]]
+            self.assertEqual(len(logs), 1)
+            self.assertIn("com.checkkaka.HealthWorkoutExport", logs[0][-1])
+
     def test_child_process_environment_exit_and_closed_input_are_real(self):
         with tempfile.TemporaryDirectory() as temporary:
             runtime = module()
