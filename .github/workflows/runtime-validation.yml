@@ -7,10 +7,6 @@ name: Native app runtime validation
 permissions:
   contents: read
 
-concurrency:
-  group: runtime-validation-${{ github.ref }}
-  cancel-in-progress: false
-
 env:
   CI: "true"
   BOT: "true"
@@ -27,6 +23,9 @@ jobs:
     name: ${{ matrix.platform }} actual launch, workflows and process restart
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
+    concurrency:
+      group: runtime-validation-${{ github.ref }}-${{ matrix.platform }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
