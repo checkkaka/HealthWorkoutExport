@@ -120,6 +120,8 @@ class RuntimeValidationTests(unittest.TestCase):
                     self.assertEqual(args[args.index("-configuration") + 1], "Debug")
                     config = Path(args[args.index("-xcconfig") + 1]).read_text()
                     self.assertTrue(all("[config=Debug]" in line for line in config.splitlines()))
+                    entitlement_setting = config.splitlines()[0].split(" = ", 1)[1]
+                    self.assertTrue(Path(entitlement_setting).is_file(), "xcconfig paths must not contain literal quotes")
                     bundle = runtime.APP / "build/macos/Build/Products/Debug/health_workout_export.app/Contents"
                     bundle.mkdir(parents=True)
                     (bundle / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "com.checkkaka.HealthWorkoutExport.SyntheticHealthRuntime"}))

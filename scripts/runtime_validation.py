@@ -280,7 +280,7 @@ class Runner:
         entitlements.write_bytes(plistlib.dumps(reduced))
         xcconfig = config / "SyntheticHealthRuntime.xcconfig"
         xcconfig.write_text(
-            f'CODE_SIGN_ENTITLEMENTS[config=Debug] = "{entitlements.resolve()}"\n'
+            f'CODE_SIGN_ENTITLEMENTS[config=Debug] = {entitlements.resolve()}\n'
             'SWIFT_ACTIVE_COMPILATION_CONDITIONS[config=Debug] = $(inherited) HWE_SYNTHETIC_HEALTH_RUNTIME\n'
             'PRODUCT_BUNDLE_IDENTIFIER[config=Debug] = com.checkkaka.HealthWorkoutExport.SyntheticHealthRuntime\n', encoding="utf-8")
         self.command(["flutter", "--suppress-analytics", "build", "macos", "--debug", "--no-pub", "--config-only",
