@@ -20,6 +20,7 @@ import 'package:health_workout_export/sync_preview_models.dart';
 import 'package:health_workout_export/sync_state_store.dart';
 import 'package:health_workout_export/workout_export.dart';
 
+import 'runtime_callback_completion.dart';
 import 'runtime_fixture.dart';
 
 const phase = String.fromEnvironment('HWE_RUNTIME_PHASE');
@@ -356,7 +357,7 @@ Future<void> functionalFlow(WidgetTester tester, Uint8List fit) async {
     expect(await exported!.file.exists(), isTrue);
     await tester.pageBack();
     await tester.pumpAndSettle();
-    var exportedFromDetail = false;
+    final detailExport = RuntimeCallbackCompletion();
     await showPage(
       tester,
       WorkoutActivityDetailPage(
@@ -366,20 +367,22 @@ Future<void> functionalFlow(WidgetTester tester, Uint8List fit) async {
         inspect: (bytes) async => FitPreviewInspection.decode(
           await rust.inspectFitPreview(data: bytes),
         ),
-        onExport: (_, bytes, synced) async {
+        onExport: (_, bytes, synced) => detailExport.run(() async {
           expect(bytes, merged);
           expect(synced, isFalse);
           final output = File('${directory.path}/detail-export.fit');
           await output.writeAsBytes(bytes, flush: true);
           expect(await output.readAsBytes(), merged);
-          exportedFromDetail = true;
-        },
+        }),
       ),
     );
     expect(find.text('概览'), findsOneWidget);
     await screenshot(tester, 'fit-preview');
     await tapVisible(tester, find.text('导出原始 FIT'));
-    expect(exportedFromDetail, isTrue);
+    // pumpAndSettle waits for frames, not the callback's native file I/O.
+    // Preserve byte-exact assertions and surface errors the page catches for UI.
+    await detailExport.wait(timeout: phaseBudget);
+    await tester.pumpAndSettle();
     await tester.pageBack();
     await tester.pumpAndSettle();
     checks.add('real-detail-preview-export-cancel-and-return');

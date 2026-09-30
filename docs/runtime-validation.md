@@ -102,7 +102,9 @@ service fails the run rather than pretending the app was tested. APK hashes are
 recorded, but the APKs are not uploaded/distributed with the evidence artifacts.
 
 Android's on-device phase budget is 12 minutes (other platforms: 4), reported in
-each result. The driver remains bounded at 15 minutes and the host command at
+each result. An independent process watchdog bounds the driver at 15 minutes, including
+connection, result transfer and evidence writes; the pinned Flutter driver
+timeout alone only emits a warning. The host command remains bounded at
 30 minutes. All required checks still must finish. Software-emulated frame timing
 is infrastructure evidence, not a claim about physical-device app performance.
 
@@ -112,3 +114,7 @@ retained for diagnosis but cannot pass, even if their mutable checklist is full.
 The host also rejects Flutter framework failure/timeout output when the official
 integration driver incorrectly reports success. Verify requires cleanup, and
 each phase requires its final screenshot.
+
+Detail-export acceptance awaits the actual file write/read callback completion.
+Settled UI frames alone are not treated as proof that asynchronous native file
+I/O finished; failed or missing callback completion still fails the phase.

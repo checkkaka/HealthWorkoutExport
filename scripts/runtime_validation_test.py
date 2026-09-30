@@ -62,6 +62,15 @@ class RuntimeValidationTests(unittest.TestCase):
         driver = (ROOT / "flutter_app/test_driver/runtime_driver.dart").read_text(encoding="utf-8")
         self.assertIn("timeout: const Duration(minutes: 15)", driver)
 
+    def test_driver_enforces_process_deadline_not_only_sdk_warning(self):
+        driver = (ROOT / "flutter_app/test_driver/runtime_driver.dart").read_text(encoding="utf-8")
+        self.assertIn("startRuntimeWatchdog()", driver)
+        watchdog = ROOT / "flutter_app/test_driver/runtime_watchdog.dart"
+        self.assertTrue(watchdog.is_file(), "The deadline must terminate a stalled driver")
+        source = watchdog.read_text(encoding="utf-8")
+        self.assertIn("exit(1)", source)
+        self.assertIn("Duration(minutes: 15)", source)
+
     def test_software_emulation_never_requires_kvm_permissions(self):
         self.assertEqual(module().android_acceleration(True), ("on", 300))
         self.assertEqual(module().android_acceleration(False), ("off", 1200))
