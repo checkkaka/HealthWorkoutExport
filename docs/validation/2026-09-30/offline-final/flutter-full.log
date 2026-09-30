@@ -1,0 +1,256 @@
+00:00 +0: loading /workspace/shared/workout-offline-generation-stage/flutter_app/test/export_parity_test.dart
+00:00 +0: /workspace/shared/workout-offline-generation-stage/flutter_app/test/export_parity_test.dart: 第三方摘要 JSON 契约包含真实摘要、时区，且无伪造明细
+00:00 +1: /workspace/shared/workout-offline-generation-stage/flutter_app/test/export_parity_test.dart: 第三方缺失距离省略而非伪造零值
+00:00 +2: /workspace/shared/workout-offline-generation-stage/flutter_app/test/export_parity_test.dart: 原始 FIT 字节不改写，单文件直接输出
+00:00 +3: /workspace/shared/workout-offline-generation-stage/flutter_app/test/export_parity_test.dart: 同分钟同名和相同 ID 前缀仍保留所有 ZIP 文件
+00:00 +4: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: health destination reports partial saved UUID without hiding warning
+00:00 +5: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: health destination reports partial saved UUID without hiding warning
+00:00 +6: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: health destination reports partial saved UUID without hiding warning
+00:00 +7: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: health destination reports partial saved UUID without hiding warning
+00:00 +8: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: health destination reports partial saved UUID without hiding warning
+00:00 +9: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: health destination reports partial saved UUID without hiding warning
+00:00 +10: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: health destination reports partial saved UUID without hiding warning
+00:00 +11: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: health destination reports partial saved UUID without hiding warning
+00:00 +12: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: health destination reports partial saved UUID without hiding warning
+00:00 +13: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: health destination reports partial saved UUID without hiding warning
+00:00 +14: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: health destination reports partial saved UUID without hiding warning
+00:00 +15: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: health destination reports partial saved UUID without hiding warning
+00:00 +16: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: health destination reports partial saved UUID without hiding warning
+00:00 +17: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: health destination reports partial saved UUID without hiding warning
+00:00 +18: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: health destination reports partial saved UUID without hiding warning
+00:00 +19: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: health destination reports partial saved UUID without hiding warning
+00:00 +20: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: health destination reports partial saved UUID without hiding warning
+00:00 +21: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: original and synced versions keep byte-exact export and inspection
+00:00 +22: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: original and synced versions keep byte-exact export and inspection
+00:00 +23: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: original and synced versions keep byte-exact export and inspection
+00:00 +24: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: original and synced versions keep byte-exact export and inspection
+00:00 +25: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: original and synced versions keep byte-exact export and inspection
+00:00 +26: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: original and synced versions keep byte-exact export and inspection
+00:00 +27: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: original and synced versions keep byte-exact export and inspection
+00:00 +28: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: original and synced versions keep byte-exact export and inspection
+00:00 +29: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: original and synced versions keep byte-exact export and inspection
+00:01 +30: /workspace/shared/workout-offline-generation-stage/flutter_app/test/activity_detail_page_test.dart: original and synced versions keep byte-exact export and inspection
+00:01 +31: /workspace/shared/workout-offline-generation-stage/flutter_app/test/sync_result_messages_test.dart: partial Health and remote metadata warnings remain visible after counters finish
+00:01 +32: /workspace/shared/workout-offline-generation-stage/flutter_app/test/sync_result_messages_test.dart: partial Health and remote metadata warnings remain visible after counters finish
+00:01 +33: /workspace/shared/workout-offline-generation-stage/flutter_app/test/sync_result_messages_test.dart: partial Health and remote metadata warnings remain visible after counters finish
+00:01 +34: /workspace/shared/workout-offline-generation-stage/flutter_app/test/workout_source_test.dart: 健康源把摘要列表映射为统一活动并按 bundle 编码 FIT
+00:01 +35: /workspace/shared/workout-offline-generation-stage/flutter_app/test/sync_preferences_test.dart: legacy preview and health-write preferences keep exact keys
+00:02 +36: /workspace/shared/workout-offline-generation-stage/flutter_app/test/strava_metadata_finalizer_test.dart: metadata401 gets exactly one metadata-only refresh retry
+00:02 +37: /workspace/shared/workout-offline-generation-stage/flutter_app/test/strava_metadata_finalizer_test.dart: metadata failure preserves completed remote upload with safe warning
+00:02 +38: /workspace/shared/workout-offline-generation-stage/flutter_app/test/strava_metadata_finalizer_test.dart: duplicate and missing remote IDs never modify someone else activity
+00:02 +39: /workspace/shared/workout-offline-generation-stage/flutter_app/test/strava_metadata_finalizer_test.dart: cancel after upload starts no metadata work and still records success
+00:02 +40: /workspace/shared/workout-offline-generation-stage/flutter_app/test/route_map_model_test.dart: online tiles require explicitly known WGS84 for every line
+00:02 +41: /workspace/shared/workout-offline-generation-stage/flutter_app/test/route_map_model_test.dart: Mercator projection uses one scale and fits antimeridian route locally
+00:02 +42: /workspace/shared/workout-offline-generation-stage/flutter_app/test/route_map_model_test.dart: polar coordinates and one point produce finite bounded viewport tiles
+00:02 +43: /workspace/shared/workout-offline-generation-stage/flutter_app/test/route_map_model_test.dart: invalid geographic values are rejected before projection or tile access
+00:02 +44: /workspace/shared/workout-offline-generation-stage/flutter_app/test/route_map_model_test.dart: world spanning track still fits within the visible map
+00:02 +45: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:02 +46: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:02 +47: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:02 +48: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:02 +49: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:02 +50: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:02 +51: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:02 +52: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:02 +53: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +54: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +55: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +56: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +57: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +58: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +59: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +60: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +61: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +62: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +63: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +64: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +65: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +66: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +67: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +68: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +69: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +70: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +71: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +72: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +73: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +74: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +75: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +76: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +77: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +78: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +79: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +80: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +81: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +82: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +83: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +84: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +85: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +86: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +87: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +88: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +89: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +90: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +91: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +92: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +93: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +94: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +95: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +96: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +97: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +98: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +99: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +100: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +101: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +102: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +103: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +104: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +105: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +106: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +107: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +108: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +109: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +110: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +111: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +112: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 单个有效 FIT 直接导出，不重编码原始内容
+00:03 +113: /workspace/shared/workout-offline-generation-stage/flutter_app/test/apple_health_import_test.dart: dialog returns AppleHealthNearbyDecision.write
+00:03 +114: /workspace/shared/workout-offline-generation-stage/flutter_app/test/route_map_test.dart: online consent does not carry to a different activity
+00:03 +115: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +116: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +117: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +118: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +119: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +120: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +121: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +122: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +123: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +124: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +125: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +126: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +127: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +128: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +129: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +130: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +131: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +132: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +133: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +134: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +135: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +136: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +137: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +138: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +139: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +140: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +141: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +142: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:04 +143: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 多文件要求显式主源并传递真实偏移与补充模式
+00:05 +144: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 重复导入同一文件只保留一次，无效 FIT 明确报错
+00:05 +145: /workspace/shared/workout-offline-generation-stage/flutter_app/test/workout_export_test.dart: JSON 导出保留旧字段、所选时区与临时目录清理
+00:05 +146: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 健康训练支持全选批量加入且读取所选范围
+00:05 +147: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 健康训练支持全选批量加入且读取所选范围
+00:05 +148: /workspace/shared/workout-offline-generation-stage/flutter_app/test/osm_tile_source_test.dart: desktop tile cache uses the user profile rather than a shared temp directory
+00:05 +149: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 健康批量读取失败不残留半批文件
+00:05 +150: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 健康批量读取失败不残留半批文件
+00:05 +151: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 健康批量读取失败不残留半批文件
+00:05 +152: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 健康批量读取失败不残留半批文件
+00:05 +153: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 健康批量读取失败不残留半批文件
+00:05 +154: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 健康批量读取失败不残留半批文件
+00:05 +155: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 健康批量读取失败不残留半批文件
+00:05 +156: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 健康批量读取失败不残留半批文件
+00:05 +157: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 健康批量读取失败不残留半批文件
+00:05 +158: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 健康批量读取失败不残留半批文件
+00:05 +159: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 健康批量读取失败不残留半批文件
+00:05 +160: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_page_test.dart: 健康批量读取失败不残留半批文件
+00:05 +161: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +162: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +163: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +164: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +165: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +166: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +167: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +168: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +169: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +170: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +171: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +172: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +173: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +174: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +175: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +176: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +177: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +178: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +179: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +180: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +181: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +182: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +183: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +184: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +185: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +186: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 登录后加载顽鹿活动，页面不回显密码或会话
+00:06 +187: /workspace/shared/workout-offline-generation-stage/flutter_app/test/virtual_power_settings_test.dart: 默认关闭并在启用前披露位置日期天气传输
+00:06 +188: /workspace/shared/workout-offline-generation-stage/flutter_app/test/virtual_power_settings_test.dart: 默认关闭并在启用前披露位置日期天气传输
+00:06 +189: /workspace/shared/workout-offline-generation-stage/flutter_app/test/virtual_power_settings_test.dart: 默认关闭并在启用前披露位置日期天气传输
+00:06 +190: /workspace/shared/workout-offline-generation-stage/flutter_app/test/virtual_power_settings_test.dart: 默认关闭并在启用前披露位置日期天气传输
+00:06 +191: /workspace/shared/workout-offline-generation-stage/flutter_app/test/virtual_power_settings_test.dart: 默认关闭并在启用前披露位置日期天气传输
+00:06 +192: /workspace/shared/workout-offline-generation-stage/flutter_app/test/virtual_power_settings_test.dart: 默认关闭并在启用前披露位置日期天气传输
+00:06 +193: /workspace/shared/workout-offline-generation-stage/flutter_app/test/virtual_power_settings_test.dart: 默认关闭并在启用前披露位置日期天气传输
+00:06 +194: /workspace/shared/workout-offline-generation-stage/flutter_app/test/virtual_power_settings_test.dart: 默认关闭并在启用前披露位置日期天气传输
+00:06 +195: /workspace/shared/workout-offline-generation-stage/flutter_app/test/virtual_power_settings_test.dart: 默认关闭并在启用前披露位置日期天气传输
+00:06 +196: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 退出登录先确认；清除失败不伪装已退出
+00:07 +197: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 退出登录先确认；清除失败不伪装已退出
+00:07 +198: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 退出登录先确认；清除失败不伪装已退出
+00:07 +199: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 退出登录先确认；清除失败不伪装已退出
+00:07 +200: /workspace/shared/workout-offline-generation-stage/flutter_app/test/third_party_source_page_test.dart: 退出登录先确认；清除失败不伪装已退出
+00:07 +201: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +202: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +203: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +204: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +205: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +206: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +207: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +208: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +209: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +210: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +211: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +212: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +213: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +214: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +215: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +216: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +217: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +218: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +219: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +220: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +221: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +222: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +223: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +224: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +225: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: select all and confirm preserve source order
+00:07 +226: /workspace/shared/workout-offline-generation-stage/flutter_app/test/fit_merge_picker_test.dart: deselect all disables confirmation; individual selection supported
+00:08 +227: /workspace/shared/workout-offline-generation-stage/flutter_app/test/export_controls_test.dart: 缺同步文件禁选同步版，摘要 JSON 仍可选择
+00:08 +228: /workspace/shared/workout-offline-generation-stage/flutter_app/test/export_controls_test.dart: 缺同步文件禁选同步版，摘要 JSON 仍可选择
+00:08 +229: /workspace/shared/workout-offline-generation-stage/flutter_app/test/export_controls_test.dart: 缺同步文件禁选同步版，摘要 JSON 仍可选择
+00:09 +230: /workspace/shared/workout-offline-generation-stage/flutter_app/test/widget_test.dart: 启动 UI 前先初始化 Rust
+00:09 +231: /workspace/shared/workout-offline-generation-stage/flutter_app/test/strava_settings_page_test.dart: 保存旧键、完成 OAuth 并原子持久化 token
+00:09 +232: /workspace/shared/workout-offline-generation-stage/flutter_app/test/strava_settings_page_test.dart: 保存旧键、完成 OAuth 并原子持久化 token
+00:09 +233: /workspace/shared/workout-offline-generation-stage/flutter_app/test/strava_settings_page_test.dart: 保存旧键、完成 OAuth 并原子持久化 token
+00:09 +234: /workspace/shared/workout-offline-generation-stage/flutter_app/test/strava_settings_page_test.dart: 保存旧键、完成 OAuth 并原子持久化 token
+00:09 +235: /workspace/shared/workout-offline-generation-stage/flutter_app/test/strava_settings_page_test.dart: 保存旧键、完成 OAuth 并原子持久化 token
+00:09 +236: /workspace/shared/workout-offline-generation-stage/flutter_app/test/strava_settings_page_test.dart: 保存旧键、完成 OAuth 并原子持久化 token
+00:09 +237: /workspace/shared/workout-offline-generation-stage/flutter_app/test/strava_settings_page_test.dart: 保存旧键、完成 OAuth 并原子持久化 token
+00:09 +238: /workspace/shared/workout-offline-generation-stage/flutter_app/test/strava_settings_page_test.dart: 保存旧键、完成 OAuth 并原子持久化 token
+00:09 +239: /workspace/shared/workout-offline-generation-stage/flutter_app/test/strava_settings_page_test.dart: 保存旧键、完成 OAuth 并原子持久化 token
+00:09 +240: /workspace/shared/workout-offline-generation-stage/flutter_app/test/strava_settings_page_test.dart: 保存旧键、完成 OAuth 并原子持久化 token
+00:09 +241: /workspace/shared/workout-offline-generation-stage/flutter_app/test/strava_settings_page_test.dart: 保存旧键、完成 OAuth 并原子持久化 token
+00:10 +242: /workspace/shared/workout-offline-generation-stage/flutter_app/test/strava_settings_page_test.dart: 保存旧键、完成 OAuth 并原子持久化 token
+00:10 +243: /workspace/shared/workout-offline-generation-stage/flutter_app/test/export_controls_test.dart: 分享结果可重试，失败新导出保留旧结果，删除需确认
+00:10 +244: /workspace/shared/workout-offline-generation-stage/flutter_app/test/export_controls_test.dart: 分享结果可重试，失败新导出保留旧结果，删除需确认
+00:10 +245: /workspace/shared/workout-offline-generation-stage/flutter_app/test/export_controls_test.dart: 分享结果可重试，失败新导出保留旧结果，删除需确认
+00:10 +246: /workspace/shared/workout-offline-generation-stage/flutter_app/test/export_controls_test.dart: 分享结果可重试，失败新导出保留旧结果，删除需确认
+00:10 +247: /workspace/shared/workout-offline-generation-stage/flutter_app/test/export_controls_test.dart: 分享结果可重试，失败新导出保留旧结果，删除需确认
+00:10 +248: /workspace/shared/workout-offline-generation-stage/flutter_app/test/export_controls_test.dart: 分享结果可重试，失败新导出保留旧结果，删除需确认
+00:11 +249: /workspace/shared/workout-offline-generation-stage/flutter_app/test/widget_test.dart: 健康页所选同步进入共享自动同步页，不直接启动 API 首传
+00:11 +250: /workspace/shared/workout-offline-generation-stage/flutter_app/test/export_controls_test.dart: 选择同步版后检查发现文件已丢失则拒绝导出
+00:11 +251: /workspace/shared/workout-offline-generation-stage/flutter_app/test/widget_test.dart: 健康训练加载失败后可以重试
+00:11 +252: /workspace/shared/workout-offline-generation-stage/flutter_app/test/widget_test.dart: 首次授权完成前切换日期不会提前查询或丢失授权后结果
+00:11 +253: /workspace/shared/workout-offline-generation-stage/flutter_app/test/widget_test.dart: 健康训练空态可以打开系统设置恢复权限
+00:11 +254: All tests passed!

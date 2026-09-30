@@ -1,0 +1,1344 @@
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -139,6 +139,15 @@
+ checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
+ dependencies = [
+  "generic-array",
++]
++
++[[package]]
++name = "block-buffer"
++version = "0.12.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
++dependencies = [
++ "hybrid-array",
+ ]
+ 
+ [[package]]
+@@ -307,6 +316,12 @@
+ ]
+ 
+ [[package]]
++name = "const-oid"
++version = "0.10.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
++
++[[package]]
+ name = "convert_case"
+ version = "0.5.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -328,6 +343,15 @@
+ ]
+ 
+ [[package]]
++name = "cpufeatures"
++version = "0.3.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8b2a41393f66f16b0823bb79094d54ac5fbd34ab292ddafb9a0456ac9f87d201"
++dependencies = [
++ "libc",
++]
++
++[[package]]
+ name = "crossbeam-channel"
+ version = "0.5.8"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -354,6 +378,15 @@
+ dependencies = [
+  "generic-array",
+  "typenum",
++]
++
++[[package]]
++name = "crypto-common"
++version = "0.2.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
++dependencies = [
++ "hybrid-array",
+ ]
+ 
+ [[package]]
+@@ -392,8 +425,19 @@
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
+ dependencies = [
+- "block-buffer",
+- "crypto-common",
++ "block-buffer 0.10.4",
++ "crypto-common 0.1.6",
++]
++
++[[package]]
++name = "digest"
++version = "0.11.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
++dependencies = [
++ "block-buffer 0.12.1",
++ "const-oid",
++ "crypto-common 0.2.2",
+ ]
+ 
+ [[package]]
+@@ -533,6 +577,7 @@
+  "serde_yaml",
+  "serial_test",
+  "sha1",
++ "sha2",
+  "strum",
+  "strum_macros",
+  "syn 2.0.85",
+@@ -686,6 +731,15 @@
+ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+ 
+ [[package]]
++name = "hybrid-array"
++version = "0.4.14"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "707114b52a152fa7bdb290cd7cd5912d9467273b6d74e21b8d81aca1f8533f6b"
++dependencies = [
++ "typenum",
++]
++
++[[package]]
+ name = "iana-time-zone"
+ version = "0.1.57"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -849,9 +903,9 @@
+ 
+ [[package]]
+ name = "libc"
+-version = "0.2.153"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "9c198f91728a82281a64e1f4f9eeb25d82cb32a5de251c6bd1b5154d63a8e7bd"
++version = "0.2.189"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
+ 
+ [[package]]
+ name = "linux-raw-sys"
+@@ -1224,8 +1278,19 @@
+ checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
+ dependencies = [
+  "cfg-if",
+- "cpufeatures",
+- "digest",
++ "cpufeatures 0.2.12",
++ "digest 0.10.7",
++]
++
++[[package]]
++name = "sha2"
++version = "0.11.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
++dependencies = [
++ "cfg-if",
++ "cpufeatures 0.3.0",
++ "digest 0.11.3",
+ ]
+ 
+ [[package]]
+@@ -1365,9 +1430,9 @@
+ 
+ [[package]]
+ name = "typenum"
+-version = "1.17.0"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "42ff0bf0c66b8238c6f3b578df37d0b7848e55df8577b3f74f92a69acceeb825"
++version = "1.20.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+ 
+ [[package]]
+ name = "unicode-ident"
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -11,7 +11,7 @@
+ 
+ [package]
+ edition = "2021"
+-rust-version = "1.74.0"
++rust-version = "1.88"
+ name = "flutter_rust_bridge_codegen"
+ version = "2.12.0"
+ build = false
+@@ -154,6 +154,9 @@
+ [dependencies.sha1]
+ version = "0.10.6"
+ 
++[dependencies.sha2]
++version = "=0.11.0"
++
+ [dependencies.strum]
+ version = "0.26.3"
+ 
+--- a/src/library/build_web/mod.rs
++++ b/src/library/build_web/mod.rs
+@@ -1,118 +1,18 @@
+-//! Build web platform for a Flutter+Rust app
++//! The offline replacement does not expose Dart-powered web build operations.
++use std::path::PathBuf;
+ 
+-use crate::command_run;
+-use crate::library::commands::command_runner::{call_shell, call_shell_info, check_exit_code};
+-use crate::library::commands::fvm::command_arg_maybe_fvm;
+-use crate::utils::dart_repository::dart_repo::DartRepository;
+-use crate::utils::path_utils::{find_dart_package_dir, path_to_string};
+-use anyhow::{bail, Context};
+-use itertools::Itertools;
+-use log::debug;
+-use std::path::{Path, PathBuf};
+-use std::process::{Command, ExitStatus};
+-use std::{env, fs};
+-
+-// We make the core build-web logic in Dart, and Rust is just a wrapper.
+-// This is because, in the future, the build-web logic may be packaged with user libraries
+-// and invoked in machines without flutter_rust_bridge_codegen binary.
+ pub fn build(
+-    dart_root: Option<PathBuf>,
+-    dart_coverage: bool,
+-    args: Vec<String>,
++    _dart_root: Option<PathBuf>,
++    _dart_coverage: bool,
++    _args: Vec<String>,
+ ) -> anyhow::Result<()> {
+-    let dart_root = parse_dart_root(dart_root)?;
+-    debug!("build dart_root={dart_root:?} args={args:?}");
+-    execute_dart_command(&dart_root, &args, dart_coverage)
++    anyhow::bail!("offline adapter supports generation only; build-web is unavailable")
+ }
+ 
+-fn parse_dart_root(dart_root: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+-    dart_root
+-        .map(|x| Ok(fs::canonicalize(x)?))
+-        .unwrap_or_else(|| {
+-            find_dart_package_dir(&env::current_dir()?)
+-                .context("Please provide --dart-root, or run command inside a Flutter/Dart package")
+-        })
++#[cfg(test)]
++mod offline_guard_tests {
++    #[test]
++    fn build_web_entry_never_dispatches_dart() {
++        assert!(super::build(None, false, vec![]).is_err());
++    }
+ }
+-
+-fn execute_dart_command(
+-    dart_root: &Path,
+-    args: &[String],
+-    dart_coverage: bool,
+-) -> anyhow::Result<()> {
+-    let repo = DartRepository::from_path(dart_root)?;
+-
+-    let dart_run_args = {
+-        let mut ans = vec![
+-            "flutter_rust_bridge".to_owned(),
+-            "build-web".to_owned(),
+-            "--dart-root".to_owned(),
+-            path_to_string(dart_root)?,
+-        ];
+-        ans.extend(args.to_owned());
+-        ans
+-    };
+-    let status = dart_run(&repo, dart_root, dart_coverage, dart_run_args)?;
+-
+-    if !status.success() {
+-        // This will stop the whole generator and tell the users, so we do not care about testing it
+-        // frb-coverage:ignore-start
+-        bail!("Fail to execute command, please see logs above for details.")
+-        // frb-coverage:ignore-end
+-    }
+-
+-    Ok(())
+-}
+-
+-// ref: https://pub.dev/packages/coverage
+-#[allow(clippy::vec_init_then_push)]
+-fn dart_run(
+-    repo: &DartRepository,
+-    current_dir: &Path,
+-    dart_coverage: bool,
+-    args: Vec<String>,
+-) -> anyhow::Result<ExitStatus> {
+-    let handle = {
+-        let mut cmd_args: Vec<PathBuf> = if command_arg_maybe_fvm(None).is_some() {
+-            vec!["fvm".into(), "dart".into()]
+-        } else {
+-            vec!["dart".into()]
+-        };
+-        cmd_args.extend(repo.command_extra_args().into_iter().map_into());
+-        cmd_args.push("run".into());
+-        if dart_coverage {
+-            cmd_args.extend([
+-                "--pause-isolates-on-exit".into(),
+-                "--disable-service-auth-codes".into(),
+-                "--enable-vm-service=8181".into(),
+-            ]);
+-        }
+-        cmd_args.extend(args.into_iter().map_into());
+-
+-        let info = call_shell_info(&cmd_args);
+-        Command::new(info.program)
+-            .args(info.args)
+-            .current_dir(current_dir)
+-            .spawn()?
+-    };
+-
+-    if dart_coverage {
+-        let res = command_run!(
+-            call_shell[Some(current_dir), None],
+-            "dart",
+-            "pub",
+-            "global",
+-            "run",
+-            "coverage:collect_coverage",
+-            "--wait-paused",
+-            "--uri=http://127.0.0.1:8181/",
+-            "-o",
+-            "coverage/coverage.json",
+-            "--resume-isolates",
+-            // TODO this scope-output?
+-            "--scope-output=foo",
+-        )?;
+-        check_exit_code(&res)?;
+-    }
+-
+-    Ok(handle.wait_with_output()?.status)
+-}
+--- a/src/library/codegen/config/internal_config_parser/generator_parser.rs
++++ b/src/library/codegen/config/internal_config_parser/generator_parser.rs
+@@ -54,7 +54,7 @@
+     let dart_enums_style = config.dart_enums_style.unwrap_or(true);
+     let dart3 = config.dart3.unwrap_or(true);
+     let default_external_library_loader =
+-        compute_default_external_library_loader(rust_crate_dir, dart_root, config);
++        compute_default_external_library_loader(rust_crate_dir, dart_root, config)?;
+     let c_symbol_prefix = compute_c_symbol_prefix(dart_root)?;
+ 
+     Ok(GeneratorInternalConfig {
+@@ -134,18 +134,13 @@
+     rust_crate_dir: &Path,
+     dart_root: &Path,
+     config: &Config,
+-) -> GeneratorWireDartDefaultExternalLibraryLoaderInternalConfig {
+-    const FALLBACK_DEFAULT_EXTERNAL_LIBRARY_STEM: &str = "UNKNOWN";
+-    const FALLBACK_DEFAULT_EXTERNAL_LIBRARY_RELATIVE_DIRECTORY: &str = "UNKNOWN";
+-
+-    GeneratorWireDartDefaultExternalLibraryLoaderInternalConfig {
+-        stem: compute_default_external_library_stem(rust_crate_dir)
+-            .unwrap_or(FALLBACK_DEFAULT_EXTERNAL_LIBRARY_STEM.to_owned()),
++) -> anyhow::Result<GeneratorWireDartDefaultExternalLibraryLoaderInternalConfig> {
++    Ok(GeneratorWireDartDefaultExternalLibraryLoaderInternalConfig {
++        stem: compute_default_external_library_stem(rust_crate_dir)?,
+         io_directory: compute_default_external_library_relative_directory(
+             rust_crate_dir,
+             dart_root,
+-        )
+-        .unwrap_or(FALLBACK_DEFAULT_EXTERNAL_LIBRARY_RELATIVE_DIRECTORY.to_owned()),
++        )?,
+         web_prefix: config
+             .default_external_library_loader_web_prefix
+             .as_deref()
+@@ -156,7 +151,7 @@
+             .as_deref()
+             .unwrap_or("wasm_bindgen")
+             .into(),
+-    }
++    })
+ }
+ 
+ fn compute_default_external_library_stem(rust_crate_dir: &Path) -> anyhow::Result<String> {
+--- a/src/library/codegen/config/internal_config_parser/mod.rs
++++ b/src/library/codegen/config/internal_config_parser/mod.rs
+@@ -15,7 +15,6 @@
+ use anyhow::Result;
+ use itertools::Itertools;
+ use log::debug;
+-use std::fs;
+ use std::path::PathBuf;
+ use strum::IntoEnumIterator;
+ 
+@@ -52,7 +51,7 @@
+         )?;
+ 
+         let dart_output_dir_raw = base_dir.join(dart_output);
+-        fs::create_dir_all(&dart_output_dir_raw)?;
++        anyhow::ensure!(dart_output_dir_raw.is_dir(), "offline generation requires an existing output directory");
+ 
+         let dart_output_dir = canonicalize_with_error_message(&dart_output_dir_raw)?;
+         let dart_output_path_pack =
+--- a/src/library/codegen/mod.rs
++++ b/src/library/codegen/mod.rs
+@@ -23,6 +23,7 @@
+ pub fn generate(config: Config, meta_config: MetaConfig) -> anyhow::Result<()> {
+     debug!("config={config:?} meta_config={meta_config:?}");
+ 
++    let config = crate::offline::prepare_config(config, &meta_config)?;
+     let internal_config = InternalConfig::parse(&config, &meta_config)?;
+     debug!("internal_config={internal_config:?}");
+ 
+@@ -60,6 +61,10 @@
+     )?;
+     drop(pb);
+ 
++    crate::offline_policy::validate_output(
++        generator_output.dart_needs_freezed,
++        generator_output.dart_needs_json_serializable,
++    ).map_err(anyhow::Error::msg)?;
+     generator_output.output_texts.write_to_disk()?;
+ 
+     let pb = progress_bar_pack.polish.start();
+--- a/src/library/commands/cargo_expand/mod.rs
++++ b/src/library/commands/cargo_expand/mod.rs
+@@ -1,4 +1,3 @@
+-mod pseudo;
+ mod real;
+ 
+ use crate::codegen::dumper::Dumper;
+@@ -18,7 +17,7 @@
+     if can_execute_real(rust_crate_dir)? {
+         real::run(rust_crate_dir, interest_crate_name, dumper, features)
+     } else {
+-        pseudo::run(rust_crate_dir, interest_crate_name)
++        anyhow::bail!("offline generation requires real cargo-expand; nested Cargo generation is unsupported")
+     }
+ }
+ 
+--- a/src/library/commands/cargo_expand/real.rs
++++ b/src/library/commands/cargo_expand/real.rs
+@@ -6,7 +6,7 @@
+ use anyhow::{bail, Context, Result};
+ use itertools::Itertools;
+ use lazy_static::lazy_static;
+-use log::{debug, info};
++use log::debug;
+ use regex::{Captures, Regex};
+ use std::borrow::Cow;
+ use std::env;
+@@ -33,7 +33,6 @@
+         rust_crate_dir,
+         interest_crate_name,
+         "--cfg frb_expand",
+-        true,
+         features,
+     )?)
+     .into_owned())
+@@ -58,7 +57,6 @@
+     rust_crate_dir: &Path,
+     interest_crate_name: Option<&CrateName>,
+     extra_rustflags: &str,
+-    allow_auto_install: bool,
+     features: Option<&[String]>,
+ ) -> Result<String> {
+     // let _pb = simple_progress("Run cargo-expand".to_owned(), 1);
+@@ -103,38 +101,22 @@
+     )
+     .with_context(|| format!("Could not expand rust code at path {rust_crate_dir:?}"))?;
+ 
++    expansion_output_text(output)
++}
++
++fn expansion_output_text(output: std::process::Output) -> Result<String> {
++    crate::library::commands::command_runner::check_exit_code(&output)?;
+     let stdout = String::from_utf8(output.stdout)?;
+     let stderr = String::from_utf8(output.stderr)?;
+ 
+     if stdout.is_empty() {
+-        if stderr.contains("no such command: `expand`") && allow_auto_install {
+-            info!("Cargo expand is not installed. Automatically install and re-run.");
+-            install_cargo_expand()?;
+-            return run_raw(
+-                rust_crate_dir,
+-                interest_crate_name,
+-                extra_rustflags,
+-                false,
+-                features,
+-            );
+-        }
+         // This will stop the whole generator and tell the users, so we do not care about testing it
+         // frb-coverage:ignore-start
+-        bail!("cargo expand returned empty output");
++        bail!("offline cargo expand returned empty output: {stderr}");
+         // frb-coverage:ignore-end
+     }
+ 
+     Ok(stdout.lines().skip(1).join("\n"))
+-}
+-
+-fn install_cargo_expand() -> Result<()> {
+-    execute_command(
+-        "cargo",
+-        &vec!["install".into(), "cargo-expand".into()],
+-        None,
+-        None,
+-    )?;
+-    Ok(())
+ }
+ 
+ // fn extract_module(raw_expanded: &str, module: Option<String>) -> Result<String> {
+@@ -233,3 +215,31 @@
+ //         assert_eq!(String::from("    // 12345"), extracted);
+ //     }
+ // }
++
++#[cfg(all(test, unix))]
++mod offline_guard_tests {
++    use super::*;
++    use std::os::unix::process::ExitStatusExt;
++    fn output(code: i32, stdout: &str) -> std::process::Output {
++        std::process::Output {
++            status: std::process::ExitStatus::from_raw(code << 8),
++            stdout: stdout.as_bytes().to_vec(),
++            stderr: b"compiler failed".to_vec(),
++        }
++    }
++    #[test]
++    fn rejects_failed_expansion_even_with_nonempty_stdout() {
++        assert!(expansion_output_text(output(1, "header\npub fn partial() {}\n")).is_err());
++    }
++    #[test]
++    fn preserves_successful_expansion_text_and_header_handling() {
++        assert_eq!(
++            expansion_output_text(output(0, "header\npub fn complete() {}\n")).unwrap(),
++            "pub fn complete() {}"
++        );
++    }
++    #[test]
++    fn rejects_empty_successful_expansion() {
++        assert!(expansion_output_text(output(0, "")).is_err());
++    }
++}
+--- a/src/library/commands/cargo_metadata.rs
++++ b/src/library/commands/cargo_metadata.rs
+@@ -1,8 +1,18 @@
+-use cargo_metadata::{Metadata, MetadataCommand};
++use crate::library::commands::command_runner::{check_exit_code, execute_command};
++use cargo_metadata::Metadata;
+ use std::path::Path;
+ 
+ pub(crate) fn execute_cargo_metadata(manifest_path: &Path) -> anyhow::Result<Metadata> {
+-    let mut cmd = MetadataCommand::new();
+-    cmd.manifest_path(manifest_path);
+-    Ok(cmd.exec()?)
++    let args = vec![
++        "metadata".into(),
++        "--format-version".into(),
++        "1".into(),
++        "--manifest-path".into(),
++        manifest_path.to_owned(),
++        "--offline".into(),
++        "--locked".into(),
++    ];
++    let output = execute_command("cargo", &args, manifest_path.parent(), None)?;
++    check_exit_code(&output)?;
++    Ok(serde_json::from_slice(&output.stdout)?)
+ }
+--- a/src/library/commands/command_runner.rs
++++ b/src/library/commands/command_runner.rs
+@@ -5,7 +5,6 @@
+ use log::warn;
+ use std::collections::HashMap;
+ use std::path::{Path, PathBuf};
+-use std::process::Command;
+ use std::process::Output;
+ 
+ /// - First argument is either a string of a command, or a function receiving a slice of [`PathBuf`].
+@@ -180,13 +179,14 @@
+ 
+     let args = args.into_iter().collect_vec();
+     let args_display = args.iter().map(|path| path.to_string_lossy()).join(" ");
+-    let mut cmd = Command::new(bin);
+-    cmd.args(args);
++    let owned_args = args.iter().map(|x| (*x).clone()).collect_vec();
++    let mut cmd = crate::offline::command(bin, &owned_args, current_dir)?;
+ 
+     if let Some(current_dir) = current_dir {
+         cmd.current_dir(normalize_windows_unc_path(&path_to_string(current_dir)?));
+     }
+     if let Some(envs) = options.envs {
++        crate::offline::check_extra_environment(&envs)?;
+         cmd.envs(envs);
+     }
+ 
+--- a/src/library/commands/ensure_tools_available.rs
++++ b/src/library/commands/ensure_tools_available.rs
+@@ -1,5 +1,4 @@
+ use crate::utils::dart_repository::dart_repo::{DartDependencyMode, DartRepository};
+-use anyhow::bail;
+ use cargo_metadata::VersionReq;
+ use lazy_static::lazy_static;
+ use std::path::Path;
+@@ -14,13 +13,6 @@
+     needs_ffigen: bool,
+ ) -> anyhow::Result<()> {
+     let repo = DartRepository::from_path(dart_root)?;
+-    if !repo.toolchain_available() {
+-        // This will stop the whole generator and tell the users, so we do not care about testing it
+-        // frb-coverage:ignore-start
+-        bail!("Dart/Flutter toolchain not available");
+-        // frb-coverage:ignore-end
+-    }
+-
+     if enable_deps_check && needs_ffigen {
+         repo.has_specified_and_installed("ffigen", DartDependencyMode::Dev, &FFIGEN_REQUIREMENT)?;
+         // This empty bracket ("}") is weirdly not covered, while lines above and below it are
+--- a/src/library/mod.rs
++++ b/src/library/mod.rs
+@@ -8,3 +8,5 @@
+ pub mod internal;
+ pub mod misc;
+ pub mod utils;
++pub(crate) mod offline;
++pub(crate) mod offline_policy;
+--- /dev/null
++++ b/src/library/offline.rs
+@@ -0,0 +1,429 @@
++//! Offline-only execution adapter. Never starts Dart, Flutter, FVM or installers.
++use crate::codegen::{Config, MetaConfig};
++use crate::offline_policy::{classify_command, reject_enabled, CommandKind};
++use anyhow::{bail, ensure, Context, Result};
++use sha2::{Digest, Sha256};
++use std::{
++    env, fs,
++    path::{Path, PathBuf},
++    process::Command,
++};
++
++#[derive(Debug)]
++struct PinnedTools {
++    cargo: PathBuf,
++    expand: PathBuf,
++    rustc: PathBuf,
++    cargo_home: PathBuf,
++}
++
++fn verify_pin(path: &Path, expected: &str) -> Result<()> {
++    ensure!(
++        path.is_absolute(),
++        "offline executable path must be absolute"
++    );
++    ensure!(
++        fs::canonicalize(path)? == path,
++        "offline executable path must be canonical (no proxy or symlink)"
++    );
++    ensure!(path.is_file(), "offline executable must be a regular file");
++    #[cfg(unix)]
++    {
++        use std::os::unix::fs::PermissionsExt;
++        ensure!(
++            fs::metadata(path)?.permissions().mode() & 0o111 != 0,
++            "offline executable is not executable"
++        );
++    }
++    ensure!(
++        expected.len() == 64 && expected.bytes().all(|x| x.is_ascii_hexdigit()),
++        "offline executable SHA256 pin must be 64 hex characters"
++    );
++    let actual = hex::encode(&Sha256::digest(fs::read(path)?)[..]);
++    ensure!(
++        actual.eq_ignore_ascii_case(expected),
++        "offline executable SHA256 mismatch: {}",
++        path.display()
++    );
++    Ok(())
++}
++
++fn pinned_tool(name: &str) -> Result<PathBuf> {
++    let path = PathBuf::from(env::var(name).with_context(|| format!("missing {name}"))?);
++    let expected =
++        env::var(format!("{name}_SHA256")).with_context(|| format!("missing {name}_SHA256"))?;
++    verify_pin(&path, &expected)?;
++    Ok(path)
++}
++
++fn reject_cargo_configuration(start: &Path, cargo_home: &Path) -> Result<()> {
++    for name in ["config", "config.toml"] {
++        ensure!(
++            !cargo_home.join(name).exists(),
++            "offline adapter requires a Cargo home without configuration overrides"
++        );
++        for ancestor in start.ancestors() {
++            ensure!(
++                !ancestor.join(".cargo").join(name).exists(),
++                "offline adapter rejects ancestor Cargo configuration: {}",
++                ancestor.display()
++            );
++        }
++    }
++    Ok(())
++}
++
++impl PinnedTools {
++    fn load() -> Result<Self> {
++        let cargo = pinned_tool("FRB_OFFLINE_CARGO")?;
++        let expand = pinned_tool("FRB_OFFLINE_CARGO_EXPAND")?;
++        let rustc = pinned_tool("FRB_OFFLINE_RUSTC")?;
++        let cargo_home =
++            PathBuf::from(env::var("CARGO_HOME").context("offline adapter requires CARGO_HOME")?);
++        ensure!(
++            cargo_home.is_absolute() && cargo_home.is_dir(),
++            "CARGO_HOME must be an existing absolute directory"
++        );
++        for key in [
++            "RUSTFLAGS",
++            "CARGO_ENCODED_RUSTFLAGS",
++            "RUSTC_WRAPPER",
++            "RUSTC_WORKSPACE_WRAPPER",
++            "CARGO_BUILD_RUSTC_WRAPPER",
++            "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
++        ] {
++            ensure!(
++                env::var_os(key).is_none_or(|v| v.is_empty()),
++                "offline adapter rejects inherited {key}"
++            );
++        }
++        Ok(Self {
++            cargo,
++            expand,
++            rustc,
++            cargo_home,
++        })
++    }
++}
++
++/// Called before config resolution (which performs metadata and creates paths).
++pub(crate) fn prepare_config(mut config: Config, meta: &MetaConfig) -> Result<Config> {
++    validate_config(&mut config, meta)?;
++    let tools = PinnedTools::load()?;
++    reject_cargo_configuration(&env::current_dir()?, &tools.cargo_home)?;
++    Ok(config)
++}
++
++fn validate_config(config: &mut Config, meta: &MetaConfig) -> Result<()> {
++    let switches = [
++        ("full_dep / ffigen", config.full_dep),
++        ("build_runner", config.build_runner),
++        ("dart_fix", config.dart_fix),
++        ("dart_format", config.dart_format),
++        ("rust_format", config.rust_format),
++        ("auto_upgrade_dependency", config.auto_upgrade_dependency),
++        ("add_mod_to_lib", config.add_mod_to_lib),
++        ("dump_all", config.dump_all),
++    ];
++    for (name, value) in switches {
++        reject_enabled(name, value.unwrap_or(false)).map_err(anyhow::Error::msg)?;
++    }
++    reject_enabled("watch", meta.watch).map_err(anyhow::Error::msg)?;
++    ensure!(
++        config.dump.as_ref().is_none_or(|x| x.is_empty()),
++        "offline adapter rejects dump output"
++    );
++    ensure!(
++        config.c_output.is_none()
++            && config
++                .duplicated_c_output
++                .as_ref()
++                .is_none_or(|x| x.is_empty()),
++        "offline adapter rejects C output requiring full_dep"
++    );
++    ensure!(
++        config.stop_on_error != Some(false),
++        "offline adapter requires stop_on_error"
++    );
++    config.full_dep = Some(false);
++    config.build_runner = Some(false);
++    config.dart_fix = Some(false);
++    config.dart_format = Some(false);
++    config.rust_format = Some(false);
++    config.auto_upgrade_dependency = Some(false);
++    config.add_mod_to_lib = Some(false);
++    config.stop_on_error = Some(true);
++    Ok(())
++}
++
++/// The only process construction path permitted by the offline generation entry.
++pub(crate) fn command(
++    program: &str,
++    args: &[PathBuf],
++    current_dir: Option<&Path>,
++) -> Result<Command> {
++    let kind = classify_command(program, args).map_err(anyhow::Error::msg)?;
++    let tools = PinnedTools::load()?;
++    let cwd = current_dir
++        .map(PathBuf::from)
++        .unwrap_or(env::current_dir()?);
++    reject_cargo_configuration(&cwd, &tools.cargo_home)?;
++    command_with_tools(kind, args, &cwd, tools)
++}
++
++fn command_with_tools(
++    kind: CommandKind,
++    args: &[PathBuf],
++    cwd: &Path,
++    tools: PinnedTools,
++) -> Result<Command> {
++    let executable = match kind {
++        CommandKind::Expand => &tools.expand,
++        CommandKind::Metadata => &tools.cargo,
++    };
++    let mut command = Command::new(executable);
++    command.env_clear();
++    for name in ["HOME", "TMPDIR", "TMP", "TEMP"] {
++        if let Some(value) = env::var_os(name) {
++            command.env(name, value);
++        }
++    }
++    let search_path = env::join_paths([
++        tools.rustc.parent().context("rustc has no parent")?,
++        tools.cargo.parent().context("cargo has no parent")?,
++        Path::new("/usr/bin"),
++        Path::new("/bin"),
++    ])?;
++    command
++        .env("PATH", search_path)
++        .env("CARGO_HOME", tools.cargo_home)
++        .env("CARGO_NET_OFFLINE", "true")
++        .env("CARGO_TERM_COLOR", "never")
++        .env("CARGO", tools.cargo)
++        .env("RUSTC", tools.rustc);
++    command.current_dir(cwd).args(args);
++    if kind == CommandKind::Expand {
++        // cargo-expand forwards these Cargo flags and otherwise may update Cargo.lock.
++        command
++            .arg("--offline")
++            .arg("--locked")
++            .arg("--color=never");
++    }
++    Ok(command)
++}
++
++pub(crate) fn check_extra_environment(
++    envs: &std::collections::HashMap<String, String>,
++) -> Result<()> {
++    for (key, value) in envs {
++        if key != "RUSTFLAGS" || value != "--cfg frb_expand" {
++            bail!("offline adapter rejects subprocess environment override {key}");
++        }
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod offline_guard_tests {
++    use super::*;
++
++    #[test]
++    fn defaults_disable_all_external_polish_and_preserve_web() {
++        let mut config = Config {
++            web: Some(true),
++            ..Default::default()
++        };
++        validate_config(&mut config, &MetaConfig::default()).unwrap();
++        assert_eq!(config.web, Some(true));
++        assert_eq!(config.dart_fix, Some(false));
++        assert_eq!(config.dart_format, Some(false));
++        assert_eq!(config.rust_format, Some(false));
++        assert_eq!(config.build_runner, Some(false));
++        assert_eq!(config.auto_upgrade_dependency, Some(false));
++        assert_eq!(config.full_dep, Some(false));
++        assert_eq!(config.stop_on_error, Some(true));
++    }
++
++    #[test]
++    fn explicit_external_tool_requests_fail_before_configuration_resolution() {
++        for mut config in [
++            Config {
++                full_dep: Some(true),
++                ..Default::default()
++            },
++            Config {
++                dart_fix: Some(true),
++                ..Default::default()
++            },
++            Config {
++                dart_format: Some(true),
++                ..Default::default()
++            },
++            Config {
++                rust_format: Some(true),
++                ..Default::default()
++            },
++            Config {
++                build_runner: Some(true),
++                ..Default::default()
++            },
++            Config {
++                auto_upgrade_dependency: Some(true),
++                ..Default::default()
++            },
++            Config {
++                add_mod_to_lib: Some(true),
++                ..Default::default()
++            },
++            Config {
++                stop_on_error: Some(false),
++                ..Default::default()
++            },
++        ] {
++            assert!(validate_config(&mut config, &MetaConfig::default()).is_err());
++        }
++    }
++
++    #[test]
++    fn watch_and_additional_output_are_rejected() {
++        assert!(validate_config(&mut Config::default(), &MetaConfig { watch: true }).is_err());
++        assert!(validate_config(
++            &mut Config {
++                dump_all: Some(true),
++                ..Default::default()
++            },
++            &MetaConfig::default()
++        )
++        .is_err());
++        assert!(validate_config(
++            &mut Config {
++                c_output: Some("unwanted.h".into()),
++                ..Default::default()
++            },
++            &MetaConfig::default()
++        )
++        .is_err());
++    }
++
++    #[test]
++    fn pin_verification_checks_real_file_contents() {
++        let temp = tempfile::tempdir().unwrap();
++        let path = temp.path().join("tool");
++        fs::write(&path, b"abc").unwrap();
++        #[cfg(unix)]
++        {
++            use std::os::unix::fs::PermissionsExt;
++            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
++        }
++        verify_pin(
++            &path,
++            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
++        )
++        .unwrap();
++        assert!(verify_pin(&path, &"0".repeat(64)).is_err());
++        assert!(verify_pin(&path, "invalid").is_err());
++    }
++
++    #[test]
++    #[cfg(unix)]
++    fn pin_verification_rejects_symlink_with_valid_target_and_hash() {
++        use std::os::unix::{fs::symlink, fs::PermissionsExt};
++        let temp = tempfile::tempdir().unwrap();
++        let target = temp.path().join("tool");
++        fs::write(&target, b"abc").unwrap();
++        fs::set_permissions(&target, fs::Permissions::from_mode(0o700)).unwrap();
++        let pin = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
++        verify_pin(&target, pin).unwrap();
++        let link = temp.path().join("proxy");
++        symlink(&target, &link).unwrap();
++        assert!(verify_pin(&link, pin)
++            .unwrap_err()
++            .to_string()
++            .contains("canonical"));
++    }
++
++    #[test]
++    fn pin_verification_rejects_relative_path() {
++        assert!(verify_pin(Path::new("tool"), &"0".repeat(64))
++            .unwrap_err()
++            .to_string()
++            .contains("absolute"));
++    }
++
++    #[test]
++    fn cargo_configuration_overrides_are_rejected() {
++        let temp = tempfile::tempdir().unwrap();
++        let home = temp.path().join("home");
++        fs::create_dir(&home).unwrap();
++        let project = temp.path().join("project");
++        fs::create_dir(&project).unwrap();
++        reject_cargo_configuration(&project, &home).unwrap();
++        fs::create_dir(temp.path().join(".cargo")).unwrap();
++        fs::write(
++            temp.path().join(".cargo/config.toml"),
++            "[build]\nrustc-wrapper='bad'\n",
++        )
++        .unwrap();
++        assert!(reject_cargo_configuration(&project, &home).is_err());
++    }
++
++    #[test]
++    fn guarded_process_plan_pins_tools_and_removes_inherited_environment() {
++        let tools = PinnedTools {
++            cargo: "/trusted/bin/cargo".into(),
++            expand: "/trusted/expand/cargo-expand".into(),
++            rustc: "/trusted/bin/rustc".into(),
++            cargo_home: "/cache/cargo".into(),
++        };
++        let args: Vec<PathBuf> = ["expand", "--lib", "--theme=none", "--ugly"]
++            .iter()
++            .map(PathBuf::from)
++            .collect();
++        let command =
++            command_with_tools(CommandKind::Expand, &args, Path::new("/project"), tools).unwrap();
++        assert_eq!(command.get_program(), "/trusted/expand/cargo-expand");
++        let args: Vec<_> = command.get_args().map(|x| x.to_str().unwrap()).collect();
++        assert_eq!(
++            &args[args.len() - 3..],
++            ["--offline", "--locked", "--color=never"]
++        );
++        let envs: std::collections::HashMap<_, _> = command.get_envs().collect();
++        assert_eq!(
++            envs.get(std::ffi::OsStr::new("CARGO_NET_OFFLINE")),
++            Some(&Some(std::ffi::OsStr::new("true")))
++        );
++        assert_eq!(
++            envs.get(std::ffi::OsStr::new("CARGO")),
++            Some(&Some(std::ffi::OsStr::new("/trusted/bin/cargo")))
++        );
++        assert_eq!(
++            envs.get(std::ffi::OsStr::new("RUSTC")),
++            Some(&Some(std::ffi::OsStr::new("/trusted/bin/rustc")))
++        );
++        for key in [
++            "CARGO_EXPAND_RUSTC_WRAPPER",
++            "RUSTC_WRAPPER",
++            "RUSTC_WORKSPACE_WRAPPER",
++            "RUSTFMT",
++            "RUSTUP_TOOLCHAIN",
++        ] {
++            assert!(!envs.contains_key(std::ffi::OsStr::new(key)));
++        }
++    }
++
++    #[test]
++    fn subprocess_extra_environment_is_restricted_to_frb_expansion_cfg() {
++        assert!(
++            check_extra_environment(&[("RUSTFLAGS".into(), "--cfg frb_expand".into())].into())
++                .is_ok()
++        );
++        assert!(check_extra_environment(
++            &[("RUSTFLAGS".into(), "--cfg frb_expand -C linker=bad".into())].into()
++        )
++        .is_err());
++        assert!(check_extra_environment(
++            &[("CARGO_EXPAND_RUSTC_WRAPPER".into(), "bad".into())].into()
++        )
++        .is_err());
++    }
++}
+--- /dev/null
++++ b/src/library/offline_policy.rs
+@@ -0,0 +1,213 @@
++//! Pure fail-closed policy for the separately audited offline generator.
++use std::path::PathBuf;
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub(crate) enum CommandKind {
++    Expand,
++    Metadata,
++}
++
++pub(crate) fn classify_command(program: &str, args: &[PathBuf]) -> Result<CommandKind, String> {
++    let strings = args
++        .iter()
++        .map(|x| x.to_str().ok_or("non-UTF8 command argument".to_owned()))
++        .collect::<Result<Vec<_>, _>>()?;
++    if program != "cargo" {
++        return Err(format!("offline policy rejects executable {program}"));
++    }
++    if strings.len() == 7
++        && strings[..4] == ["metadata", "--format-version", "1", "--manifest-path"]
++        && PathBuf::from(strings[4]).is_absolute()
++        && strings[5..] == ["--offline", "--locked"]
++    {
++        return Ok(CommandKind::Metadata);
++    }
++    if strings.len() >= 4 && strings[..4] == ["expand", "--lib", "--theme=none", "--ugly"] {
++        let extra = &strings[4..];
++        if extra.len() % 2 != 0 {
++            return Err("incomplete expansion option".to_owned());
++        }
++        let mut package_seen = false;
++        for pair in extra.chunks_exact(2) {
++            let valid_value =
++                !pair[1].is_empty() && !pair[1].starts_with('-') && !pair[1].starts_with('+');
++            match pair[0] {
++                "-p" if valid_value && !package_seen => package_seen = true,
++                "--features" if valid_value => (),
++                _ => return Err("unsupported expansion option".to_owned()),
++            }
++        }
++        return Ok(CommandKind::Expand);
++    }
++    Err("offline policy rejects unsupported Cargo command".to_owned())
++}
++
++pub(crate) fn reject_enabled(name: &str, enabled: bool) -> Result<(), String> {
++    if enabled {
++        Err(format!("offline generation does not support {name}"))
++    } else {
++        Ok(())
++    }
++}
++
++pub(crate) fn validate_output(freezed: bool, json: bool) -> Result<(), String> {
++    reject_enabled("Freezed output requiring Dart build_runner", freezed)?;
++    reject_enabled(
++        "JSON serialization output requiring Dart code generation",
++        json,
++    )
++}
++
++#[cfg(test)]
++mod offline_guard_tests {
++    use super::*;
++    fn args(input: &[&str]) -> Vec<PathBuf> {
++        input.iter().map(PathBuf::from).collect()
++    }
++
++    #[test]
++    fn rejects_all_dart_flutter_fvm_and_shell_commands() {
++        for program in [
++            "dart",
++            "flutter",
++            "fvm",
++            "sh",
++            "bash",
++            "powershell",
++            "rustup",
++            "curl",
++        ] {
++            assert!(
++                classify_command(program, &args(&["--version"])).is_err(),
++                "allowed {program}"
++            );
++        }
++    }
++    #[test]
++    fn rejects_cargo_install_and_unaudited_commands() {
++        for subcommand in ["install", "update", "fetch", "run", "build"] {
++            assert!(
++                classify_command("cargo", &args(&[subcommand])).is_err(),
++                "allowed {subcommand}"
++            );
++        }
++    }
++    #[test]
++    fn accepts_only_expected_expand_shape() {
++        assert_eq!(
++            classify_command(
++                "cargo",
++                &args(&["expand", "--lib", "--theme=none", "--ugly"])
++            ),
++            Ok(CommandKind::Expand)
++        );
++        assert_eq!(
++            classify_command(
++                "cargo",
++                &args(&[
++                    "expand",
++                    "--lib",
++                    "--theme=none",
++                    "--ugly",
++                    "-p",
++                    "example",
++                    "--features",
++                    "feature-a"
++                ])
++            ),
++            Ok(CommandKind::Expand)
++        );
++    }
++    #[test]
++    fn rejects_expand_option_injection() {
++        for extra in [
++            "--manifest-path",
++            "--config",
++            "+nightly",
++            "--test",
++            "--all-targets",
++        ] {
++            let mut command = args(&["expand", "--lib", "--theme=none", "--ugly"]);
++            command.push(extra.into());
++            assert!(
++                classify_command("cargo", &command).is_err(),
++                "allowed {extra}"
++            );
++        }
++        assert!(classify_command(
++            "cargo",
++            &args(&[
++                "expand",
++                "--lib",
++                "--theme=none",
++                "--ugly",
++                "--features",
++                "--config"
++            ])
++        )
++        .is_err());
++    }
++    #[test]
++    fn accepts_locked_offline_full_graph_metadata() {
++        assert_eq!(
++            classify_command(
++                "cargo",
++                &args(&[
++                    "metadata",
++                    "--format-version",
++                    "1",
++                    "--manifest-path",
++                    "/tmp/example/Cargo.toml",
++                    "--offline",
++                    "--locked"
++                ])
++            ),
++            Ok(CommandKind::Metadata)
++        );
++    }
++    #[test]
++    fn rejects_metadata_without_offline_and_locked() {
++        assert!(classify_command(
++            "cargo",
++            &args(&[
++                "metadata",
++                "--format-version",
++                "1",
++                "--manifest-path",
++                "/tmp/example/Cargo.toml"
++            ])
++        )
++        .is_err());
++        assert!(classify_command(
++            "cargo",
++            &args(&[
++                "metadata",
++                "--format-version",
++                "1",
++                "--manifest-path",
++                "Cargo.toml",
++                "--offline",
++                "--locked"
++            ])
++        )
++        .is_err());
++    }
++    #[test]
++    fn unsupported_config_fails_closed() {
++        assert!(reject_enabled("full_dep", true).is_err());
++        assert!(reject_enabled("dart_fix", true).is_err());
++        assert!(reject_enabled("full_dep", false).is_ok());
++    }
++    #[test]
++    fn rejects_freezed_before_generated_writes() {
++        assert!(validate_output(true, false).is_err());
++    }
++    #[test]
++    fn rejects_json_serializable_before_generated_writes() {
++        assert!(validate_output(false, true).is_err());
++    }
++    #[test]
++    fn permits_plain_generated_output() {
++        assert!(validate_output(false, false).is_ok());
++    }
++}
+--- a/src/library/utils/dart_repository/dart_repo.rs
++++ b/src/library/utils/dart_repository/dart_repo.rs
+@@ -61,11 +61,6 @@
+             workspace_root,
+             is_workspace,
+         })
+-    }
+-
+-    /// check whether the toolchain is available from the CLI
+-    pub(crate) fn toolchain_available(&self) -> bool {
+-        self.toolchain.available()
+     }
+ 
+     // the function signature is not covered while the whole body is covered - looks like a bug in coverage tool
+--- a/src/library/utils/dart_repository/dart_toolchain.rs
++++ b/src/library/utils/dart_repository/dart_toolchain.rs
+@@ -1,6 +1,4 @@
+-use crate::commands::command_runner::call_shell;
+-use crate::library::commands::fvm::command_arg_maybe_fvm;
+-use crate::{command_args, command_run};
++use crate::command_args;
+ use std::fmt::Display;
+ use std::path::PathBuf;
+ 
+@@ -41,15 +39,4 @@
+         }
+     }
+ 
+-    #[allow(clippy::vec_init_then_push)]
+-    pub(crate) fn available(&self) -> bool {
+-        let toolchain = match self {
+-            DartToolchain::Dart => "dart",
+-            DartToolchain::Flutter => "flutter",
+-        };
+-        command_run!(call_shell[None, None], ?command_arg_maybe_fvm(None), toolchain, "--version")
+-            .unwrap()
+-            .status
+-            .success()
+-    }
+ }
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -5,14 +5,12 @@
+ 
+ mod binary;
+ 
+-use crate::binary::commands::{Cli, Commands, CreateOrIntegrateCommandCommonArgs};
++use crate::binary::commands::{Cli, Commands};
+ use crate::binary::commands_parser::{compute_codegen_config, compute_codegen_meta_config};
+ use clap::Parser;
+-use lib_flutter_rust_bridge_codegen::integration::{CreateConfig, IntegrateConfig};
+ use lib_flutter_rust_bridge_codegen::utils::logs::configure_opinionated_logging;
+ use lib_flutter_rust_bridge_codegen::*;
+-use log::{debug, warn};
+-use std::path::Path;
++use log::debug;
+ 
+ fn main() -> anyhow::Result<()> {
+     let cli = Cli::parse();
+@@ -29,39 +27,9 @@
+             let config = compute_codegen_config(args.primary)?;
+             codegen::generate(config, meta_config)?
+         }
+-        Commands::Create(args) => integration::create(CreateConfig {
+-            name: args.name,
+-            org: args.org,
+-            enable_local_dependency: args.common.local,
+-            rust_crate_name: args.common.rust_crate_name.clone(),
+-            rust_crate_dir: compute_rust_crate_dir(&args.common),
+-            template: args.template.into(),
+-        })?,
+-        Commands::Integrate(args) => integration::integrate(IntegrateConfig {
+-            enable_write_lib: !args.no_write_lib,
+-            enable_integration_test: !args.no_integration_test,
+-            enable_dart_fix: !args.no_dart_fix,
+-            enable_dart_format: !args.no_dart_format,
+-            enable_local_dependency: args.common.local,
+-            rust_crate_name: args.common.rust_crate_name.clone(),
+-            rust_crate_dir: compute_rust_crate_dir(&args.common),
+-            template: args.template.into(),
+-        })?,
+-        Commands::BuildWeb(args) => {
+-            build_web::build(args.dart_root, args.dart_coverage, args.args)?
+-        }
+-        Commands::InternalGenerate(_args) => internal::generate()?,
++        _ => anyhow::bail!("offline adapter supports only the generate command"),
+     }
+     Ok(())
+-}
+-
+-fn compute_rust_crate_dir(config: &CreateOrIntegrateCommandCommonArgs) -> String {
+-    let rust_crate_dir = config.rust_crate_dir.clone().unwrap_or("rust".to_owned());
+-    let path = Path::new(&rust_crate_dir);
+-    if path.is_absolute() {
+-        warn!("Argument given to --rust-crate-dir was an absolute Path. It will still be interpreted as relative to the new project root.")
+-    }
+-    rust_crate_dir
+ }
+ 
+ #[cfg(test)]

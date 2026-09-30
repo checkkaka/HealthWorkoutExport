@@ -6,9 +6,9 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `begin`, `begin`, `operation_error_response`, `remote_activity_error`, `remote_activity_result`, `remote_activity_speed_result`, `remote_operation_error`, `reserve_for_refresh`, `reserve`, `reserve`, `token_result`, `upload_ffi_response`, `upload_operations`, `weather_air_density`, `xingzhe_list_operation_error`, `xingzhe_list_operations`
+// These functions are ignored because they are not marked as `pub`: `begin`, `begin`, `onelap_operation_error`, `operation_error_response`, `rate_limit_result`, `remote_activity_error`, `remote_activity_result`, `remote_activity_speed_result`, `remote_operation_error`, `reserve_for_refresh`, `reserve`, `reserve`, `token_result`, `upload_ffi_response`, `upload_operations`, `weather_stations`, `xingzhe_list_operation_error`, `xingzhe_list_operations`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `UploadOperationEntry`, `UploadOperationError`, `UploadOperationRegistry`, `UploadOperationState`, `UploadOperation`, `XingzheListOperationEntry`, `XingzheListOperationError`, `XingzheListOperationRegistry`, `XingzheListOperationState`, `XingzheListOperation`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
 
 /// Flutter 调用的最小同步入口，直接复用已测试的核心规则。
 bool isCommute({double? distanceMeters, required double durationSeconds}) =>
@@ -87,6 +87,15 @@ Future<Uint8List> encodeHealthWorkoutFit({
   timezoneOffsetSeconds: timezoneOffsetSeconds,
 );
 
+/// 解码 FIT 为有界 Apple Health 写入草稿 JSON；本函数不访问健康资料库。
+Future<Uint8List> decodeFitHealthDraft({
+  required List<int> data,
+  required String fingerprint,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleDecodeFitHealthDraft(
+  data: data,
+  fingerprint: fingerprint,
+);
+
 /// 使用行者网页登录契约换取短期 sessionid；凭据只用于本次请求，调用方负责安全保存返回值。
 Future<String> xingzheLogin({
   required String account,
@@ -104,6 +113,31 @@ Future<OnelapLoginResult> onelapLogin({
   account: account,
   password: password,
 );
+
+/// 换取并返回轮换后的会话；调用方必须把 token/uid/refreshToken 一起安全保存。
+Future<OnelapLoginResult> onelapRefreshSession({
+  required String refreshToken,
+  required String uid,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleOnelapRefreshSession(
+  refreshToken: refreshToken,
+  uid: uid,
+);
+
+/// 预留顽鹿请求的取消句柄；与 Strava 请求共用有界、代际隔离的注册表。
+StravaUploadReservation onelapReserveOperation({required String operationId}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleOnelapReserveOperation(
+      operationId: operationId,
+    );
+
+bool onelapCancelOperation({required String operationHandle}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleOnelapCancelOperation(
+      operationHandle: operationHandle,
+    );
+
+bool onelapReleaseOperation({required String operationHandle}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleOnelapReleaseOperation(
+      operationHandle: operationHandle,
+    );
 
 /// 按旧 Swift 的 20 条分页、半开区间读取顽鹿骑行；会话只用于本次 Rust 请求。
 Future<List<OnelapWorkoutResult>> onelapListWorkouts({
@@ -130,6 +164,39 @@ Future<Uint8List> onelapDownloadFit({
   uid: uid,
   activityId: activityId,
 );
+
+/// 可取消的顽鹿分页读取，返回含日期边界余量的候选列表。
+/// Flutter 必须按 start_time_local 的历史本地时区解析后执行精确半开区间过滤。
+Future<List<OnelapWorkoutResult>> onelapListWorkoutsCancellable({
+  required String operationHandle,
+  required String token,
+  required String uid,
+  required PlatformInt64 fromSeconds,
+  required PlatformInt64 toSeconds,
+  required int timezoneOffsetSeconds,
+}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleOnelapListWorkoutsCancellable(
+      operationHandle: operationHandle,
+      token: token,
+      uid: uid,
+      fromSeconds: fromSeconds,
+      toSeconds: toSeconds,
+      timezoneOffsetSeconds: timezoneOffsetSeconds,
+    );
+
+/// 可取消的顽鹿 FIT 下载；取消后不尝试下一个候选 URL。
+Future<Uint8List> onelapDownloadFitCancellable({
+  required String operationHandle,
+  required String token,
+  required String uid,
+  required String activityId,
+}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleOnelapDownloadFitCancellable(
+      operationHandle: operationHandle,
+      token: token,
+      uid: uid,
+      activityId: activityId,
+    );
 
 /// 读取行者 stream 并编码为标准 Activity FIT。必须先预留列表句柄以便取消。
 Future<Uint8List> xingzheDownloadFit({
@@ -167,6 +234,20 @@ Uint8List mergeFitFiles({
   manualOffsetSeconds: manualOffsetSeconds,
 );
 
+Future<MergedFitResult> mergeFitFilesDetailed({
+  required List<int> primary,
+  required List<Uint8List> supplements,
+  required bool sensorsOnly,
+  required String alignment,
+  required int manualOffsetSeconds,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleMergeFitFilesDetailed(
+  primary: primary,
+  supplements: supplements,
+  sensorsOnly: sensorsOnly,
+  alignment: alignment,
+  manualOffsetSeconds: manualOffsetSeconds,
+);
+
 /// 修复已证明的 GPS 速度尖峰。
 Uint8List fixFitSpeedSpikes({required List<int> data}) =>
     WorkoutCoreRustLib.instance.api.crateApiSimpleFixFitSpeedSpikes(data: data);
@@ -175,6 +256,23 @@ Uint8List fixFitSpeedSpikes({required List<int> data}) =>
 Uint8List rewriteFitGcjCoordinates({required List<int> data}) =>
     WorkoutCoreRustLib.instance.api.crateApiSimpleRewriteFitGcjCoordinates(
       data: data,
+    );
+
+/// 可取消的生产准备入口；复用有界、代际隔离的远端 operation handle。
+/// 取消会丢弃天气网络 Future，退出时释放 handle。旧同步入口保留给兼容调用方。
+Future<PreparedFitResult> prepareFitForUploadCancellable({
+  required String operationHandle,
+  required List<int> primary,
+  required List<Uint8List> supplements,
+  required bool gcjEnabled,
+  VirtualPowerFillInput? virtualPower,
+}) => WorkoutCoreRustLib.instance.api
+    .crateApiSimplePrepareFitForUploadCancellable(
+      operationHandle: operationHandle,
+      primary: primary,
+      supplements: supplements,
+      gcjEnabled: gcjEnabled,
+      virtualPower: virtualPower,
     );
 
 /// 上传前固定顺序：补源合并 → 尖峰 → GCJ → 虚拟功率。
@@ -245,6 +343,50 @@ Uint8List syncRecoveryApply({
   commandJson: commandJson,
 );
 
+/// 远端活动预检排名：IoU 优先，其次 45 分钟开始差/时长，再其次稳定距离。
+int? stravaBestRemoteActivityMatchIndex({
+  required double startTimeSeconds,
+  required double endTimeSeconds,
+  double? distanceMeters,
+  required List<StravaRemoteActivityResult> candidates,
+}) => WorkoutCoreRustLib.instance.api
+    .crateApiSimpleStravaBestRemoteActivityMatchIndex(
+      startTimeSeconds: startTimeSeconds,
+      endTimeSeconds: endTimeSeconds,
+      distanceMeters: distanceMeters,
+      candidates: candidates,
+    );
+
+/// 仅骑行参与异常速度判定；与 Swift 摘要、最佳成绩及综合峰值阈值一致。
+bool stravaSpeedIsAnomalous({
+  required String sportType,
+  required double listedMaxSpeedMps,
+  required double bestEffortPeakMps,
+  required double maxSpeedMps,
+  required double averageSpeedMps,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleStravaSpeedIsAnomalous(
+  sportType: sportType,
+  listedMaxSpeedMps: listedMaxSpeedMps,
+  bestEffortPeakMps: bestEffortPeakMps,
+  maxSpeedMps: maxSpeedMps,
+  averageSpeedMps: averageSpeedMps,
+);
+
+/// 最近一次该 token 的 API 响应限额；仅进程内有界缓存，时间戳明确标记数据时效。
+StravaRateLimitResult? stravaRateLimitSnapshot({required String accessToken}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleStravaRateLimitSnapshot(
+      accessToken: accessToken,
+    );
+
+/// 读取当前 API 限额，429 带有效限额响应头时也返回结果。使用远端读取句柄取消。
+Future<StravaRateLimitResult> stravaFetchRateLimitUsage({
+  required String operationHandle,
+  required String accessToken,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleStravaFetchRateLimitUsage(
+  operationHandle: operationHandle,
+  accessToken: accessToken,
+);
+
 Future<StravaTokenResult> stravaExchangeCode({
   required String clientId,
   required String clientSecret,
@@ -276,6 +418,7 @@ Future<StravaUploadFfiResponse> stravaUploadFit({
   required String filename,
   required bool commute,
   String? description,
+  String? name,
 }) => WorkoutCoreRustLib.instance.api.crateApiSimpleStravaUploadFit(
   operationHandle: operationHandle,
   accessToken: accessToken,
@@ -284,6 +427,7 @@ Future<StravaUploadFfiResponse> stravaUploadFit({
   filename: filename,
   commute: commute,
   description: description,
+  name: name,
 );
 
 /// POST 401 后的唯一一次重放；本调用再次遇到 401 会直接返回 Unauthorized 硬失败。
@@ -296,6 +440,7 @@ Future<StravaUploadFfiResponse> stravaRetryUploadAfterRefresh({
   required String filename,
   required bool commute,
   String? description,
+  String? name,
 }) =>
     WorkoutCoreRustLib.instance.api.crateApiSimpleStravaRetryUploadAfterRefresh(
       operationHandle: operationHandle,
@@ -305,6 +450,7 @@ Future<StravaUploadFfiResponse> stravaRetryUploadAfterRefresh({
       filename: filename,
       commute: commute,
       description: description,
+      name: name,
     );
 
 /// poll 401 后以新 token 从同一 uploadId、同一 attempt 立即续跑；再次 401 直接失败。
@@ -336,6 +482,24 @@ Future<List<StravaRemoteActivityResult>> stravaListRemoteActivities({
   beforeSeconds: beforeSeconds,
 );
 
+/// 上传成功后的幂等元数据更新。调用前预留 operation handle；失败不应重新上传 FIT。
+Future<void> stravaUpdateActivityMetadata({
+  required String operationHandle,
+  required String accessToken,
+  required String activityId,
+  required String name,
+  required bool commute,
+  String? descriptionNote,
+}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleStravaUpdateActivityMetadata(
+      operationHandle: operationHandle,
+      accessToken: accessToken,
+      activityId: activityId,
+      name: name,
+      commute: commute,
+      descriptionNote: descriptionNote,
+    );
+
 /// 拉取单条 Strava 活动的摘要最高速与 best_efforts 峰值；404 返回 `null`。
 /// 调用约束与 `strava_list_remote_activities` 相同，避免读取任务无法中止。
 Future<StravaActivitySpeedResult?> stravaFetchRemoteActivitySpeed({
@@ -348,6 +512,30 @@ Future<StravaActivitySpeedResult?> stravaFetchRemoteActivitySpeed({
       accessToken: accessToken,
       activityId: activityId,
     );
+
+/// 解析原生网页通道返回的单页训练 JSON；分页和日期过滤由调用方负责。
+List<StravaRemoteActivityResult> stravaParseWebRemoteActivities({
+  required List<int> responseJson,
+}) => WorkoutCoreRustLib.instance.api
+    .crateApiSimpleStravaParseWebRemoteActivities(responseJson: responseJson);
+
+List<StravaActivitySpeedResult> stravaParseWebListedActivitySpeeds({
+  required List<int> responseJson,
+}) => WorkoutCoreRustLib.instance.api
+    .crateApiSimpleStravaParseWebListedActivitySpeeds(
+      responseJson: responseJson,
+    );
+
+/// 网页速度解析，不接触 Cookie；非骑车返回 null，坏页面返回明确错误。
+StravaActivitySpeedResult? stravaParseWebActivitySpeed({
+  required String activityId,
+  required String pageHtml,
+  String? streamsJson,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleStravaParseWebActivitySpeed(
+  activityId: activityId,
+  pageHtml: pageHtml,
+  streamsJson: streamsJson,
+);
 
 /// 同步预留一个远端读取 handle。底层复用上传操作注册表，使取消代际隔离规则完全一致。
 StravaUploadReservation stravaReserveRemoteRead({
@@ -385,6 +573,10 @@ bool stravaReleaseUpload({required String operationHandle}) =>
     WorkoutCoreRustLib.instance.api.crateApiSimpleStravaReleaseUpload(
       operationHandle: operationHandle,
     );
+
+/// 预览使用异步工作线程；完整坐标摘要与有界显示数据分别计算。
+Future<String> inspectFitPreview({required List<int> data}) =>
+    WorkoutCoreRustLib.instance.api.crateApiSimpleInspectFitPreview(data: data);
 
 /// Flutter 可传输的活动时间区间，供跨来源匹配使用。
 class ActivityIntervalInput {
@@ -439,14 +631,38 @@ class FitProbeSummary {
           qualityScore == other.qualityScore;
 }
 
+/// 合并界面使用异步工作线程，避免在 UI 线程执行大型 FIT 解码。
+class MergedFitResult {
+  final Uint8List data;
+  final Int32List offsetsSeconds;
+
+  const MergedFitResult({required this.data, required this.offsetsSeconds});
+
+  @override
+  int get hashCode => data.hashCode ^ offsetsSeconds.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is MergedFitResult &&
+          runtimeType == other.runtimeType &&
+          data == other.data &&
+          offsetsSeconds == other.offsetsSeconds;
+}
+
 class OnelapLoginResult {
   final String token;
   final String uid;
+  final String? refreshToken;
 
-  const OnelapLoginResult({required this.token, required this.uid});
+  const OnelapLoginResult({
+    required this.token,
+    required this.uid,
+    this.refreshToken,
+  });
 
   @override
-  int get hashCode => token.hashCode ^ uid.hashCode;
+  int get hashCode => token.hashCode ^ uid.hashCode ^ refreshToken.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -454,13 +670,15 @@ class OnelapLoginResult {
       other is OnelapLoginResult &&
           runtimeType == other.runtimeType &&
           token == other.token &&
-          uid == other.uid;
+          uid == other.uid &&
+          refreshToken == other.refreshToken;
 }
 
 /// Flutter 侧展示顽鹿活动列表所需字段；列表时间按调用方传入的 UTC 偏移解析。
 class OnelapWorkoutResult {
   final String id;
   final String title;
+  final String startTimeLocal;
   final double startTimeSeconds;
   final double endTimeSeconds;
   final double durationSeconds;
@@ -469,6 +687,7 @@ class OnelapWorkoutResult {
   const OnelapWorkoutResult({
     required this.id,
     required this.title,
+    required this.startTimeLocal,
     required this.startTimeSeconds,
     required this.endTimeSeconds,
     required this.durationSeconds,
@@ -479,6 +698,7 @@ class OnelapWorkoutResult {
   int get hashCode =>
       id.hashCode ^
       title.hashCode ^
+      startTimeLocal.hashCode ^
       startTimeSeconds.hashCode ^
       endTimeSeconds.hashCode ^
       durationSeconds.hashCode ^
@@ -491,6 +711,7 @@ class OnelapWorkoutResult {
           runtimeType == other.runtimeType &&
           id == other.id &&
           title == other.title &&
+          startTimeLocal == other.startTimeLocal &&
           startTimeSeconds == other.startTimeSeconds &&
           endTimeSeconds == other.endTimeSeconds &&
           durationSeconds == other.durationSeconds &&
@@ -499,16 +720,22 @@ class OnelapWorkoutResult {
 
 class PreparedFitResult {
   final Uint8List data;
+
+  /// 按输入补源 FIT 顺序的实际字段计数、偏移与说明；无补源为 []。
+  final String supplementReportsJson;
   final int repairedSpeedCount;
   final int rewrittenCoordinateCount;
+  final double averageCoordinateDisplacementMeters;
   final int virtualPowerFilledCount;
   final bool powerSourceVirtual;
   final String? activityDescription;
 
   const PreparedFitResult({
     required this.data,
+    required this.supplementReportsJson,
     required this.repairedSpeedCount,
     required this.rewrittenCoordinateCount,
+    required this.averageCoordinateDisplacementMeters,
     required this.virtualPowerFilledCount,
     required this.powerSourceVirtual,
     this.activityDescription,
@@ -517,8 +744,10 @@ class PreparedFitResult {
   @override
   int get hashCode =>
       data.hashCode ^
+      supplementReportsJson.hashCode ^
       repairedSpeedCount.hashCode ^
       rewrittenCoordinateCount.hashCode ^
+      averageCoordinateDisplacementMeters.hashCode ^
       virtualPowerFilledCount.hashCode ^
       powerSourceVirtual.hashCode ^
       activityDescription.hashCode;
@@ -529,8 +758,11 @@ class PreparedFitResult {
       other is PreparedFitResult &&
           runtimeType == other.runtimeType &&
           data == other.data &&
+          supplementReportsJson == other.supplementReportsJson &&
           repairedSpeedCount == other.repairedSpeedCount &&
           rewrittenCoordinateCount == other.rewrittenCoordinateCount &&
+          averageCoordinateDisplacementMeters ==
+              other.averageCoordinateDisplacementMeters &&
           virtualPowerFilledCount == other.virtualPowerFilledCount &&
           powerSourceVirtual == other.powerSourceVirtual &&
           activityDescription == other.activityDescription;
@@ -582,6 +814,68 @@ class StravaActivitySpeedResult {
           bestEffortPeakMps == other.bestEffortPeakMps &&
           maxSpeedMps == other.maxSpeedMps &&
           averageSpeedMps == other.averageSpeedMps;
+}
+
+class StravaRateLimitResult {
+  final StravaRateLimitWindow overall;
+  final StravaRateLimitWindow? read;
+  final double observedAtUnixSeconds;
+  final bool rateLimited;
+
+  const StravaRateLimitResult({
+    required this.overall,
+    this.read,
+    required this.observedAtUnixSeconds,
+    required this.rateLimited,
+  });
+
+  @override
+  int get hashCode =>
+      overall.hashCode ^
+      read.hashCode ^
+      observedAtUnixSeconds.hashCode ^
+      rateLimited.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is StravaRateLimitResult &&
+          runtimeType == other.runtimeType &&
+          overall == other.overall &&
+          read == other.read &&
+          observedAtUnixSeconds == other.observedAtUnixSeconds &&
+          rateLimited == other.rateLimited;
+}
+
+class StravaRateLimitWindow {
+  final int fifteenMinutesUsed;
+  final int fifteenMinutesLimit;
+  final int dailyUsed;
+  final int dailyLimit;
+
+  const StravaRateLimitWindow({
+    required this.fifteenMinutesUsed,
+    required this.fifteenMinutesLimit,
+    required this.dailyUsed,
+    required this.dailyLimit,
+  });
+
+  @override
+  int get hashCode =>
+      fifteenMinutesUsed.hashCode ^
+      fifteenMinutesLimit.hashCode ^
+      dailyUsed.hashCode ^
+      dailyLimit.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is StravaRateLimitWindow &&
+          runtimeType == other.runtimeType &&
+          fifteenMinutesUsed == other.fifteenMinutesUsed &&
+          fifteenMinutesLimit == other.fifteenMinutesLimit &&
+          dailyUsed == other.dailyUsed &&
+          dailyLimit == other.dailyLimit;
 }
 
 /// Flutter 侧用于上传前远端预检的活动区间；字段语义与旧 Swift `RemoteActivity` 一致。

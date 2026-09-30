@@ -7,6 +7,7 @@ import 'recovery_batch_checkpoint.dart';
 import 'sync_preview_models.dart';
 import 'sync_preview_page.dart';
 import 'sync_result_messages.dart';
+import 'sync_destination_flow.dart';
 import 'apple_health_import.dart';
 import 'apple_health_import_dialog.dart';
 import 'date_range.dart';
@@ -501,7 +502,11 @@ class _AutoSyncPageState extends State<AutoSyncPage> {
         customTitle: _customTitle.text,
         previewPolicy: _previewPolicy,
         uploadToStrava: _uploadToStrava,
-        writeToHealth: _writeToHealth && _primary != WorkoutSourceId.healthkit,
+        writeToHealth: healthWriteEnabled(
+          requested: _writeToHealth,
+          canWriteHealth: _canWriteHealth,
+          sourceIsHealth: _primary == WorkoutSourceId.healthkit,
+        ),
         onHealthNearby: (value) => mounted
             ? showAppleHealthNearbyDialog(context, value)
             : Future.value(AppleHealthNearbyDecision.skipOnce),

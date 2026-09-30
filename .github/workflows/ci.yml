@@ -17,6 +17,7 @@ env:
   CI: "true"
   BOT: "true"
   DASH__SUPPRESS_ANALYTICS: "true"
+  FLUTTER_SUPPRESS_ANALYTICS: "true"
 
 jobs:
   isolated-core:
@@ -27,6 +28,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - run: python3 scripts/test_flutter_privacy.py
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.98.1
@@ -71,12 +73,15 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-flutter-rust
       - run: rustup component add rustfmt clippy
+      - run: cargo fetch --manifest-path rust/workout_core/Cargo.toml --locked
       - run: cargo fmt --manifest-path rust/workout_core/Cargo.toml --check
-      - run: cargo clippy --manifest-path rust/workout_core/Cargo.toml --locked --all-targets -- -D warnings
-      - run: cargo test --manifest-path rust/workout_core/Cargo.toml --locked
+      - run: cargo clippy --manifest-path rust/workout_core/Cargo.toml --offline --locked --all-targets -- -D warnings
+      - run: cargo test --manifest-path rust/workout_core/Cargo.toml --offline --locked
       - run: flutter --suppress-analytics pub get --enforce-lockfile
         working-directory: flutter_app
-      - run: flutter --suppress-analytics analyze
+      - run: flutter --suppress-analytics analyze --no-pub
         working-directory: flutter_app
-      - run: flutter --suppress-analytics test
+      - run: flutter --suppress-analytics test --no-pub
         working-directory: flutter_app
+        env:
+          CARGO_NET_OFFLINE: "true"

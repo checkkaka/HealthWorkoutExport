@@ -1,0 +1,98 @@
+   Compiling diff v0.1.13
+   Compiling yansi v0.5.1
+   Compiling pretty_assertions v1.4.0
+   Compiling flutter_rust_bridge_codegen v2.12.0 (/workspace/shared/frb-offline-codegen-2.12.0)
+warning: function `run` is never used
+  --> src/library/commands/cargo_expand/pseudo.rs:11:15
+   |
+11 | pub(super) fn run(
+   |               ^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `parse_file` is never used
+  --> src/library/commands/cargo_expand/pseudo.rs:29:4
+   |
+29 | fn parse_file(path: &Path) -> anyhow::Result<syn::File> {
+   |    ^^^^^^^^^^
+
+warning: function `modify_file` is never used
+  --> src/library/commands/cargo_expand/pseudo.rs:36:4
+   |
+36 | fn modify_file(file: &mut syn::File, path: &Path) -> anyhow::Result<()> {
+   |    ^^^^^^^^^^^
+
+warning: function `modify_mod` is never used
+  --> src/library/commands/cargo_expand/pseudo.rs:47:4
+   |
+47 | fn modify_mod(item_mod: &mut syn::ItemMod, path: &Path) -> anyhow::Result<()> {
+   |    ^^^^^^^^^^
+
+warning: function `get_module_file_path` is never used
+  --> src/library/commands/cargo_expand/pseudo.rs:62:4
+   |
+62 | fn get_module_file_path(module_name: &str, parent_module_file_path: &Path) -> Option<PathBuf> {
+   |    ^^^^^^^^^^^^^^^^^^^^
+
+warning: method `toolchain_available` is never used
+  --> src/library/utils/dart_repository/dart_repo.rs:67:19
+   |
+23 | impl DartRepository {
+   | ------------------- method in this implementation
+...
+67 |     pub(crate) fn toolchain_available(&self) -> bool {
+   |                   ^^^^^^^^^^^^^^^^^^^
+
+warning: method `available` is never used
+  --> src/library/utils/dart_repository/dart_toolchain.rs:45:19
+   |
+25 | impl DartToolchain {
+   | ------------------ method in this implementation
+...
+45 |     pub(crate) fn available(&self) -> bool {
+   |                   ^^^^^^^^^
+
+warning: `flutter_rust_bridge_codegen` (lib test) generated 7 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11.86s
+     Running unittests src/lib.rs (/workspace/shared/frb-offline-codegen-2.12.0/target/debug/deps/lib_flutter_rust_bridge_codegen-5bd070d6bb8ddb4e)
+
+running 23 tests
+test library::commands::cargo_expand::real::offline_guard_tests::rejects_empty_successful_expansion ... ok
+test library::build_web::offline_guard_tests::build_web_entry_never_dispatches_dart ... ok
+test library::commands::cargo_expand::real::offline_guard_tests::preserves_successful_expansion_text_and_header_handling ... ok
+test library::offline::offline_guard_tests::cargo_configuration_overrides_are_rejected ... ok
+test library::offline::offline_guard_tests::defaults_disable_all_external_polish_and_preserve_web ... ok
+test library::offline::offline_guard_tests::explicit_external_tool_requests_fail_before_configuration_resolution ... ok
+test library::offline::offline_guard_tests::pin_verification_rejects_relative_path ... ok
+test library::commands::cargo_expand::real::offline_guard_tests::rejects_failed_expansion_even_with_nonempty_stdout ... FAILED
+test library::offline::offline_guard_tests::guarded_process_plan_pins_tools_and_removes_inherited_environment ... ok
+test library::offline::offline_guard_tests::pin_verification_checks_real_file_contents ... ok
+test library::offline::offline_guard_tests::pin_verification_rejects_symlink_with_valid_target_and_hash ... ok
+test library::offline::offline_guard_tests::watch_and_additional_output_are_rejected ... ok
+test library::offline::offline_guard_tests::subprocess_extra_environment_is_restricted_to_frb_expansion_cfg ... ok
+test library::offline_policy::offline_guard_tests::accepts_only_expected_expand_shape ... ok
+test library::offline_policy::offline_guard_tests::rejects_cargo_install_and_unaudited_commands ... ok
+test library::offline_policy::offline_guard_tests::rejects_all_dart_flutter_fvm_and_shell_commands ... ok
+test library::offline_policy::offline_guard_tests::rejects_expand_option_injection ... ok
+test library::offline_policy::offline_guard_tests::accepts_locked_offline_full_graph_metadata ... ok
+test library::offline_policy::offline_guard_tests::permits_plain_generated_output ... ok
+test library::offline_policy::offline_guard_tests::rejects_freezed_before_generated_writes ... ok
+test library::offline_policy::offline_guard_tests::rejects_json_serializable_before_generated_writes ... ok
+test library::offline_policy::offline_guard_tests::rejects_metadata_without_offline_and_locked ... ok
+test library::offline_policy::offline_guard_tests::unsupported_config_fails_closed ... ok
+
+failures:
+
+---- library::commands::cargo_expand::real::offline_guard_tests::rejects_failed_expansion_even_with_nonempty_stdout stdout ----
+
+thread 'library::commands::cargo_expand::real::offline_guard_tests::rejects_failed_expansion_even_with_nonempty_stdout' (313) panicked at src/library/commands/cargo_expand/real.rs:227:9:
+assertion failed: expansion_output_text(output(1, "header\npub fn partial() {}\n")).is_err()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    library::commands::cargo_expand::real::offline_guard_tests::rejects_failed_expansion_even_with_nonempty_stdout
+
+test result: FAILED. 22 passed; 1 failed; 0 ignored; 0 measured; 98 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `--lib`

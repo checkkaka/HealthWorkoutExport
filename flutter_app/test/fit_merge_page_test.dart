@@ -96,7 +96,16 @@ void main() {
     await tester.tap(find.text('手动偏移'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('mergeManualOffset')), '-871');
-    await tester.ensureVisible(find.widgetWithText(FilledButton, '合并 FIT'));
+    // The added manual field can move the lazily built action below the viewport.
+    await tester.scrollUntilVisible(
+      find.widgetWithText(FilledButton, '合并 FIT'),
+      200,
+      scrollable: find.byWidgetPredicate(
+        (widget) =>
+            widget is Scrollable && widget.axisDirection == AxisDirection.down,
+      ),
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, '合并 FIT'));
     await tester.pumpAndSettle();
     await _settleFileWork(
@@ -106,7 +115,15 @@ void main() {
     expect(primaryBytes, [2]);
     expect(offset, -871);
     expect(sensors, isFalse);
-    await tester.ensureVisible(find.text('分享结果'));
+    await tester.scrollUntilVisible(
+      find.text('分享结果'),
+      200,
+      scrollable: find.byWidgetPredicate(
+        (widget) =>
+            widget is Scrollable && widget.axisDirection == AxisDirection.down,
+      ),
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.text('分享结果'));
     await tester.pumpAndSettle();
     await tester.runAsync(() => shared!.dispose());

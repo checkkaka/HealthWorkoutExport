@@ -1,3 +1,10 @@
+/// Effective batch destination; the stored preference is left unchanged.
+bool healthWriteEnabled({
+  required bool requested,
+  required bool canWriteHealth,
+  required bool sourceIsHealth,
+}) => requested && canWriteHealth && !sourceIsHealth;
+
 final class DestinationBatchResult {
   const DestinationBatchResult({
     required this.strava,

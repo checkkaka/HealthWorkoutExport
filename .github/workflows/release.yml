@@ -30,6 +30,12 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  CI: "true"
+  BOT: "true"
+  DASH__SUPPRESS_ANALYTICS: "true"
+  FLUTTER_SUPPRESS_ANALYTICS: "true"
+
 jobs:
   meta:
     runs-on: ubuntu-latest

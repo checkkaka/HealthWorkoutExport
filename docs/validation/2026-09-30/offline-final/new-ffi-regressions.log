@@ -1,0 +1,11 @@
+00:00 +0: loading /workspace/shared/workout-offline-generation-stage/flutter_app/test/migration_bridge_contract_test.dart
+00:00 +0: (setUpAll)
+00:00 +0: preview crosses real FFI with summary, series and coordinate hashes
+00:00 +1: invalid preview produces a bounded diagnostic through real FFI
+00:00 +2: Health draft crosses real FFI with explicit units and timer events
+00:00 +3: Health draft rejects malformed inputs across the async FFI boundary
+00:00 +4: preparation transports ordered actual supplement reports
+00:00 +5: GCJ preparation transports nonzero coordinate displacement
+00:00 +6: Health state commands preserve independent Strava outcome over FFI
+00:00 +7: (tearDownAll)
+00:00 +7: All tests passed!

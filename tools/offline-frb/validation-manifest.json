@@ -1,0 +1,59 @@
+{
+  "status": "adapter built and guard-tested; application binding generation not executed by implementation worker",
+  "source_manifest_sha256": "57d352f3ba3ae3ea1b946e06599f6a95348df51a4bb1963d4bf0ff6e3d39994f",
+  "patch_sha256": "f8882adbe94ab1508179bf1af68c2114a0378242bf29ad7d6df18c35b734b27e",
+  "executables": {
+    "patched_generator": {
+      "path": "/workspace/shared/frb-offline-codegen-2.12.0/target/debug/flutter_rust_bridge_codegen",
+      "sha256": "f5f44ebbdc541c514b8a0f0108a3fdffbb714804270c6915bd88d9265678cc24"
+    },
+    "safe_unit_tests": {
+      "path": "/workspace/shared/frb-offline-codegen-2.12.0/target/debug/deps/lib_flutter_rust_bridge_codegen-5bd070d6bb8ddb4e",
+      "sha256": "1a1d22ec5c362e37eb2e3d9b9118e259a40c0490618245e7f826fcbc7cea069b"
+    },
+    "cargo_expand_1_0_126": {
+      "path": "/workspace/shared/toolchains/offline-tools/bin/cargo-expand",
+      "sha256": "fee94a80e0c45501da1044b2e2aed6940f5c917c11e94eb12f1228286db502f4"
+    },
+    "cargo_1_98_1": {
+      "path": "/workspace/shared/toolchains/rustup/toolchains/1.98.1-x86_64-unknown-linux-gnu/bin/cargo",
+      "sha256": "da77c8b33849312255ccde3179198ada4c8deb370488d050286146b1d1b27e14"
+    },
+    "rustc_1_98_1": {
+      "path": "/workspace/shared/toolchains/rustup/toolchains/1.98.1-x86_64-unknown-linux-gnu/bin/rustc",
+      "sha256": "859254978c0a0402c32f949f6de0d99aee73be8d15f45aac00ae1448aac51e74"
+    }
+  },
+  "safe_tests": {
+    "filter": "offline_guard_tests",
+    "passed": 23,
+    "failed": 0,
+    "filtered_out": 97,
+    "spawns_generator": false
+  },
+  "red_green_evidence": {
+    "pure_policy_baseline": {
+      "passed": 2,
+      "failed": 8
+    },
+    "expansion_exit_regression_before_fix": {
+      "passed": 22,
+      "failed": 1
+    },
+    "final": {
+      "passed": 23,
+      "failed": 0
+    }
+  },
+  "patch_roundtrip": {
+    "source_file_hashes_matched": 17
+  },
+  "evidence_files": {
+    "evidence/dependency-preparation.log": "9855869218216f1f081b0f71dff5e4cfef8d9c3523e1c277d72e71f56afa718c",
+    "evidence/expansion-exit-red.log": "0ac07f271514268045df5fbcffae9f3da5eb5ba86c0ed18f016173195592102a",
+    "evidence/guard-tests.log": "8018a8582525ae85556c50f37b239e11bbd912ee92df7d5f88e6ae3773cdf5d6",
+    "evidence/offline-build.log": "ae018523b3d5a8328d25b93ee5d4ce5dde5cdfee0383ac29118546de41ef6db8",
+    "evidence/patch-roundtrip.log": "35a9e8d31917bb4e7969896a16d0d1ef8fb8a8c80445fcbe366577f79316cd29",
+    "evidence/policy-red.log": "7f975701e8590dddb92828c6c6635726d074081a9a3ebd6c6bafb329c11aa8ef"
+  }
+}

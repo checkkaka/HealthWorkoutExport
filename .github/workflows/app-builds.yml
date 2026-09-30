@@ -1,0 +1,180 @@
+name: Unsigned Flutter and Rust apps
+
+"on":
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unsigned-apps-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+  BOT: "true"
+  DASH__SUPPRESS_ANALYTICS: "true"
+  FLUTTER_SUPPRESS_ANALYTICS: "true"
+  COCOAPODS_DISABLE_STATS: "true"
+  # Cargokit otherwise selects the moving stable channel explicitly.
+  CARGOKIT_RUST_TOOLCHAIN: "1.98.1"
+
+# These jobs compile committed bindings into actual apps. They do not launch
+# apps, use accounts, create distributable signed releases, or publish artifacts.
+jobs:
+  android-app:
+    name: Android unsigned release APK (Dart + Rust + native adapters)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HWE_UNSIGNED_BUILD: "true"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check build workflow guardrails
+        run: |
+          python3 scripts/test_app_build_workflow.py
+          python3 scripts/test_flutter_privacy.py
+      - uses: ./.github/actions/setup-flutter-rust
+      - name: Test Cargokit toolchain selection without package resolution
+        run: dart flutter_app/rust_builder/cargokit/build_tool/test/toolchain_selection_test.dart
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          overwrite-settings: false
+      - name: Install only the required hosted SDK components without accepting terms
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358' </dev/null
+          test -f "$ANDROID_HOME/platforms/android-36/android.jar"
+          test -x "$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          test -f "$ANDROID_HOME/ndk/28.2.13676358/package.xml"
+      - name: Prepare pinned Rust Android targets and locked dependencies
+        run: |
+          rustup target add --toolchain 1.98.1 aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+          cargo fetch --manifest-path rust/workout_core/Cargo.toml --locked
+      - run: flutter --suppress-analytics pub get --enforce-lockfile
+        working-directory: flutter_app
+      - name: Build all supported Android ABIs without a signing key
+        working-directory: flutter_app
+        run: flutter --suppress-analytics build apk --release --no-pub --target-platform android-arm,android-arm64,android-x64
+      - name: Verify APK contains Rust libraries and is unsigned
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=flutter_app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -Z1 "$APK" > "$RUNNER_TEMP/android-apk-files.txt"
+          for ABI in armeabi-v7a arm64-v8a x86_64; do
+            grep -Fx "lib/$ABI/librust_lib_health_workout_export.so" "$RUNNER_TEMP/android-apk-files.txt"
+          done
+          if "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$APK"; then
+            echo "Expected an unsigned validation APK" >&2
+            exit 1
+          fi
+          git diff --exit-code -- flutter_app/pubspec.lock rust/workout_core/Cargo.lock
+
+  ios-app:
+    name: iOS unsigned device app (Dart + Rust + native adapters)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-flutter-rust
+      - name: Prepare pinned Rust device target and locked dependencies
+        run: |
+          xcodebuild -version
+          rustup target add --toolchain 1.98.1 aarch64-apple-ios
+          cargo fetch --manifest-path rust/workout_core/Cargo.toml --locked
+      - run: flutter --suppress-analytics pub get --enforce-lockfile
+        working-directory: flutter_app
+      - name: Compile device app without signing or launching it
+        working-directory: flutter_app
+        run: flutter --suppress-analytics build ios --release --no-pub --no-codesign
+      - name: Verify device bundle and linked Rust framework
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=flutter_app/build/ios/iphoneos/Runner.app
+          test -s "$APP/Runner"
+          test -s "$APP/Frameworks/rust_lib_health_workout_export.framework/rust_lib_health_workout_export"
+          git diff --exit-code -- flutter_app/pubspec.lock rust/workout_core/Cargo.lock
+
+  macos-app:
+    name: macOS unsigned universal app (Dart + Rust + native adapters)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-flutter-rust
+      - name: Prepare pinned Rust desktop targets and locked dependencies
+        run: |
+          xcodebuild -version
+          rustup target add --toolchain 1.98.1 aarch64-apple-darwin x86_64-apple-darwin
+          cargo fetch --manifest-path rust/workout_core/Cargo.toml --locked
+      - run: flutter --suppress-analytics pub get --enforce-lockfile
+        working-directory: flutter_app
+      - name: Prepare Flutter and CocoaPods without compiling or signing
+        working-directory: flutter_app
+        run: flutter --suppress-analytics build macos --release --no-pub --config-only
+      - name: Compile universal app with signing explicitly disabled
+        working-directory: flutter_app
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner \
+            -configuration Release -destination 'generic/platform=macOS' \
+            -derivedDataPath build/macos -quiet -hideShellScriptEnvironment \
+            ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            COMPILER_INDEX_STORE_ENABLE=NO build
+      - name: Verify desktop bundle and linked Rust framework
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=flutter_app/build/macos/Build/Products/Release/health_workout_export.app
+          test -s "$APP/Contents/MacOS/health_workout_export"
+          test -s "$APP/Contents/Frameworks/rust_lib_health_workout_export.framework/rust_lib_health_workout_export"
+          git diff --exit-code -- flutter_app/pubspec.lock rust/workout_core/Cargo.lock
+
+  windows-app:
+    name: Windows release bundle (Dart + Rust + native adapters)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-flutter-rust
+      - name: Prepare pinned Rust Windows target and locked dependencies
+        run: |
+          rustup target add --toolchain 1.98.1 x86_64-pc-windows-msvc
+          cargo fetch --manifest-path rust/workout_core/Cargo.toml --locked
+      - run: flutter --suppress-analytics pub get --enforce-lockfile
+        working-directory: flutter_app
+      # The existing production CMake fetches the pinned official WebView2 NuGet
+      # SDK. Compiling requires no Evergreen runtime installation or app launch.
+      - name: Compile Windows app using the hosted Visual Studio toolchain
+        working-directory: flutter_app
+        run: flutter --suppress-analytics build windows --release --no-pub
+      - name: Verify executable and bundled Rust library
+        shell: pwsh
+        run: |
+          $bundle = 'flutter_app/build/windows/x64/runner/Release'
+          foreach ($file in @('health_workout_export.exe', 'rust_lib_health_workout_export.dll')) {
+            $artifact = Join-Path $bundle $file
+            if (!(Test-Path $artifact -PathType Leaf) -or (Get-Item $artifact).Length -eq 0) {
+              throw "Missing build artifact: $artifact"
+            }
+          }
+          git diff --exit-code -- flutter_app/pubspec.lock rust/workout_core/Cargo.lock

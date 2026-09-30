@@ -44,6 +44,16 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   );
 
   @protected
+  StravaRateLimitResult dco_decode_box_autoadd_strava_rate_limit_result(
+    dynamic raw,
+  );
+
+  @protected
+  StravaRateLimitWindow dco_decode_box_autoadd_strava_rate_limit_window(
+    dynamic raw,
+  );
+
+  @protected
   StravaUploadFfiError dco_decode_box_autoadd_strava_upload_ffi_error(
     dynamic raw,
   );
@@ -86,10 +96,18 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   List<OnelapWorkoutResult> dco_decode_list_onelap_workout_result(dynamic raw);
 
   @protected
+  Int32List dco_decode_list_prim_i_32_strict(dynamic raw);
+
+  @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
 
   @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  List<StravaActivitySpeedResult> dco_decode_list_strava_activity_speed_result(
+    dynamic raw,
+  );
 
   @protected
   List<StravaRemoteActivityResult>
@@ -99,6 +117,9 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   List<XingzheWorkoutResult> dco_decode_list_xingzhe_workout_result(
     dynamic raw,
   );
+
+  @protected
+  MergedFitResult dco_decode_merged_fit_result(dynamic raw);
 
   @protected
   OnelapLoginResult dco_decode_onelap_login_result(dynamic raw);
@@ -115,6 +136,16 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   @protected
   StravaActivitySpeedResult?
   dco_decode_opt_box_autoadd_strava_activity_speed_result(dynamic raw);
+
+  @protected
+  StravaRateLimitResult? dco_decode_opt_box_autoadd_strava_rate_limit_result(
+    dynamic raw,
+  );
+
+  @protected
+  StravaRateLimitWindow? dco_decode_opt_box_autoadd_strava_rate_limit_window(
+    dynamic raw,
+  );
 
   @protected
   StravaUploadFfiError? dco_decode_opt_box_autoadd_strava_upload_ffi_error(
@@ -141,6 +172,12 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   StravaActivitySpeedResult dco_decode_strava_activity_speed_result(
     dynamic raw,
   );
+
+  @protected
+  StravaRateLimitResult dco_decode_strava_rate_limit_result(dynamic raw);
+
+  @protected
+  StravaRateLimitWindow dco_decode_strava_rate_limit_window(dynamic raw);
 
   @protected
   StravaRemoteActivityResult dco_decode_strava_remote_activity_result(
@@ -214,6 +251,16 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   );
 
   @protected
+  StravaRateLimitResult sse_decode_box_autoadd_strava_rate_limit_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  StravaRateLimitWindow sse_decode_box_autoadd_strava_rate_limit_window(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   StravaUploadFfiError sse_decode_box_autoadd_strava_upload_ffi_error(
     SseDeserializer deserializer,
   );
@@ -262,10 +309,18 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   );
 
   @protected
+  Int32List sse_decode_list_prim_i_32_strict(SseDeserializer deserializer);
+
+  @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
 
   @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  List<StravaActivitySpeedResult> sse_decode_list_strava_activity_speed_result(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<StravaRemoteActivityResult>
@@ -275,6 +330,9 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   List<XingzheWorkoutResult> sse_decode_list_xingzhe_workout_result(
     SseDeserializer deserializer,
   );
+
+  @protected
+  MergedFitResult sse_decode_merged_fit_result(SseDeserializer deserializer);
 
   @protected
   OnelapLoginResult sse_decode_onelap_login_result(
@@ -295,6 +353,16 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   @protected
   StravaActivitySpeedResult?
   sse_decode_opt_box_autoadd_strava_activity_speed_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  StravaRateLimitResult? sse_decode_opt_box_autoadd_strava_rate_limit_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  StravaRateLimitWindow? sse_decode_opt_box_autoadd_strava_rate_limit_window(
     SseDeserializer deserializer,
   );
 
@@ -323,6 +391,16 @@ abstract class WorkoutCoreRustLibApiImplPlatform
 
   @protected
   StravaActivitySpeedResult sse_decode_strava_activity_speed_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  StravaRateLimitResult sse_decode_strava_rate_limit_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  StravaRateLimitWindow sse_decode_strava_rate_limit_window(
     SseDeserializer deserializer,
   );
 
@@ -423,6 +501,18 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   );
 
   @protected
+  void sse_encode_box_autoadd_strava_rate_limit_result(
+    StravaRateLimitResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_strava_rate_limit_window(
+    StravaRateLimitWindow self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_strava_upload_ffi_error(
     StravaUploadFfiError self,
     SseSerializer serializer,
@@ -480,11 +570,23 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   );
 
   @protected
+  void sse_encode_list_prim_i_32_strict(
+    Int32List self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_8_strict(
     Uint8List self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_strava_activity_speed_result(
+    List<StravaActivitySpeedResult> self,
     SseSerializer serializer,
   );
 
@@ -497,6 +599,12 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   @protected
   void sse_encode_list_xingzhe_workout_result(
     List<XingzheWorkoutResult> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_merged_fit_result(
+    MergedFitResult self,
     SseSerializer serializer,
   );
 
@@ -521,6 +629,18 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   @protected
   void sse_encode_opt_box_autoadd_strava_activity_speed_result(
     StravaActivitySpeedResult? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_strava_rate_limit_result(
+    StravaRateLimitResult? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_strava_rate_limit_window(
+    StravaRateLimitWindow? self,
     SseSerializer serializer,
   );
 
@@ -554,6 +674,18 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   @protected
   void sse_encode_strava_activity_speed_result(
     StravaActivitySpeedResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_strava_rate_limit_result(
+    StravaRateLimitResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_strava_rate_limit_window(
+    StravaRateLimitWindow self,
     SseSerializer serializer,
   );
 

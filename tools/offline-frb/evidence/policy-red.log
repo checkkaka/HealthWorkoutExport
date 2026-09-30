@@ -1,0 +1,73 @@
+
+running 10 tests
+test offline_guard_tests::accepts_only_expected_expand_shape ... ok
+test offline_guard_tests::permits_plain_generated_output ... ok
+test offline_guard_tests::rejects_all_dart_flutter_fvm_and_shell_commands ... FAILED
+test offline_guard_tests::accepts_locked_offline_full_graph_metadata ... FAILED
+test offline_guard_tests::rejects_cargo_install_and_unaudited_commands ... FAILED
+test offline_guard_tests::rejects_expand_option_injection ... FAILED
+test offline_guard_tests::rejects_freezed_before_generated_writes ... FAILED
+test offline_guard_tests::rejects_json_serializable_before_generated_writes ... FAILED
+test offline_guard_tests::rejects_metadata_without_offline_and_locked ... FAILED
+test offline_guard_tests::unsupported_config_fails_closed ... FAILED
+
+failures:
+
+---- offline_guard_tests::rejects_all_dart_flutter_fvm_and_shell_commands stdout ----
+
+thread 'offline_guard_tests::rejects_all_dart_flutter_fvm_and_shell_commands' (29) panicked at /workspace/shared/frb-offline-codegen-2.12.0/src/library/offline_policy.rs:27:13:
+allowed dart
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- offline_guard_tests::accepts_locked_offline_full_graph_metadata stdout ----
+
+thread 'offline_guard_tests::accepts_locked_offline_full_graph_metadata' (26) panicked at /workspace/shared/frb-offline-codegen-2.12.0/src/library/offline_policy.rs:52:9:
+assertion `left == right` failed
+  left: Ok(Expand)
+ right: Ok(Metadata)
+
+---- offline_guard_tests::rejects_cargo_install_and_unaudited_commands stdout ----
+
+thread 'offline_guard_tests::rejects_cargo_install_and_unaudited_commands' (30) panicked at /workspace/shared/frb-offline-codegen-2.12.0/src/library/offline_policy.rs:33:13:
+allowed install
+
+---- offline_guard_tests::rejects_expand_option_injection stdout ----
+
+thread 'offline_guard_tests::rejects_expand_option_injection' (31) panicked at /workspace/shared/frb-offline-codegen-2.12.0/src/library/offline_policy.rs:46:13:
+allowed --manifest-path
+
+---- offline_guard_tests::rejects_freezed_before_generated_writes stdout ----
+
+thread 'offline_guard_tests::rejects_freezed_before_generated_writes' (32) panicked at /workspace/shared/frb-offline-codegen-2.12.0/src/library/offline_policy.rs:67:9:
+assertion failed: validate_output(true, false).is_err()
+
+---- offline_guard_tests::rejects_json_serializable_before_generated_writes stdout ----
+
+thread 'offline_guard_tests::rejects_json_serializable_before_generated_writes' (33) panicked at /workspace/shared/frb-offline-codegen-2.12.0/src/library/offline_policy.rs:71:9:
+assertion failed: validate_output(false, true).is_err()
+
+---- offline_guard_tests::rejects_metadata_without_offline_and_locked stdout ----
+
+thread 'offline_guard_tests::rejects_metadata_without_offline_and_locked' (34) panicked at /workspace/shared/frb-offline-codegen-2.12.0/src/library/offline_policy.rs:56:9:
+assertion failed: classify_command("cargo",
+        &args(&["metadata", "--format-version", "1", "--manifest-path",
+                            "/tmp/example/Cargo.toml"])).is_err()
+
+---- offline_guard_tests::unsupported_config_fails_closed stdout ----
+
+thread 'offline_guard_tests::unsupported_config_fails_closed' (35) panicked at /workspace/shared/frb-offline-codegen-2.12.0/src/library/offline_policy.rs:61:9:
+assertion failed: reject_enabled("full_dep", true).is_err()
+
+
+failures:
+    offline_guard_tests::accepts_locked_offline_full_graph_metadata
+    offline_guard_tests::rejects_all_dart_flutter_fvm_and_shell_commands
+    offline_guard_tests::rejects_cargo_install_and_unaudited_commands
+    offline_guard_tests::rejects_expand_option_injection
+    offline_guard_tests::rejects_freezed_before_generated_writes
+    offline_guard_tests::rejects_json_serializable_before_generated_writes
+    offline_guard_tests::rejects_metadata_without_offline_and_locked
+    offline_guard_tests::unsupported_config_fails_closed
+
+test result: FAILED. 2 passed; 8 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

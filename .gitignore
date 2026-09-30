@@ -60,3 +60,6 @@ flutter_app/.idea/
 
 # Rust 构建产物
 rust/**/target/
+
+# Local Python validation bytecode
+__pycache__/

@@ -2,6 +2,65 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:health_workout_export/sync_destination_flow.dart';
 
 void main() {
+  test(
+    'unsupported health writer ignores saved preference and completes Strava',
+    () async {
+      const savedHealthPreference = true;
+      var healthCalls = 0;
+      final result = await runSyncDestinations(
+        ids: ['android-activity'],
+        uploadToStrava: true,
+        writeToHealth: healthWriteEnabled(
+          requested: savedHealthPreference,
+          canWriteHealth: false,
+          sourceIsHealth: false,
+        ),
+        runStrava: () async => {'android-activity': true},
+        runHealth: () async {
+          healthCalls++;
+          return {'android-activity': false};
+        },
+      );
+
+      expect(result.completedIds, {'android-activity'});
+      expect(result.health, isEmpty);
+      expect(healthCalls, 0);
+    },
+  );
+
+  test('capable Apple writer preserves an enabled preference', () {
+    expect(
+      healthWriteEnabled(
+        requested: true,
+        canWriteHealth: true,
+        sourceIsHealth: false,
+      ),
+      isTrue,
+    );
+  });
+
+  test('health source never writes its activities back to health', () {
+    expect(
+      healthWriteEnabled(
+        requested: true,
+        canWriteHealth: true,
+        sourceIsHealth: true,
+      ),
+      isFalse,
+    );
+  });
+
+  test('capable Apple writer preserves an opted-out preference', () {
+    expect(
+      healthWriteEnabled(
+        requested: false,
+        canWriteHealth: true,
+        sourceIsHealth: false,
+      ),
+      isFalse,
+    );
+  });
+
   test('health-only never executes Strava and completes written IDs', () async {
     final calls = <String>[];
     final result = await runSyncDestinations(
