@@ -101,6 +101,7 @@ def validate_report(folder, phase):
         expected_checks.add("native-preferences-roundtrip")
     if phase == "seed":
         expected_checks.update({
+            "automatic-alignment-rejects-underconstrained-fixture",
             "synthetic-file-selection-cancel-real-fit-import-rust-merge-export",
             "real-detail-preview-export-cancel-and-return",
             "durable-recovery-seed-before-host-process-termination",

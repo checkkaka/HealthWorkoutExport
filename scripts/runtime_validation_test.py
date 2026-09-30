@@ -68,7 +68,7 @@ class RuntimeValidationTests(unittest.TestCase):
         runtime = module()
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)
-            payload = {"phase": "seed", "pid": 123, "checks": ["bundled-rust-ffi-encode-and-preview", "native-health-capability-probe-no-authorization", "production-root-tabs-navigation-and-back", "native-preferences-roundtrip", "synthetic-file-selection-cancel-real-fit-import-rust-merge-export", "real-detail-preview-export-cancel-and-return", "durable-recovery-seed-before-host-process-termination"], "screenshots": ["screen.png"]}
+            payload = {"phase": "seed", "pid": 123, "checks": ["bundled-rust-ffi-encode-and-preview", "native-health-capability-probe-no-authorization", "production-root-tabs-navigation-and-back", "native-preferences-roundtrip", "automatic-alignment-rejects-underconstrained-fixture", "synthetic-file-selection-cancel-real-fit-import-rust-merge-export", "real-detail-preview-export-cancel-and-return", "durable-recovery-seed-before-host-process-termination"], "screenshots": ["screen.png"]}
             (folder / "results.json").write_text(json.dumps(payload))
             with self.assertRaisesRegex(RuntimeError, "screenshot"):
                 runtime.validate_report(folder, "seed")
@@ -84,7 +84,7 @@ class RuntimeValidationTests(unittest.TestCase):
     def test_report_rejects_paths_outside_phase_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)
-            (folder / "results.json").write_text(json.dumps({"phase": "seed", "pid": 123, "checks": ["bundled-rust-ffi-encode-and-preview", "native-health-capability-probe-no-authorization", "production-root-tabs-navigation-and-back", "native-preferences-roundtrip", "synthetic-file-selection-cancel-real-fit-import-rust-merge-export", "real-detail-preview-export-cancel-and-return", "durable-recovery-seed-before-host-process-termination"], "screenshots": ["../secret.png"]}))
+            (folder / "results.json").write_text(json.dumps({"phase": "seed", "pid": 123, "checks": ["bundled-rust-ffi-encode-and-preview", "native-health-capability-probe-no-authorization", "production-root-tabs-navigation-and-back", "native-preferences-roundtrip", "automatic-alignment-rejects-underconstrained-fixture", "synthetic-file-selection-cancel-real-fit-import-rust-merge-export", "real-detail-preview-export-cancel-and-return", "durable-recovery-seed-before-host-process-termination"], "screenshots": ["../secret.png"]}))
             with self.assertRaisesRegex(RuntimeError, "screenshot"):
                 module().validate_report(folder, "seed")
 

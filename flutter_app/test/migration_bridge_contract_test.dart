@@ -244,6 +244,39 @@ void main() {
     expect(prepared.activityDescription, isNull);
   });
 
+  test(
+    'sparse same-clock fixtures reject auto but merge absolute through FFI',
+    () async {
+      final primary = await _fixtureFit(sensors: false);
+      final supplement = await _fixtureFit();
+      await expectLater(
+        mergeFitFilesDetailed(
+          primary: primary,
+          supplements: [supplement],
+          sensorsOnly: false,
+          alignment: 'auto',
+          manualOffsetSeconds: 0,
+        ),
+        throwsA(
+          predicate<Object>(
+            (error) => error.toString().contains('InsufficientReliableData'),
+          ),
+        ),
+      );
+      final merged = await mergeFitFilesDetailed(
+        primary: primary,
+        supplements: [supplement],
+        sensorsOnly: false,
+        alignment: 'absolute',
+        manualOffsetSeconds: 0,
+      );
+      expect(merged.offsetsSeconds, [0]);
+      expect(isValidFit(data: merged.data), isTrue);
+      final inspected = _jsonObject(await inspectFitPreview(data: merged.data));
+      expect(inspected['summary']['heartRateCount'], 2);
+    },
+  );
+
   test('GCJ preparation transports nonzero coordinate displacement', () async {
     final fit = await _fixtureFit();
     final before = _jsonObject(await inspectFitPreview(data: fit));

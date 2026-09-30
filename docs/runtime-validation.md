@@ -13,7 +13,9 @@ accounts/devices. It is not a physical-device or production-account acceptance.
    merge page. Capture the rendered app surface.
 2. `seed`: repeat startup checks; cancel a synthetic file selection, suppress a
    repeated click while selection is pending, import two real local fixture files,
-   use production Rust merge, write/read a real exported FIT, view production
+   assert the real automatic-alignment rejection for a two-sample fixture, select
+   explicit absolute-time alignment for its known shared clock, use production
+   Rust merge, write/read a real exported FIT, view production
    detail/quality charts, and cancel deletion. Persist a pending record and FIT
    using the native sync-files plugin and a production recovery checkpoint.
 3. `verify`: after the host terminates the seed process without clearing app data,

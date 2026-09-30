@@ -226,11 +226,15 @@ Future<void> showPage(WidgetTester tester, Widget page) async {
   await tester.pumpAndSettle();
 }
 
-Future<void> tapVisible(WidgetTester tester, Finder finder) async {
+Future<void> tapVisible(
+  WidgetTester tester,
+  Finder finder, {
+  double scrollDelta = 200,
+}) async {
   if (finder.evaluate().isEmpty) {
     await tester.scrollUntilVisible(
       finder,
-      200,
+      scrollDelta,
       scrollable: find.byType(Scrollable).last,
     );
   } else {
@@ -299,7 +303,35 @@ Future<void> functionalFlow(WidgetTester tester, Uint8List fit) async {
     ) {
       await tester.pump(const Duration(milliseconds: 100));
     }
-    await screenshot(tester, 'merge-after-click');
+    // Two samples cannot meet automatic-alignment reliability thresholds.
+    // Assert the real rejection, then choose the explicit same-clock mode.
+    expect(find.text('FIT 合并失败，请检查文件是否属于同一次活动及时间对齐设置'), findsOneWidget);
+    await expectLater(
+      rust.mergeFitFilesDetailed(
+        primary: await first.readAsBytes(),
+        supplements: [fit],
+        sensorsOnly: false,
+        alignment: 'auto',
+        manualOffsetSeconds: 0,
+      ),
+      throwsA(
+        predicate<Object>(
+          (error) => error.toString().contains('InsufficientReliableData'),
+        ),
+      ),
+    );
+    checks.add('automatic-alignment-rejects-underconstrained-fixture');
+    await screenshot(tester, 'automatic-alignment-rejection');
+    await tapVisible(tester, find.text('绝对时间'), scrollDelta: -200);
+    await tapVisible(tester, find.widgetWithText(FilledButton, '合并 FIT'));
+    for (
+      var i = 0;
+      i < 100 && find.widgetWithText(FilledButton, '合并 FIT').evaluate().isEmpty;
+      i++
+    ) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await screenshot(tester, 'absolute-merge-after-click');
     await tapVisible(tester, find.text('分享结果'));
     expect(find.text('结果已生成'), findsOneWidget);
     expect(exported, isNotNull);
