@@ -101,11 +101,13 @@ if [[ "${RUN_MACOS_NATIVE_TESTS:-0}" == 1 ]]; then
   xcrun --sdk macosx swiftc -swift-version 5 -parse-as-library \
     -sdk "$mac_sdk" -target "$arch-apple-macos14.0" \
     -F "$mac_framework" -F "$xctest_frameworks" -I "$mac_platform/Developer/usr/lib" \
-    -I "$mac_module" -L "$mac_module" -lhealth_workout_export -framework XCTest \
+    -I "$mac_module" -L "$mac_module" -L "$mac_platform/Developer/usr/lib" \
+    -lhealth_workout_export -framework XCTest \
     -module-cache-path "$work/module-cache/macos" -module-name HealthNativeTests \
     -emit-library -o "$bundle/Contents/MacOS/HealthNativeTests" \
     -Xlinker -rpath -Xlinker "$mac_module" -Xlinker -rpath -Xlinker "$mac_framework" \
     -Xlinker -rpath -Xlinker "$xctest_frameworks" \
+    -Xlinker -rpath -Xlinker "$mac_platform/Developer/usr/lib" \
     "$repo_root/flutter_app/macos/RunnerTests/RunnerTests.swift"
   python3 - "$bundle/Contents/Info.plist" <<'PYTESTPLIST'
 import plistlib, sys
