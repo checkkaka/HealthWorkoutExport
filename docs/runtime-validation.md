@@ -1,0 +1,69 @@
+# Synthetic runtime acceptance
+
+This extends the compile/test evidence with applications launched on real target
+runtimes: an Android AVD, an installed iOS Simulator, and native macOS/Windows
+desktop processes on standard hosted runners. Run only in disposable test
+accounts/devices. It is not a physical-device or production-account acceptance.
+
+## Three phases per platform
+
+1. `startup`: initialize the bundled Rust library, encode and inspect a synthetic
+   FIT through FFI, probe native health availability without authorization, round
+   trip native preferences, render the production app and navigate its tabs and
+   merge page. Capture the rendered app surface.
+2. `seed`: repeat startup checks; cancel a synthetic file selection, suppress a
+   repeated click while selection is pending, import two real local fixture files,
+   use production Rust merge, write/read a real exported FIT, view production
+   detail/quality charts, and cancel deletion. Persist a pending record and FIT
+   using the native sync-files plugin and a production recovery checkpoint.
+3. `verify`: after the host terminates the seed process without clearing app data,
+   a separately launched process verifies the exact FIT, preferences, pending
+   record and checkpoint; `AutoSyncSession.restore()` must recover the queue
+   without starting any network operation. Remove only reserved synthetic records.
+
+The host records target PIDs, native termination checks and different seed/verify
+PIDs. Each phase must complete its assertions and provide valid PNG screenshots.
+Failed launches, absent interactive sessions, unavailable emulator acceleration,
+missing simulator runtimes and unavailable components fail honestly.
+
+## Real and synthetic boundaries
+
+Real: Flutter engine/application widgets, bundled Rust dynamic library and FFI,
+FIT bytes/merge/inspection, local file reads/writes, native preferences and sync
+storage, production checkpoint decoding and session restoration, app process
+termination/relaunch. No manual generated binding changes are required.
+
+Synthetic: fixture workout data; health availability response used by the UI
+(after a separate real native capability probe); file-picker selection; sharing
+callback. The generated export is read and validated, but OS file-picker/share
+windows are not automated. No HealthKit/Health Connect grant/read/write, OAuth,
+third-party credentials, activity upload/delete, weather service or map tiles.
+Android Health Connect remains read/export/Strava only.
+
+Screenshots capture the application's Flutter-rendered surface using a real
+render boundary. They do not prove native permission dialogs or desktop chrome.
+Health provider availability in an AOSP image is not Health Connect permission or
+record access coverage. Simulator capabilities do not prove sensor, background,
+performance or physical-device behavior.
+
+## Safety and evidence
+
+- Existing pinned Flutter/Rust setup; committed bindings; no code generation
+- Flutter analytics suppressed in every subprocess and validation uses `--no-pub`
+- Official Android emulator has explicit `-no-metrics`; no bulk SDK license
+  acceptance, KVM permission changes or extra agreements
+- iOS uses only available installed runtimes; no provisioning/signing account
+- Standard hosted runner labels; no deployments/releases/paid device farms
+- Results, rendered screenshots, bounded logs and restart proof retained as
+  Actions artifacts for seven days, containing synthetic data only
+- `flutter drive --keep-app-running` avoids its default app removal; the host
+  stops the native process without clearing the persistent test data
+
+The workflow is `.github/workflows/runtime-validation.yml`; orchestrator and
+host driver are `scripts/runtime_validation.py` and
+`flutter_app/test_driver/runtime_driver.dart`. Tests live in
+`flutter_app/integration_test/runtime_test.dart`.
+
+Runtime acceptance status is the workflow result for the exact PR head. Adding
+these tests does not itself establish a pass; refer to the run and its per-phase
+reports. Existing compile/static/unit-test checks continue separately.
