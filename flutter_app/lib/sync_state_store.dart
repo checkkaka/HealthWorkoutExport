@@ -52,6 +52,15 @@ final class SyncFilesChannel {
   Future<void> deleteSyncedFit(String fingerprint) => _channel
       .invokeMethod<void>('deleteSyncedFit', {'fingerprint': fingerprint});
 
+  Future<Uint8List> readHealthPreparedFit(String fingerprint) =>
+      _read('readHealthPreparedFit', fingerprint);
+  Future<void> writeHealthPreparedFit(String fingerprint, Uint8List bytes) =>
+      _write('writeHealthPreparedFit', bytes, fingerprint);
+  Future<void> deleteHealthPreparedFit(String fingerprint) =>
+      _channel.invokeMethod<void>('deleteHealthPreparedFit', {
+        'fingerprint': fingerprint,
+      });
+
   Future<Uint8List> readRecovery(String fingerprint) =>
       _read('readRecovery', fingerprint);
 
@@ -92,6 +101,8 @@ final class SyncPendingRecord {
     this.batchAt,
     this.uploadChannel,
     this.hasVirtualPower,
+    this.coordinatesWgs84,
+    this.recoveryBatchId,
   });
 
   final String fingerprint;
@@ -106,6 +117,8 @@ final class SyncPendingRecord {
   final DateTime? batchAt;
   final SyncUploadChannel? uploadChannel;
   final bool? hasVirtualPower;
+  final bool? coordinatesWgs84;
+  final String? recoveryBatchId;
 
   Map<String, Object?> toJson() => {
     'fingerprint': fingerprint,
@@ -121,6 +134,8 @@ final class SyncPendingRecord {
     if (batchAt != null) 'batchAt': _appleSeconds(batchAt!),
     if (uploadChannel != null) 'uploadChannel': uploadChannel!.name,
     if (hasVirtualPower != null) 'hasVirtualPower': hasVirtualPower,
+    if (coordinatesWgs84 != null) 'coordinatesWgs84': coordinatesWgs84,
+    if (recoveryBatchId != null) 'recoveryBatchId': recoveryBatchId,
   };
 }
 
@@ -188,6 +203,45 @@ final class SyncStateStore {
     }
   });
 
+  /// Health-only preparation must never reset a completed Strava record.
+  Future<void> saveHealthFit({
+    required SyncPendingRecord record,
+    required Uint8List fit,
+  }) => _serialized(() async {
+    final decoded =
+        jsonDecode(
+              utf8.decode(
+                _applyRust(
+                  stateJson: await _readStateOrEmpty(),
+                  commandJson: _command({'operation': 'validate'}),
+                ),
+              ),
+            )
+            as Map;
+    Uint8List? previous;
+    try {
+      previous = await _files.readHealthPreparedFit(record.fingerprint);
+    } on PlatformException catch (error) {
+      if (error.code != 'sync_file_missing') rethrow;
+    }
+    await _files.writeHealthPreparedFit(record.fingerprint, fit);
+    try {
+      if (!decoded.containsKey(record.fingerprint)) {
+        await _mutateUnlocked({
+          'operation': 'markPending',
+          'record': record.toJson(),
+        });
+      }
+    } catch (_) {
+      if (previous == null) {
+        await _files.deleteHealthPreparedFit(record.fingerprint);
+      } else {
+        await _files.writeHealthPreparedFit(record.fingerprint, previous);
+      }
+      rethrow;
+    }
+  });
+
   Future<Uint8List?> _readSyncedFitOrNull(String fingerprint) async {
     try {
       return await _files.readSyncedFit(fingerprint);
@@ -207,6 +261,9 @@ final class SyncStateStore {
     String? message,
     SyncUploadChannel? uploadChannel,
     bool? hasVirtualPower,
+    bool? coordinatesWgs84,
+    String? recoveryBatchId,
+    String? uploadExternalId,
   }) => _mutate({
     'operation': 'markUploaded',
     'update': {
@@ -219,6 +276,9 @@ final class SyncStateStore {
       'message': message,
       'uploadChannel': uploadChannel?.name,
       'hasVirtualPower': hasVirtualPower,
+      'coordinatesWgs84': ?coordinatesWgs84,
+      'recoveryBatchId': ?recoveryBatchId,
+      'uploadExternalId': ?uploadExternalId,
     },
   });
 
@@ -233,6 +293,40 @@ final class SyncStateStore {
     'updatedAt': _appleSeconds(updatedAt),
     'reason': reason,
     'remoteId': remoteId,
+  });
+
+  Future<Map<String, Object?>?> recordFor(String fingerprint) async {
+    final value = (await allRecords())[fingerprint];
+    return value is Map ? Map<String, Object?>.from(value) : null;
+  }
+
+  Future<void> markAppleHealthWritten({
+    required String fingerprint,
+    required String uuid,
+    required DateTime updatedAt,
+  }) => _mutate({
+    'operation': 'markAppleHealthWritten',
+    'fingerprint': fingerprint,
+    'uuid': uuid,
+    'updatedAt': _appleSeconds(updatedAt),
+  });
+  Future<void> markAppleHealthSkipped({
+    required String fingerprint,
+    required DateTime updatedAt,
+  }) => _mutate({
+    'operation': 'markAppleHealthSkipped',
+    'fingerprint': fingerprint,
+    'updatedAt': _appleSeconds(updatedAt),
+  });
+  Future<void> markAppleHealthFailed({
+    required String fingerprint,
+    required String message,
+    required DateTime updatedAt,
+  }) => _mutate({
+    'operation': 'markAppleHealthFailed',
+    'fingerprint': fingerprint,
+    'message': message,
+    'updatedAt': _appleSeconds(updatedAt),
   });
 
   Future<void> setRemoteId({
@@ -258,6 +352,7 @@ final class SyncStateStore {
 
   Future<void> remove(String fingerprint) => _serialized(() async {
     await _files.deleteSyncedFit(fingerprint);
+    await _files.deleteHealthPreparedFit(fingerprint);
     await _files.deleteRecovery(fingerprint);
     await _mutateUnlocked({'operation': 'remove', 'fingerprint': fingerprint});
   });
@@ -276,6 +371,7 @@ final class SyncStateStore {
             as Map<String, dynamic>;
     for (final fingerprint in decoded.keys) {
       await _files.deleteSyncedFit(fingerprint);
+      await _files.deleteHealthPreparedFit(fingerprint);
       await _files.deleteRecovery(fingerprint);
     }
     final cleared = _applyRust(
@@ -288,6 +384,19 @@ final class SyncStateStore {
 
   Future<Uint8List> readSyncedFit(String fingerprint) =>
       _serialized(() => _files.readSyncedFit(fingerprint));
+
+  Future<Uint8List> readFitForHealth(String fingerprint) =>
+      _serialized(() async {
+        try {
+          return await _files.readHealthPreparedFit(fingerprint);
+        } on PlatformException catch (error) {
+          if (error.code != 'sync_file_missing') rethrow;
+          return _files.readSyncedFit(fingerprint);
+        }
+      });
+
+  Future<void> deleteHealthPreparedFit(String fingerprint) =>
+      _serialized(() => _files.deleteHealthPreparedFit(fingerprint));
 
   Future<Uint8List> readRecovery(String fingerprint) => _serialized(() async {
     final bytes = await _files.readRecovery(fingerprint);
@@ -302,6 +411,25 @@ final class SyncStateStore {
 
   Future<void> deleteRecovery(String fingerprint) =>
       _serialized(() => _files.deleteRecovery(fingerprint));
+
+  /// Only a proven ghost duplicate may renew an in-flight overwrite intent.
+  /// Rust compares the previous ID; no caller may upload until the new ID is
+  /// durably written and read from the validated returned transaction.
+  Future<SyncRecoveryTransaction> renewRecoveryExternalId(
+    String fingerprint, {
+    required String expectedExternalId,
+  }) => _serialized(() async {
+    final updated = _applyRecoveryRust(
+      recoveryJson: await _files.readRecovery(fingerprint),
+      commandJson: _command({
+        'operation': 'renewExternalId',
+        'expectedExternalId': expectedExternalId,
+        'nextExternalId': '$fingerprint-resync-${_randomHex(16)}',
+      }),
+    );
+    await _files.writeRecovery(fingerprint, updated);
+    return SyncRecoveryTransaction.fromJson(updated);
+  });
 
   /// 首次落盘生成一次 externalId；后续重复调用始终保留已落盘值。
   Future<SyncRecoveryTransaction> prepareRecovery({

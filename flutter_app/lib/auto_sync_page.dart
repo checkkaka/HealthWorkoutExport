@@ -2,6 +2,13 @@ import 'package:flutter/material.dart';
 
 import 'auto_sync_controller.dart';
 import 'auto_sync_session.dart';
+import 'recovery_legacy_dialog.dart';
+import 'recovery_batch_checkpoint.dart';
+import 'sync_preview_models.dart';
+import 'sync_preview_page.dart';
+import 'sync_result_messages.dart';
+import 'apple_health_import.dart';
+import 'apple_health_import_dialog.dart';
 import 'date_range.dart';
 import 'native_channels.dart';
 import 'src/rust/api/simple.dart' as rust;
@@ -13,10 +20,14 @@ class AutoSyncPage extends StatefulWidget {
     super.key,
     required this.entrySource,
     this.selected = const [],
+    this.initialPreviewPolicy,
+    this.initialSkipLocalHistory = true,
   });
 
   final WorkoutSourceId entrySource;
   final List<WorkoutActivity> selected;
+  final SyncPreviewPolicy? initialPreviewPolicy;
+  final bool initialSkipLocalHistory;
 
   @override
   State<AutoSyncPage> createState() => _AutoSyncPageState();
@@ -28,6 +39,11 @@ class _AutoSyncPageState extends State<AutoSyncPage> {
   var _preset = ActivityDatePreset.days7;
   var _busy = false;
   var _skipLocalHistory = true;
+  final _customTitle = TextEditingController();
+  var _previewPolicy = SyncPreviewPolicy.issuesOnly;
+  var _uploadToStrava = true;
+  var _writeToHealth = false;
+  var _canWriteHealth = false;
   DateTime _customStart = DateTime.now().subtract(const Duration(days: 7));
   DateTime _customEnd = DateTime.now();
   final _authenticated = <WorkoutSourceId, bool>{};
@@ -37,8 +53,47 @@ class _AutoSyncPageState extends State<AutoSyncPage> {
   void initState() {
     super.initState();
     _primary = widget.entrySource;
+    _previewPolicy =
+        widget.initialPreviewPolicy ?? SyncPreviewPolicy.issuesOnly;
+    _skipLocalHistory = widget.initialSkipLocalHistory;
     _loadAuthentication();
+    _loadSyncPreferences();
     AutoSyncSession.instance.restore();
+    const HealthKitChannel().canWriteWorkouts().then((value) {
+      if (mounted) setState(() => _canWriteHealth = value);
+    });
+  }
+
+  Future<void> _loadSyncPreferences() async {
+    try {
+      const preferences = PreferencesChannel();
+      final policy = await preferences.read('sync_preview_policy');
+      final health = await preferences.read('write_to_apple_health');
+      if (!mounted) return;
+      setState(() {
+        _previewPolicy = resolveSyncPreviewPolicy(
+          policy,
+          explicit: widget.initialPreviewPolicy,
+        );
+        _writeToHealth = health == true;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _error = '无法读取上次预览/健康写入设置，使用安全默认值');
+    }
+  }
+
+  Future<void> _saveSyncPreference(String key, Object value) async {
+    try {
+      await const PreferencesChannel().write(key, value);
+    } catch (_) {
+      if (mounted) setState(() => _error = '本次设置未能保存，当前批次仍使用所选值');
+    }
+  }
+
+  @override
+  void dispose() {
+    _customTitle.dispose();
+    super.dispose();
   }
 
   @override
@@ -76,7 +131,7 @@ class _AutoSyncPageState extends State<AutoSyncPage> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '${session.progress.message}  上传 ${session.progress.uploaded} · 去重 ${session.progress.deduped} · 失败 ${session.progress.failed}',
+                  '${session.progress.message}  成功 ${session.progress.uploaded} · 去重 ${session.progress.deduped} · 失败 ${session.progress.failed}',
                 ),
                 if (session.isRunning)
                   TextButton(
@@ -101,6 +156,84 @@ class _AutoSyncPageState extends State<AutoSyncPage> {
                   ),
                 const SizedBox(height: 16),
               ],
+              SyncResultMessages(
+                messages: [
+                  for (final result in session.results)
+                    if (result.message != null &&
+                        !{'skip-all', 'overwrite-all'}.contains(result.message))
+                      '${result.workoutId}：${result.message}',
+                ],
+              ),
+              TextField(
+                controller: _customTitle,
+                enabled: !session.isRunning && !_busy,
+                decoration: const InputDecoration(
+                  labelText: '本批 Strava 标题（可选）',
+                  helperText: '留空时通勤用“通勤🚲”，其他用源标题；网页模式需要 API 授权才能修改标题',
+                ),
+              ),
+              DropdownButton<SyncPreviewPolicy>(
+                value: _previewPolicy,
+                isExpanded: true,
+                items: const [
+                  DropdownMenuItem(
+                    value: SyncPreviewPolicy.issuesOnly,
+                    child: Text('仅异常确认'),
+                  ),
+                  DropdownMenuItem(
+                    value: SyncPreviewPolicy.everyActivity,
+                    child: Text('每条上传前确认'),
+                  ),
+                ],
+                onChanged: session.isRunning || _busy
+                    ? null
+                    : (value) {
+                        if (value != null) {
+                          setState(() => _previewPolicy = value);
+                          _saveSyncPreference(
+                            'sync_preview_policy',
+                            value.name,
+                          );
+                        }
+                      },
+              ),
+              SwitchListTile(
+                title: const Text('上传到 Strava'),
+                value: _uploadToStrava,
+                onChanged:
+                    session.isRunning ||
+                        _busy ||
+                        !_canWriteHealth ||
+                        _primary == WorkoutSourceId.healthkit
+                    ? null
+                    : (value) => setState(() => _uploadToStrava = value),
+              ),
+              if (_canWriteHealth && _primary != WorkoutSourceId.healthkit)
+                SwitchListTile(
+                  title: const Text('写入苹果健康'),
+                  subtitle: const Text('仅写入生成的训练；附近已有训练时先询问，不会删除健康中的训练'),
+                  value: _writeToHealth,
+                  onChanged: session.isRunning || _busy
+                      ? null
+                      : (value) async {
+                          if (value) {
+                            try {
+                              await const HealthKitChannel()
+                                  .requestWriteAuthorization();
+                            } catch (_) {
+                              if (mounted) setState(() => _error = '未获得健康写入授权');
+                              return;
+                            }
+                          }
+                          if (mounted) {
+                            setState(() => _writeToHealth = value);
+                            await _saveSyncPreference(
+                              'write_to_apple_health',
+                              value,
+                            );
+                          }
+                        },
+                ),
               Text('主数据源', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
               Wrap(
@@ -119,6 +252,10 @@ class _AutoSyncPageState extends State<AutoSyncPage> {
                           : (_) => setState(() {
                               _primary = source;
                               _supplements.remove(source);
+                              if (source == WorkoutSourceId.healthkit) {
+                                _uploadToStrava = true;
+                                _writeToHealth = false;
+                              }
                             }),
                     ),
                 ],
@@ -210,6 +347,7 @@ class _AutoSyncPageState extends State<AutoSyncPage> {
                 ),
               ],
               const SizedBox(height: 24),
+              const Text('历史同步可能较久，请保持应用在前台。中断后可按原配置继续剩余活动。'),
               FilledButton.icon(
                 onPressed: session.isRunning || _busy
                     ? null
@@ -267,9 +405,31 @@ class _AutoSyncPageState extends State<AutoSyncPage> {
         required String reason,
       }) => _askDuplicate(title, remoteId, reason);
       if (remaining) {
-        await session.continueRemaining(onDuplicate: prompt);
+        await session.continueRemaining(
+          onDuplicate: prompt,
+          onHealthNearby: (value) => mounted
+              ? showAppleHealthNearbyDialog(context, value)
+              : Future.value(AppleHealthNearbyDecision.skipOnce),
+          onPreview: (value) => mounted
+              ? showSyncPreview(context, value)
+              : Future.value(const SyncPreviewDecision(SyncPreviewAction.stop)),
+          onLegacy: (value) => mounted
+              ? showLegacyRecoveryDialog(context, value)
+              : Future.value(LegacyRecoveryDecision.stop),
+        );
       } else {
-        await session.retryLastBatch(onDuplicate: prompt);
+        await session.retryLastBatch(
+          onDuplicate: prompt,
+          onHealthNearby: (value) => mounted
+              ? showAppleHealthNearbyDialog(context, value)
+              : Future.value(AppleHealthNearbyDecision.skipOnce),
+          onPreview: (value) => mounted
+              ? showSyncPreview(context, value)
+              : Future.value(const SyncPreviewDecision(SyncPreviewAction.stop)),
+          onLegacy: (value) => mounted
+              ? showLegacyRecoveryDialog(context, value)
+              : Future.value(LegacyRecoveryDecision.stop),
+        );
       }
     } catch (_) {
       if (mounted) setState(() => _error = '恢复同步失败，请检查授权与网络后重试');
@@ -338,6 +498,16 @@ class _AutoSyncPageState extends State<AutoSyncPage> {
         gcjEnabled: settings.gcjCorrectionEnabled,
         skipLocalHistory: _skipLocalHistory,
         virtualPower: virtualPower,
+        customTitle: _customTitle.text,
+        previewPolicy: _previewPolicy,
+        uploadToStrava: _uploadToStrava,
+        writeToHealth: _writeToHealth && _primary != WorkoutSourceId.healthkit,
+        onHealthNearby: (value) => mounted
+            ? showAppleHealthNearbyDialog(context, value)
+            : Future.value(AppleHealthNearbyDecision.skipOnce),
+        onPreview: (value) => mounted
+            ? showSyncPreview(context, value)
+            : Future.value(const SyncPreviewDecision(SyncPreviewAction.stop)),
         onDuplicate: ({required title, required remoteId, required reason}) {
           return _askDuplicate(title, remoteId, reason);
         },

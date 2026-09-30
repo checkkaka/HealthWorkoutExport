@@ -34,6 +34,22 @@ void main() {
     },
   );
   test(
+    'new prepared reupload without a replacement does not mistake old uploaded state for completion',
+    () async {
+      h.state[fingerprint] = {'status': 'uploaded', 'remoteId': '111'};
+      await h.run();
+      expect(h.events, [
+        'fit',
+        'pending',
+        'uploading',
+        'upload:stable',
+        'uploaded',
+        'cleanup',
+      ]);
+      expect(h.state[fingerprint]!['remoteId'], '222');
+    },
+  );
+  test(
     'overwrite saves bytes before deletion, then persists deletion before upload',
     () async {
       h.seed(remote: '111');
@@ -49,6 +65,135 @@ void main() {
         'uploaded',
         'cleanup',
       ]);
+    },
+  );
+  test(
+    'duplicate of the deleted original ID remains recoverable, never marked uploaded',
+    () async {
+      h.seed(remote: '111');
+      h.uploadRemoteId = '111';
+      h.uploadDuplicate = true;
+      await expectLater(h.run(), throwsA(isA<RecoveryGhostDuplicate>()));
+      expect(h.events, isNot(contains('uploaded')));
+      expect(h.recovery!['phase'], 'uploading');
+      expect(
+        h.recovery!['externalId'],
+        h.events.lastWhere((e) => e.startsWith('upload:')).substring(7),
+      );
+      expect(h.events.where((e) => e.startsWith('delete:')), ['delete:111']);
+      expect(
+        h.events.where((e) => e.startsWith('upload:')).length,
+        lessThanOrEqualTo(5),
+      );
+    },
+  );
+  test(
+    'known ghost duplicate renews persisted external ID before retry and never deletes twice',
+    () async {
+      h.seed(remote: '111');
+      h.transientGhosts = 1;
+      await h.run();
+      expect(h.events.where((e) => e.startsWith('delete:')), ['delete:111']);
+      final uploads = h.events.where((e) => e.startsWith('upload:')).toList();
+      expect(uploads, hasLength(2));
+      expect(uploads[1], isNot(uploads[0]));
+      final renewed = h.events.indexWhere((e) => e.startsWith('renewed:'));
+      expect(renewed, lessThan(h.events.indexOf(uploads[1])));
+    },
+  );
+  test(
+    'coordinate proof travels with the saved FIT instead of current settings',
+    () async {
+      h.recovery!['coordinatesWgs84'] = true;
+      await h.run();
+      expect(h.state[fingerprint]!['coordinatesWgs84'], isTrue);
+    },
+  );
+  test(
+    'upload success commits generation and exact external intent atomically',
+    () async {
+      h.recovery!['recoveryBatchId'] = 'b' * 64;
+      await h.run();
+      expect(h.state[fingerprint]!['recoveryBatchId'], 'b' * 64);
+      expect(h.state[fingerprint]!['uploadExternalId'], 'stable');
+    },
+  );
+  test(
+    'cleanup-only success adopts current generation before removing recovery',
+    () async {
+      h.seed(remote: '111', phase: 'uploading');
+      h.recovery!['recoveryBatchId'] = 'b' * 64;
+      h.state[fingerprint] = {
+        'status': 'uploaded',
+        'remoteId': '222',
+        'recoveryBatchId': 'c' * 64,
+        'uploadExternalId': 'stable',
+        'message': 'saved warning',
+        'distanceMeters': 123.0,
+        'durationSeconds': 456.0,
+        'uploadChannel': 'web',
+        'hasVirtualPower': false,
+        'coordinatesWgs84': true,
+      };
+      await h.run();
+      expect(h.state[fingerprint]!['recoveryBatchId'], 'b' * 64);
+      expect(h.state[fingerprint]!['uploadExternalId'], 'stable');
+      expect(h.state[fingerprint]!['message'], 'saved warning');
+      expect(h.state[fingerprint]!['distanceMeters'], 123.0);
+      expect(h.state[fingerprint]!['durationSeconds'], 456.0);
+      expect(h.state[fingerprint]!['uploadChannel'], 'web');
+      expect(h.state[fingerprint]!['hasVirtualPower'], false);
+      expect(h.state[fingerprint]!['coordinatesWgs84'], true);
+      expect(h.events, ['uploaded', 'cleanup']);
+    },
+  );
+  test(
+    'verified existing duplicate replacement completes once without renewal',
+    () async {
+      h.seed(remote: '111', phase: 'uploading');
+      h.uploadRemoteId = '444';
+      h.uploadDuplicate = true;
+      h.existence = true;
+      final result = await h.run();
+      expect(result.remoteId, '444');
+      expect(h.existenceReads, ['444']);
+      expect(h.events.where((e) => e.startsWith('upload:')), ['upload:stable']);
+      expect(h.events.where((e) => e.startsWith('renewed:')), isEmpty);
+      expect(h.events.where((e) => e.startsWith('delete:')), isEmpty);
+      expect(h.state[fingerprint]!['remoteId'], '444');
+    },
+  );
+  test(
+    'verified missing duplicate renews durably before replay without deletion',
+    () async {
+      h.seed(remote: '111', phase: 'uploading');
+      h.transientGhosts = 1;
+      h.transientDuplicateId = '333';
+      h.existence = false;
+      await h.run();
+      expect(h.existenceReads, ['333']);
+      final uploads = h.events.where((e) => e.startsWith('upload:')).toList();
+      expect(uploads, hasLength(2));
+      expect(uploads[1], isNot(uploads[0]));
+      final renewed = h.events.indexWhere((e) => e.startsWith('renewed:'));
+      expect(renewed, greaterThanOrEqualTo(0));
+      expect(renewed, lessThan(h.events.indexOf(uploads[1])));
+      expect(h.events.where((e) => e.startsWith('delete:')), isEmpty);
+    },
+  );
+  test(
+    'unknown duplicate existence preserves recovery without success or renewal',
+    () async {
+      h.seed(remote: '111', phase: 'uploading');
+      h.uploadRemoteId = '333';
+      h.uploadDuplicate = true;
+      await expectLater(h.run(), throwsA(isA<RecoveryUnverifiedDuplicate>()));
+      expect(h.existenceReads, ['333']);
+      expect(h.events.where((e) => e.startsWith('upload:')), ['upload:stable']);
+      expect(h.events.where((e) => e.startsWith('renewed:')), isEmpty);
+      expect(h.events, isNot(contains('uploaded')));
+      expect(h.recovery!['externalId'], 'stable');
+      expect(h.recovery!['phase'], 'uploading');
     },
   );
   for (final phase in ['remoteDeleted', 'uploading']) {
@@ -126,6 +271,16 @@ void main() {
       expect(h.events, ['cleanup']);
     },
   );
+  for (final channel in ['future', true]) {
+    test(
+      'unsupported recovery channel $channel is rejected before any effect',
+      () async {
+        h.recovery!['uploadChannel'] = channel;
+        await expectLater(h.run(), throwsFormatException);
+        expect(h.events, isEmpty);
+      },
+    );
+  }
   test('cancel before reading cannot mutate or invoke remote calls', () async {
     h.cancelled = true;
     await expectLater(h.run(), throwsA(isA<RecoveryCancelled>()));
@@ -171,10 +326,15 @@ final class Harness {
               }
               return bytes(recovery);
             case 'writeRecovery':
+              final previousExternalId = recovery?['externalId'];
               recovery =
                   jsonDecode(utf8.decode(args!['bytes'] as Uint8List))
                       as Map<String, dynamic>;
-              events.add(recovery!['phase'] as String);
+              events.add(
+                previousExternalId != recovery!['externalId']
+                    ? 'renewed:${recovery!['externalId']}'
+                    : recovery!['phase'] as String,
+              );
               return null;
             case 'readSyncedFit':
               if (fit == null) {
@@ -239,6 +399,14 @@ final class Harness {
         if (command['operation'] == 'markUploading') {
           value['phase'] = 'uploading';
         }
+        if (command['operation'] == 'renewExternalId') {
+          if (value['externalId'] != command['expectedExternalId'] ||
+              value['phase'] != 'uploading' ||
+              value['remoteIdToReplace'] == null) {
+            throw const FormatException('stale renewal');
+          }
+          value['externalId'] = command['nextExternalId'];
+        }
         return bytes(value);
       },
     );
@@ -258,6 +426,13 @@ final class Harness {
       cancelled = false,
       cancelAfterDelete = false;
   String? description;
+  String uploadRemoteId = '222';
+  bool uploadDuplicate = false;
+  int transientGhosts = 0;
+  String transientDuplicateId = '111';
+  bool? existence;
+  final existenceReads = <String>[];
+  Duration elapsed = Duration.zero;
   static Uint8List bytes(Object? value) =>
       Uint8List.fromList(utf8.encode(jsonEncode(value)));
   void seed({String? remote, String phase = 'prepared'}) {
@@ -282,26 +457,45 @@ final class Harness {
     };
   }
 
-  Future<rust.StravaUploadFfiResponse> run() => SyncRecoveryRunner(store).run(
-    fingerprint: fingerprint,
-    cancelled: () => cancelled,
-    deleteRemote: (id) async {
-      events.add('delete:$id');
-      if (failDelete) throw StateError('delete');
-      if (cancelAfterDelete) cancelled = true;
-    },
-    upload: (data, externalId) async {
-      events.add('upload:$externalId');
-      description = data.activityDescription;
-      return rust.StravaUploadFfiResponse(
-        status: failUpload
-            ? rust.StravaUploadFfiStatus.failed
-            : rust.StravaUploadFfiStatus.completed,
-        remoteId: '222',
-        isDuplicate: false,
+  Future<rust.StravaUploadFfiResponse> run() =>
+      SyncRecoveryRunner(
+        store,
+        elapsed: () => elapsed,
+        delay: (duration) async {
+          elapsed += duration;
+        },
+      ).run(
+        fingerprint: fingerprint,
+        cancelled: () => cancelled,
+        remoteExists: (id) async {
+          existenceReads.add(id);
+          return existence;
+        },
+        deleteRemote: (id) async {
+          events.add('delete:$id');
+          if (failDelete) throw StateError('delete');
+          if (cancelAfterDelete) cancelled = true;
+        },
+        upload: (data, externalId) async {
+          events.add('upload:$externalId');
+          description = data.activityDescription;
+          if (transientGhosts > 0) {
+            transientGhosts--;
+            return rust.StravaUploadFfiResponse(
+              status: rust.StravaUploadFfiStatus.completed,
+              remoteId: transientDuplicateId,
+              isDuplicate: true,
+            );
+          }
+          return rust.StravaUploadFfiResponse(
+            status: failUpload
+                ? rust.StravaUploadFfiStatus.failed
+                : rust.StravaUploadFfiStatus.completed,
+            remoteId: uploadRemoteId,
+            isDuplicate: uploadDuplicate,
+          );
+        },
       );
-    },
-  );
   void dispose() => TestDefaultBinaryMessengerBinding
       .instance
       .defaultBinaryMessenger

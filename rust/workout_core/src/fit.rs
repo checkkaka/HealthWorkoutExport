@@ -1,3 +1,6 @@
+#[path = "fit_preview.rs"]
+mod fit_preview;
+pub use fit_preview::{average_coordinate_displacement, inspect_fit_preview_json};
 #[path = "fit_document.rs"]
 mod fit_document;
 #[path = "fit_merge.rs"]
@@ -13,9 +16,9 @@ mod health_fit;
 
 pub use fit_document::{FitDocument, FitMessage, MAX_FIT_BYTES};
 pub use fit_merge::{
-    FitMergeError, FitMergeOptions, FitSupplementMode, MAX_MERGE_INPUT_BYTES,
-    MAX_MERGE_SUPPLEMENTS, estimate_merge_offsets, merge_fit, merge_fit_for_sync,
-    merge_fit_sensors,
+    FitMergeError, FitMergeOptions, FitMergeResult, FitSensorFilledCounts, FitSupplementMode,
+    FitSupplementReport, MAX_MERGE_INPUT_BYTES, MAX_MERGE_SUPPLEMENTS, estimate_merge_offsets,
+    merge_fit, merge_fit_for_sync, merge_fit_for_sync_with_report, merge_fit_sensors,
 };
 pub use fit_virtual_power::{
     FitVirtualPowerFillMode, FitVirtualPowerFillOptions, FitVirtualPowerFillResult,

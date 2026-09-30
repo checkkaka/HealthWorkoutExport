@@ -335,7 +335,7 @@ impl fmt::Display for StravaActivityError {
 
 impl std::error::Error for StravaActivityError {}
 
-/// 固定读取官方 HTTPS API 的客户端。它没有可配置 endpoint，防止 access token 被导向任意主机。
+/// 固定访问官方 HTTPS 活动 API；没有可配置 endpoint，防止 token 被导向任意主机。
 #[derive(Clone)]
 pub struct StravaActivityClient {
     client: Client,
@@ -439,6 +439,86 @@ impl StravaActivityClient {
         usage.ok_or(StravaActivityError::InvalidResponse)
     }
 
+    /// Upload post-processing only. Callers must retain the successful upload result
+    /// if this independent, idempotent metadata step fails; never replay the FIT.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_activity_metadata(
+        &self,
+        access_token: &str,
+        activity_id: &str,
+        name: &str,
+        commute: bool,
+        description_note: Option<&str>,
+        cancellation: &StravaCancellation,
+    ) -> Result<(), StravaActivityError> {
+        let access_token = valid_upload_input("access_token", access_token)
+            .map_err(|_| StravaActivityError::InvalidInput("access_token"))?;
+        let activity_id = valid_remote_activity_id(activity_id)?;
+        let name =
+            valid_activity_name(Some(name))?.ok_or(StravaActivityError::InvalidInput("name"))?;
+        if let Some(note) = description_note {
+            validate_metadata_description(note)?;
+        }
+        let mut url = self.activity_detail_endpoint.clone();
+        url.path_segments_mut()
+            .map_err(|_| StravaActivityError::ClientBuild)?
+            .pop_if_empty()
+            .push(activity_id);
+        let mut body = serde_json::json!({"name": name, "commute": commute});
+        if let Some(note) = description_note.filter(|v| !v.trim().is_empty()) {
+            let mut response = cancellation
+                .run(
+                    self.client
+                        .get(url.clone())
+                        .bearer_auth(access_token)
+                        .send(),
+                )
+                .await
+                .map_err(|_| StravaActivityError::Cancelled)?
+                .map_err(|_| StravaActivityError::Transport)?;
+            record_rate_limits(access_token, &response);
+            if !activity_status(response.status(), true)? {
+                return Err(StravaActivityError::NotFound);
+            }
+            let bytes = read_activity_body(&mut response, cancellation).await?;
+            let value: serde_json::Value =
+                serde_json::from_slice(&bytes).map_err(|_| StravaActivityError::InvalidResponse)?;
+            if !value.is_object()
+                || value
+                    .get("id")
+                    .is_some_and(|id| json_numeric_id(Some(id)).as_deref() != Some(activity_id))
+            {
+                return Err(StravaActivityError::InvalidResponse);
+            }
+            let existing = match value.get("description") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(serde_json::Value::String(value)) => Some(value.as_str()),
+                _ => return Err(StravaActivityError::InvalidResponse),
+            };
+            body["description"] = append_description_note(existing, note)?.into();
+        }
+        let response = cancellation
+            .run(
+                self.client
+                    .put(url)
+                    .bearer_auth(access_token)
+                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                    .body(
+                        serde_json::to_vec(&body)
+                            .map_err(|_| StravaActivityError::InvalidResponse)?,
+                    )
+                    .send(),
+            )
+            .await
+            .map_err(|_| StravaActivityError::Cancelled)?
+            .map_err(|_| StravaActivityError::Transport)?;
+        record_rate_limits(access_token, &response);
+        if !activity_status(response.status(), true)? {
+            return Err(StravaActivityError::NotFound);
+        }
+        Ok(())
+    }
+
     /// 拉取单条活动的速度摘要；404 表示活动已删除或当前账号无权查看，返回 `None`。
     pub async fn activity_speed(
         &self,
@@ -502,6 +582,43 @@ fn valid_remote_activity_id(value: &str) -> Result<&str, StravaActivityError> {
     (!value.is_empty() && value.len() <= 32 && value.bytes().all(|byte| byte.is_ascii_digit()))
         .then_some(value)
         .ok_or(StravaActivityError::InvalidInput("activity_id"))
+}
+
+fn valid_activity_name(value: Option<&str>) -> Result<Option<&str>, StravaActivityError> {
+    if value.is_some_and(|v| v.len() > MAX_INPUT_BYTES || v.chars().any(char::is_control)) {
+        return Err(StravaActivityError::InvalidInput("name"));
+    }
+    Ok(value.map(str::trim).filter(|v| !v.is_empty()))
+}
+
+fn validate_metadata_description(value: &str) -> Result<(), StravaActivityError> {
+    if value.len() > MAX_INPUT_BYTES
+        || value
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+    {
+        return Err(StravaActivityError::InvalidInput("description"));
+    }
+    Ok(())
+}
+
+fn append_description_note(
+    existing: Option<&str>,
+    note: &str,
+) -> Result<String, StravaActivityError> {
+    let existing = existing.unwrap_or_default().trim();
+    let note = note.trim();
+    validate_metadata_description(existing)?;
+    validate_metadata_description(note)?;
+    let description = if existing.is_empty() {
+        note.to_owned()
+    } else if note.is_empty() || existing.contains(note) {
+        existing.to_owned()
+    } else {
+        format!("{existing}\n\n{note}")
+    };
+    validate_metadata_description(&description)?;
+    Ok(description)
 }
 
 fn activity_status(status: StatusCode, detail_request: bool) -> Result<bool, StravaActivityError> {
@@ -1075,6 +1192,29 @@ impl StravaUploadClient {
         commute: bool,
         description: Option<&str>,
     ) -> Result<StravaUploadResult, StravaUploadError> {
+        self.upload_fit_with_name(
+            access_token,
+            fit,
+            external_id,
+            filename,
+            commute,
+            description,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upload_fit_with_name(
+        &self,
+        access_token: &str,
+        fit: Vec<u8>,
+        external_id: &str,
+        filename: &str,
+        commute: bool,
+        description: Option<&str>,
+        name: Option<&str>,
+    ) -> Result<StravaUploadResult, StravaUploadError> {
         self.upload_fit_cancellable(
             access_token,
             fit,
@@ -1082,6 +1222,7 @@ impl StravaUploadClient {
             filename,
             commute,
             description,
+            name,
             &StravaCancellation::new(),
         )
         .await
@@ -1096,6 +1237,7 @@ impl StravaUploadClient {
         filename: &str,
         commute: bool,
         description: Option<&str>,
+        name: Option<&str>,
         cancellation: &StravaCancellation,
     ) -> Result<StravaUploadResult, StravaUploadError> {
         self.send_upload(
@@ -1105,6 +1247,7 @@ impl StravaUploadClient {
             filename,
             commute,
             description,
+            name,
             cancellation,
             false,
         )
@@ -1120,6 +1263,7 @@ impl StravaUploadClient {
         filename: &str,
         commute: bool,
         description: Option<&str>,
+        name: Option<&str>,
         cancellation: &StravaCancellation,
     ) -> Result<StravaUploadResult, StravaUploadError> {
         self.send_upload(
@@ -1129,6 +1273,7 @@ impl StravaUploadClient {
             filename,
             commute,
             description,
+            name,
             cancellation,
             true,
         )
@@ -1144,6 +1289,7 @@ impl StravaUploadClient {
         filename: &str,
         commute: bool,
         description: Option<&str>,
+        name: Option<&str>,
         cancellation: &StravaCancellation,
         auth_retry_used: bool,
     ) -> Result<StravaUploadResult, StravaUploadError> {
@@ -1168,6 +1314,8 @@ impl StravaUploadClient {
             return Err(StravaUploadError::InvalidInput("description"));
         }
 
+        let name =
+            valid_activity_name(name).map_err(|_| StravaUploadError::InvalidInput("name"))?;
         let file = Part::bytes(fit)
             .file_name(filename.to_owned())
             .mime_str("application/octet-stream")
@@ -1180,6 +1328,9 @@ impl StravaUploadClient {
         }
         if let Some(description) = description.filter(|value| !value.is_empty()) {
             form = form.text("description", description.to_owned());
+        }
+        if let Some(name) = name {
+            form = form.text("name", name.to_owned());
         }
         form = form.part("file", file);
 
@@ -1220,7 +1371,11 @@ impl StravaUploadClient {
         }
         if !status.is_success() {
             let mut redacted = text.replace(access_token, "<redacted>");
-            for value in [external_id, filename].into_iter().chain(description) {
+            for value in [external_id, filename]
+                .into_iter()
+                .chain(description)
+                .chain(name)
+            {
                 if !value.is_empty() {
                     redacted = redacted.replace(value, "<redacted>");
                 }
@@ -1684,6 +1839,203 @@ mod tests {
         thread,
         time::Duration,
     };
+
+    fn mock_activity_client(endpoint: String) -> super::StravaActivityClient {
+        let base = reqwest::Url::parse(&endpoint.replace("/uploads", "/activities/")).unwrap();
+        super::StravaActivityClient {
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            activities_endpoint: base.clone(),
+            activity_detail_endpoint: base.clone(),
+            athlete_endpoint: base,
+        }
+    }
+
+    #[tokio::test]
+    async fn upload_and_auth_retry_include_trimmed_title_with_utf8_and_safe_boundaries() {
+        let (endpoint, server) = mock_upload_server(vec![
+            (201, r#"{"activity_id":42}"#),
+            (201, r#"{"activity_id":43}"#),
+        ]);
+        let client = StravaUploadClient::for_test(endpoint, 1024).unwrap();
+        client
+            .upload_fit_with_name(
+                "token",
+                vec![1],
+                "external",
+                "ride.fit",
+                true,
+                None,
+                Some("  通勤🚲  "),
+            )
+            .await
+            .unwrap();
+        client
+            .retry_upload_after_refresh(
+                "new-token",
+                vec![1],
+                "external",
+                "ride.fit",
+                false,
+                None,
+                Some("Retry title"),
+                &StravaCancellation::new(),
+            )
+            .await
+            .unwrap();
+        let requests = server.join().unwrap();
+        assert!(
+            String::from_utf8_lossy(&requests[0].body).contains("name=\"name\"\r\n\r\n通勤🚲\r\n")
+        );
+        assert!(
+            String::from_utf8_lossy(&requests[1].body)
+                .contains("name=\"name\"\r\n\r\nRetry title\r\n")
+        );
+        let (endpoint, server) = mock_upload_server(vec![]);
+        let client = StravaUploadClient::for_test(endpoint, 1024).unwrap();
+        for name in [
+            "x".repeat(8193),
+            "newline\ninjection".into(),
+            "unicode\u{0085}control".into(),
+        ] {
+            assert_eq!(
+                client
+                    .upload_fit_with_name(
+                        "token",
+                        vec![1],
+                        "external",
+                        "ride.fit",
+                        false,
+                        None,
+                        Some(&name)
+                    )
+                    .await
+                    .unwrap_err(),
+                StravaUploadError::InvalidInput("name")
+            );
+        }
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn metadata_preserves_description_and_sends_only_requested_fields() {
+        let (endpoint, server) = mock_upload_server(vec![
+            (200, r#"{"id":42,"description":"  Existing text  "}"#),
+            (200, "{}"),
+            (200, "{}"),
+        ]);
+        let client = mock_activity_client(endpoint);
+        client
+            .update_activity_metadata(
+                "token",
+                "42",
+                " 通勤🚲 ",
+                true,
+                Some("Virtual power note"),
+                &StravaCancellation::new(),
+            )
+            .await
+            .unwrap();
+        client
+            .update_activity_metadata(
+                "token",
+                "42",
+                "New title",
+                false,
+                None,
+                &StravaCancellation::new(),
+            )
+            .await
+            .unwrap();
+        let requests = server.join().unwrap();
+        assert!(
+            requests[0]
+                .head
+                .starts_with("GET /api/v3/activities/42 HTTP/1.1\r\n")
+        );
+        assert!(
+            requests[1]
+                .head
+                .starts_with("PUT /api/v3/activities/42 HTTP/1.1\r\n")
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&requests[1].body).unwrap(),
+            serde_json::json!({"name":"通勤🚲","commute":true,"description":"Existing text\n\nVirtual power note"})
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&requests[2].body).unwrap(),
+            serde_json::json!({"name":"New title","commute":false})
+        );
+    }
+
+    #[test]
+    fn description_append_is_idempotent_and_does_not_truncate_existing_text() {
+        assert_eq!(
+            super::append_description_note(Some("old\n\nnote"), "note").unwrap(),
+            "old\n\nnote"
+        );
+        assert_eq!(
+            super::append_description_note(None, "note").unwrap(),
+            "note"
+        );
+        assert!(super::append_description_note(Some(&"x".repeat(8192)), "note").is_err());
+        assert!(super::append_description_note(Some("hidden\0value"), "note").is_err());
+    }
+
+    #[tokio::test]
+    async fn metadata_checks_read_errors_before_mutation_and_is_cancellable() {
+        for (status, body, expected) in [
+            (401, "{}", StravaActivityError::Unauthorized),
+            (429, "{}", StravaActivityError::RateLimited),
+            (404, "{}", StravaActivityError::NotFound),
+            (
+                200,
+                r#"{"id":999,"description":"wrong activity"}"#,
+                StravaActivityError::InvalidResponse,
+            ),
+            (
+                200,
+                r#"{"description":42}"#,
+                StravaActivityError::InvalidResponse,
+            ),
+        ] {
+            let (endpoint, server) = mock_upload_server(vec![(status, body)]);
+            let client = mock_activity_client(endpoint);
+            assert_eq!(
+                client
+                    .update_activity_metadata(
+                        "token",
+                        "42",
+                        "title",
+                        false,
+                        Some("note"),
+                        &StravaCancellation::new()
+                    )
+                    .await,
+                Err(expected)
+            );
+            assert_eq!(server.join().unwrap().len(), 1);
+        }
+        let (endpoint, server) = mock_upload_server(vec![]);
+        let client = mock_activity_client(endpoint);
+        let cancel = StravaCancellation::new();
+        cancel.cancel();
+        assert_eq!(
+            client
+                .update_activity_metadata("token", "42", "title", false, None, &cancel)
+                .await,
+            Err(StravaActivityError::Cancelled)
+        );
+        assert_eq!(
+            client
+                .update_activity_metadata("token", "../42", "title", false, None, &cancel)
+                .await,
+            Err(StravaActivityError::InvalidInput("activity_id"))
+        );
+        server.join().unwrap();
+    }
 
     fn mock_token_server(
         status: u16,
@@ -2234,6 +2586,7 @@ mod tests {
                     "ride.fit",
                     false,
                     None,
+                    None,
                     &StravaCancellation::new(),
                 )
                 .await
@@ -2327,6 +2680,7 @@ mod tests {
                     "external",
                     "ride.fit",
                     false,
+                    None,
                     None,
                     &task_cancellation,
                 )

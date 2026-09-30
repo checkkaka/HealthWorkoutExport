@@ -450,6 +450,8 @@ final class StravaSettingsStore {
 }
 
 const _allowedPreferenceKeys = <String>{
+  'sync_preview_policy',
+  'write_to_apple_health',
   'strava.uploadMode',
   'strava.gcjCorrectionEnabled',
   'virtualPower.enabled',
@@ -642,6 +644,50 @@ final class HealthKitChannel {
 
   final MethodChannel _channel;
 
+  Future<bool> canWriteWorkouts() async {
+    try {
+      return await _channel.invokeMethod<bool>('canWriteWorkouts') ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException catch (error) {
+      if (error.code == 'unsupported_platform') return false;
+      rethrow;
+    }
+  }
+
+  Future<void> requestWriteAuthorization() =>
+      _channel.invokeMethod<void>('requestWriteAuthorization');
+  Future<List<Map<String, Object?>>> findNearbyWorkouts({
+    required int startMs,
+    required int endMs,
+  }) async {
+    if (startMs >= endMs) throw ArgumentError('健康查重时间范围无效');
+    final result = await _channel.invokeMethod<List<Object?>>(
+      'findNearbyWorkouts',
+      {'startMs': startMs, 'endMs': endMs},
+    );
+    if (result == null || result.length > 10000) {
+      throw const FormatException('健康查重响应无效');
+    }
+    return [
+      for (final value in result)
+        Map<String, Object?>.from(_objectMap(value, '健康查重训练')),
+    ];
+  }
+
+  Future<String> writeWorkout({required Uint8List draftJson}) async {
+    if (draftJson.isEmpty || draftJson.length > 64 * 1024 * 1024) {
+      throw ArgumentError('健康草稿大小无效');
+    }
+    final result = await _channel.invokeMethod<String>('writeWorkout', {
+      'draftJson': draftJson,
+    });
+    if (result == null || !_uuidPattern.hasMatch(result)) {
+      throw const FormatException('健康写入未返回有效 UUID');
+    }
+    return result;
+  }
+
   Future<bool> isAvailable() async {
     final available = await _channel.invokeMethod<bool>('isAvailable');
     if (available == null) {
@@ -697,6 +743,16 @@ final class HealthKitChannel {
       if (!_uuidPattern.hasMatch(uuid) || !normalized.add(uuid.toLowerCase())) {
         throw ArgumentError.value(uuids, 'uuids', '必须是无重复的 UUID');
       }
+    }
+    // Health Connect caps a single detail call at 100 sessions. Validate the
+    // entire selection first, then preserve order across bounded native calls.
+    if (uuids.length > 100) {
+      final bundles = <HealthWorkoutBundle>[];
+      for (var start = 0; start < uuids.length; start += 100) {
+        final end = (start + 100).clamp(0, uuids.length);
+        bundles.addAll(await fetchWorkoutBundles(uuids.sublist(start, end)));
+      }
+      return List.unmodifiable(bundles);
     }
     final result = await _channel.invokeMethod<List<Object?>>(
       'fetchWorkoutBundles',

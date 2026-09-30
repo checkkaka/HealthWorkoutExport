@@ -419,6 +419,7 @@ class _SourcePageState extends State<_SourcePage> {
                 activityId: workout.uuid,
                 title: workout.activityName,
                 start: DateTime.fromMillisecondsSinceEpoch(workout.startMs),
+                end: DateTime.fromMillisecondsSinceEpoch(workout.endMs),
                 durationSeconds: workout.durationSeconds,
                 distanceMeters: workout.totalDistanceMeters,
               ),

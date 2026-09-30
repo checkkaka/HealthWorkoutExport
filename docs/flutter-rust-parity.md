@@ -6,12 +6,12 @@
 
 状态细分：
 
-- **核心已测**：最新隔离 Rust 核心的 123 项单测与严格 clippy 通过，排除了 `api` 与自动生成 FFI；不等于整应用可用。
+- **核心已测**：最新隔离 Rust 核心的 165 项单测与严格 clippy 通过，排除了 `api` 与自动生成 FFI；不等于整应用可用。
 - **已实现，未验证**：实现已在工作树，尚缺最终绑定、对应自动测试或平台构建。
 - **部分实现**：仍有明列代码缺口，不能把平台测试缺失当作唯一障碍。
 - **未实现**：验收要求所需代码还不存在。
 
-全局平台限制：Xcode/Apple 真机、Windows 原生工具链不在本验证环境；Android SDK 平台组件安装受 Java TLS 信任链问题阻塞。默认禁用的覆盖路径保持安全失败关闭，不会假装已删除远端。没有任何一行仅因源代码存在就提升为“完成”。
+全局验收边界：草稿 PR #6 已在 GitHub 托管环境验证 Android 原生编译/单测、Windows MSVC/CTest、iOS Swift type-check，以及 macOS 18 项原生 XCTest（提交 474df92d7b3cb5f3a095d97971fe6e88a19e34b9）。后续代码仍须重新验证。真实设备/账号验收与完整 Flutter/FFI 构建未完成；不得将原生独立检查当成全应用通过。覆盖已接生产恢复事务；双目标检查点、完成凭证与远端存在性问题已修复，独立恢复子集 43 项通过。整应用/真实重启验收仍受绑定阻塞。当前完整 Swift 对照共 94 项，不能将原 82 项视为全覆盖。
 
 ## 目标与口径
 
@@ -59,11 +59,11 @@
 | UI-02 | 近 7 天、30 天、今年、全部、自定义日期范围 | `DateRangeAndExportViews.swift`、`WorkoutBundle.swift`、`WorkoutDataSource.swift` | 无日期范围专测 | Flutter + Rust 日期规则 | 各预设生成与 Swift 相同的半开区间；自定义起止颠倒时自动归一；本地日历边界一致 | 已实现，未验证：最终 FFI/四平台验收未完成 |
 | UI-03 | 健康训练列表、加载/空态/权限错误、全选与取消全选 | `WorkoutListView.swift`、`ExportViewModel.swift` | 无 UI 自动测试 | Flutter | 加载、空数据、授权失败和重试状态齐全；选择计数与批量选择行为一致 | 已实现，未验证：最终 FFI/四平台验收未完成 |
 | UI-04 | 第三方源登录态、活动列表、退出、全选与导出入口 | `ThirdPartySourceListView.swift`、`SourceLoginView.swift` | 无 UI 自动测试 | Flutter | 未登录/登录中/已登录/会话过期状态正确；退出清理凭证并回到登录态 | 已实现，未验证：最终 FFI/四平台验收未完成 |
-| UI-05 | 活动详情、同步印章、虚拟功率/同步 FIT 徽标、Strava 远端 ID | `ActivityDetailSheet.swift`、`WorkoutListView.swift`、`ThirdPartySourceListView.swift` | `SyncFingerprintTests.swift`（同步 FIT 可用性） | Flutter | 三类源展示相同状态；仅合法数字远端 ID 可打开；删除本地记录后徽标立即刷新 | 部分实现：同步状态详情/徽标已补，跨页面刷新需验证 |
+| UI-05 | 活动详情、同步印章、虚拟功率/同步 FIT 徽标、Strava 远端 ID | `ActivityDetailSheet.swift`、`WorkoutListView.swift`、`ThirdPartySourceListView.swift` | `SyncFingerprintTests.swift`（同步 FIT 可用性） | Flutter | 三类源展示相同状态；仅合法数字远端 ID 可打开；删除本地记录后徽标立即刷新 | 已实现，待集成：原始/同步版本、质量摘要、五项曲线、地图、导出、同步配置与健康状态已补；详情独立组件测试通过，FFI/平台UI待验收 |
 | UI-06 | 导出配置、格式/FIT 来源/时区、进度、结果分享和删除 | `DateRangeAndExportViews.swift`、`ExportViewModel.swift` | `FitActivityEncoderTests.swift`、`SyncFingerprintTests.swift` | Flutter | 缺同步 FIT 时选项置灰；进度和错误可恢复；结果可分享并可删除临时文件 | 已实现，未验证：新增导出配置/时区/同步版选择及进度 |
-| UI-07 | FIT 导入、训练选择、主源、时间对齐、合并结果 | `FitMergeView.swift` | `FitActivityEncoderTests.swift`（合并系列） | Flutter + Rust | 单文件直接导出；多文件必须选择主源；自动/手动/绝对时间模式和结果提示一致 | 部分实现：单文件/手动偏移/全字段模式已补；训练选择与逐文件对齐仍待对等核验 |
-| UI-08 | 自动同步配置、全局进度、继续/重试/停止和重复活动决策 | `AutoSyncView.swift`、`SyncSession.swift` | 无 UI 自动测试 | Flutter + Rust | 主补源联动、未登录禁选、当天/历史配置、重复弹窗、本批决策、继续/重试/取消均与 Swift 一致 | 部分实现：停止/继续/重试已补；真实覆盖仍禁止 |
-| UI-09 | 同步历史筛选、批次选择、重传、清理、远端 ID 补全和异常速度扫描 | `SyncHistoryView.swift` | `SyncFingerprintTests.swift`、`StravaActivityLookupTests.swift` | Flutter + Rust | 失败/无远端 ID/去重/API/网页筛选正确；全选范围与批次选择正确；扫描与补全结果可追溯 | 部分实现：筛选/批次选择/恢复结果已补；远端 ID 回填和异常速度扫描 UI 缺失 |
+| UI-07 | FIT 导入、训练选择、主源、时间对齐、合并结果 | `FitMergeView.swift` | `FitActivityEncoderTests.swift`（合并系列） | Flutter + Rust | 单文件直接导出；多文件必须选择主源；自动/手动/绝对时间模式和结果提示一致 | 已实现，待集成：健康训练批量/日期选择、单文件、手动/绝对/自动逐文件对齐及偏移报告；新异步绑定待生成 |
+| UI-08 | 自动同步配置、全局进度、继续/重试/停止和重复活动决策 | `AutoSyncView.swift`、`SyncSession.swift` | 无 UI 自动测试 | Flutter + Rust | 主补源联动、未登录禁选、当天/历史配置、重复弹窗、本批决策、继续/重试/取消均与 Swift 一致 | 已实现，待集成：全局进度/停止/继续/重试/重复决策与持久恢复接线；真实覆盖未经账号验收 |
+| UI-09 | 同步历史筛选、批次选择、重传、清理、远端 ID 补全和异常速度扫描 | `SyncHistoryView.swift` | `SyncFingerprintTests.swift`、`StravaActivityLookupTests.swift` | Flutter + Rust | 失败/无远端 ID/去重/API/网页筛选正确；全选范围与批次选择正确；扫描与补全结果可追溯 | 已实现，待集成：远端ID回填/异常扫描、批次选择、全局恢复队列；双目标检查点模型与源接线独立复核通过 |
 | UI-10 | Strava 模式、OAuth、Cookie、GCJ 与限额设置页 | `StravaSettingsView.swift` | `StravaActivityLookupTests.swift`（限额解析） | Flutter + 原生认证适配 | API/网页模式切换、授权状态、Cookie 清理、GCJ 开关、15 分钟与每日限额展示一致 | 已实现，未验证：限额新桥接/原生 OAuth 与 Cookie 待集成 |
 | UI-11 | 中文文案、动态字体、读屏标签与破坏性操作确认 | 全部 SwiftUI 视图 | 无专项测试 | Flutter | 现有中文含义不丢失；主要操作支持系统字体缩放和读屏；清空、退出、删除均二次确认 | 部分实现：增加确认与语义提示；四平台读屏/大字体未验收 |
 
@@ -71,19 +71,19 @@
 
 | ID | 当前功能 | Swift 实现基线 | 已有测试 | 目标归属 | 对等验收条件 | 状态 |
 |---|---|---|---|---|---|---|
-| HK-01 | HealthKit 可用性、读取授权、隐私说明与 entitlement | `HealthKitService.swift`、`Info.plist`、`HealthWorkoutExport.entitlements` | 无；需真机 | iOS 原生 Swift 插件 | 真机首次授权、拒绝、重新授权和系统设置跳转可用；只申请现有读取类型；非 Apple 平台显示明确不可用/替代入口 | 已有 Apple 原生接线，未验证：缺 Xcode/真机读取对照 |
-| HK-02 | 严格按开始时间查询训练摘要并按时间倒序 | `HealthKitService.swift`、`HealthKitDataSource.swift` | 无；需真机 | iOS 原生 Swift 插件 | `[start,end)` 查询结果、摘要字段、来源名称、活动中文名和排序与 Swift 基线一致 | 已有 Apple 原生接线，未验证：缺 Xcode/真机读取对照 |
-| HK-03 | 训练缓存与按 UUID 回查，避免列表后逐条 N+1 | `HealthKitService.swift` | 无 | iOS 原生 Swift 插件 | 同批导出优先命中缓存；缓存缺失可按 UUID 回查；并发导出无竞态或错误复用 | 已有 Apple 原生接线，未验证：缺 Xcode/真机读取对照 |
-| HK-04 | 读取心率、能量、距离、步频/踏频、跑步动态、速度和功率等序列 | `HealthKitService.swift`、`WorkoutBundle.swift` | `FitActivityEncoderTests.swift`（编码侧字段） | iOS 原生 Swift 插件 → Rust 批量模型 | 各 quantity 使用与 Swift 相同单位；关联查询失败时保留现有来源/日期兜底；空序列不伪造数据 | 已有 Apple 原生接线，未验证：缺 Xcode/真机读取对照 |
-| HK-05 | 读取路线、多段 route、海拔/时间/速度、训练事件和 metadata | `HealthKitService.swift`、`WorkoutBundle.swift` | `FitActivityEncoderTests.swift`（事件/JSON/路线编码） | iOS 原生 Swift 插件 → Rust 批量模型 | 多段路线顺序稳定；暂停/恢复等事件名称一致；可选值与 metadata 序列化不崩溃 | 已有 Apple 原生接线，未验证：缺 Xcode/真机读取对照 |
+| HK-01 | HealthKit 可用性、读取授权、隐私说明与 entitlement | `HealthKitService.swift`、`Info.plist`、`HealthWorkoutExport.entitlements` | 无；需真机 | iOS 原生 Swift 插件 | 真机首次授权、拒绝、重新授权和系统设置跳转可用；只申请现有读取类型；非 Apple 平台显示明确不可用/替代入口 | 已有 Apple 原生接线，独立 Xcode 编译通过；真机读取对照未验证 |
+| HK-02 | 严格按开始时间查询训练摘要并按时间倒序 | `HealthKitService.swift`、`HealthKitDataSource.swift` | 无；需真机 | iOS 原生 Swift 插件 | `[start,end)` 查询结果、摘要字段、来源名称、活动中文名和排序与 Swift 基线一致 | 已有 Apple 原生接线，独立 Xcode 编译通过；真机读取对照未验证 |
+| HK-03 | 训练缓存与按 UUID 回查，避免列表后逐条 N+1 | `HealthKitService.swift` | 无 | iOS 原生 Swift 插件 | 同批导出优先命中缓存；缓存缺失可按 UUID 回查；并发导出无竞态或错误复用 | 已有 Apple 原生接线，独立 Xcode 编译通过；真机读取对照未验证 |
+| HK-04 | 读取心率、能量、距离、步频/踏频、跑步动态、速度和功率等序列 | `HealthKitService.swift`、`WorkoutBundle.swift` | `FitActivityEncoderTests.swift`（编码侧字段） | iOS 原生 Swift 插件 → Rust 批量模型 | 各 quantity 使用与 Swift 相同单位；关联查询失败时保留现有来源/日期兜底；空序列不伪造数据 | 已有 Apple 原生接线，独立 Xcode 编译通过；真机读取对照未验证 |
+| HK-05 | 读取路线、多段 route、海拔/时间/速度、训练事件和 metadata | `HealthKitService.swift`、`WorkoutBundle.swift` | `FitActivityEncoderTests.swift`（事件/JSON/路线编码） | iOS 原生 Swift 插件 → Rust 批量模型 | 多段路线顺序稳定；暂停/恢复等事件名称一致；可选值与 metadata 序列化不崩溃 | 已有 Apple 原生接线，独立 Xcode 编译通过；真机读取对照未验证 |
 | HK-06 | HealthKit 活动转换为统一数据源并现场生成 FIT | `HealthKitDataSource.swift`、`FitActivityEncoder.swift` | `FitActivityEncoderTests.swift` | 原生 HealthKit + Rust FIT | 同一训练生成的统一活动 ID、时间、距离和 FIT 语义与当前 Swift 输出一致 | 核心已测，原生→FIT 端到端未验证 |
-| HK-07 | Android 健康数据对应能力 | 当前 Swift 无 Android 实现 | 无 | Android 原生 Health Connect 插件 | 明确映射可支持字段；无法等价的 HealthKit 字段标记缺失而非伪造；权限、撤销和无服务状态可测 | 未实现：Android 仍返回健康读取不可用，Health Connect 未接入 |
+| HK-07 | Android 健康数据对应能力 | 当前 Swift 无 Android 实现 | 无 | Android 原生 Health Connect 插件 | 明确映射可支持字段；无法等价的 HealthKit 字段标记缺失而非伪造；权限、撤销和无服务状态可测 | 已实现，待设备验收：Health Connect只读权限/历史/路线同意/字段映射及原生CI通过；写回Android健康范围另待确认 |
 
 ## 3. 第三方数据源
 
 | ID | 当前功能 | Swift 实现基线 | 已有测试 | 目标归属 | 对等验收条件 | 状态 |
 |---|---|---|---|---|---|---|
-| SRC-01 | 统一数据源契约与健康/行者/顽鹿注册 | `WorkoutDataSource.swift`、`HealthKitDataSource.swift`、`XingzheDataSource.swift`、`OnelapDataSource.swift` | `ActivityMatcherTests.swift`（统一活动参与匹配） | Rust 数据模型 + Flutter 注册/调度 | 三源统一支持认证状态、登录/退出、列表和 FIT 获取；源 ID 与活动 ID 保持稳定 | 部分实现：三源已接；Android 健康源仍不可用 |
+| SRC-01 | 统一数据源契约与健康/行者/顽鹿注册 | `WorkoutDataSource.swift`、`HealthKitDataSource.swift`、`XingzheDataSource.swift`、`OnelapDataSource.swift` | `ActivityMatcherTests.swift`（统一活动参与匹配） | Rust 数据模型 + Flutter 注册/调度 | 三源统一支持认证状态、登录/退出、列表和 FIT 获取；源 ID 与活动 ID 保持稳定 | 已实现，待集成：三源与 Android Health Connect 已接；真实账号/设备数据对照未验证 |
 | SRC-02 | 行者 RSA 密码登录、`sessionid` 提取与恢复 | `XingzheClient.swift`、`XingzheDataSource.swift` | `XingzheRateLimitTests.swift`（限流解析） | Rust HTTP/RSA + 原生安全存储 | 真实账号登录、Cookie 多头兼容、冷启动恢复、过期重登和退出全部通过 | 核心已测；Flutter/原生凭据及真实登录未验证 |
 | SRC-03 | 行者分页活动列表、时间筛选、FIT 下载与限流等待 | `XingzheClient.swift`、`XingzheDataSource.swift` | `XingzheRateLimitTests.swift` | Rust | 7/30/全年/全部/自定义结果与当前客户端一致；限流响应按服务端提示等待；取消可立即生效 | 核心已测；Flutter/原生凭据及真实登录未验证 |
 | SRC-04 | 顽鹿签名登录、token/uid 会话与恢复 | `OnelapClient.swift`、`OnelapDataSource.swift` | `ActivityMatcherTests.swift`（可信 URL） | Rust HTTP/签名 + 原生安全存储 | 真实账号登录、冷启动恢复、过期重登和退出通过；认证头只发往允许域名 | 核心已测：新增刷新/令牌轮转；新绑定与凭据持久化待集成验证 |
@@ -98,7 +98,7 @@
 | FIT-02 | FIT 解码、重编码、有效性和内容质量探测 | `FitMerger.swift` 中 `FitMessagesReencoder`、`FitContentProbe` | `FitActivityEncoderTests.swift` | Rust | 非 FIT 被拒绝；重编码保留未知/数组字段；GPS、心率点数和质量分稳定 | 核心已测；Swift 差分语料、实际 Garmin/Strava 解析未验收 |
 | FIT-03 | 主文件优先、补文件只填缺失字段 | `FitMerger.swift` | `FitActivityEncoderTests.swift`（主源优先、补缺） | Rust | 字段冲突主源胜出；缺失传感器可补；不插入不允许的 GPS/间隙记录 | 核心已测；Swift 差分语料、实际 Garmin/Strava 解析未验收 |
 | FIT-04 | 全字段与仅传感器补充模式 | `FitMerger.swift` | `FitActivityEncoderTests.swift` | Rust | 两种模式在记录插入、GPS、事件、lap/session 处理上与 Swift 一致 | 核心已测；Swift 差分语料、实际 Garmin/Strava 解析未验收 |
-| FIT-05 | 自动、手动、逐文件和绝对时间对齐 | `FitMerger.swift`、`FitMergeView.swift` | `FitActivityEncoderTests.swift`（时钟偏差、互相关、累计距离兜底） | Rust + Flutter | 同场可估偏移；不同活动拒绝自动对齐；手动偏移和逐文件偏移精确生效；估算失败有明确错误 | 部分实现：Rust 对齐已测、Flutter 手动控制已补；逐文件/UI 对等未全验收 |
+| FIT-05 | 自动、手动、逐文件和绝对时间对齐 | `FitMerger.swift`、`FitMergeView.swift` | `FitActivityEncoderTests.swift`（时钟偏差、互相关、累计距离兜底） | Rust + Flutter | 同场可估偏移；不同活动拒绝自动对齐；手动偏移和逐文件偏移精确生效；估算失败有明确错误 | 已实现，待集成：Rust 自动/手动/绝对/逐文件对齐已测，Flutter 控制与结果报告已接；绑定与平台 UI 未验收 |
 | FIT-06 | 合并后事件/lap 排序、距离重基准和 session 范围修正 | `FitMerger.swift` | `FitActivityEncoderTests.swift` | Rust | 事件和 lap 时间单调；分段总距离正确；session 覆盖全部合并记录；数组字段完整 | 核心已测；Swift 差分语料、实际 Garmin/Strava 解析未验收 |
 | FIT-07 | GPS 速度尖峰识别与修复 | `FitMerger.swift` 中 `FitSpeedSpikeFixer` | `FitActivityEncoderTests.swift`、`VirtualPowerPhysicsTests.swift` | Rust | 瞬时跳变并回落时修复；持续真实加速/急刹不误修；修复后 FIT 仍有效 | 核心已测；Swift 差分语料、实际 Garmin/Strava 解析未验收 |
 | FIT-08 | GCJ-02 → WGS-84 坐标转换和 FIT 重写 | `FitMerger.swift` 中 `Gcj02ToWgs84`、`FitGcjCoordinateRewriter` | `FitActivityEncoderTests.swift` | Rust | 中国境内 Record、Lap、Session 坐标改写后重算 CRC；境外、非标准字段和缺失坐标原样保留 | 核心已测；Swift 差分语料、实际 Garmin/Strava 解析未验收 |
@@ -117,33 +117,33 @@
 | SYNC-04 | SHA-256 同步指纹，补源排序后稳定 | `SyncFingerprint.swift` | `SyncFingerprintTests.swift` | Rust | 相同输入和不同补源顺序得到相同 64 位小写摘要；任一业务字段变化会改变指纹 | 核心已测；生产同步 FFI/端到端未验证 |
 | SYNC-05 | 跨主源开始时间/距离/时长稳定去重 | `SyncFingerprint.swift` 中 `SyncStableDedupe`、`SyncStateStore.swift`、`StravaActivityLookup.swift` | `SyncFingerprintTests.swift` | Rust | 紧窗、宽窗、距离绝对/相对误差和时长误差全部通过；生产链路改为调用 Rust 后再标完成 | 核心已测；生产同步 FFI/端到端未验证 |
 | SYNC-06 | 跳过同指纹、同主活动或稳定近似的历史记录，异常速度例外 | `AutoSyncEngine.swift`、`SyncStateStore.swift`、`StravaActivityLookup.swift` | `SyncFingerprintTests.swift`、`StravaActivityLookupTests.swift` | Rust | 开关开启时三层去重准确；被判异常的骑行仍可重传；关闭后交由远端预检决策 | 部分实现：新增本地/近似去重检查；异常速度例外完整性需验证 |
-| SYNC-07 | 上传前远端预检与重复活动决策 | `AutoSyncEngine.swift`、`StravaActivityLookup.swift`、`SyncSession.swift` | `StravaActivityLookupTests.swift` | Rust + Flutter | IoU/开始+时长/开始+距离匹配一致；支持跳过、整批跳过、打开远端、覆盖、整批覆盖 | 部分实现：API 远端匹配仍仅距离规则；网页列表未接；覆盖事务未完成并失败关闭 |
-| SYNC-08 | 同步进度、结果备注、取消、继续上次同步与整批重试 | `SyncSession.swift`、`AutoSyncEngine.swift` | 无编排自动测试 | Flutter + Rust | processed/uploaded/deduped/failed 计数不漂移；取消快速终止；继续只跑剩余；重试按原配置执行 | 部分实现：本进程继续/重试/停止已补；重启恢复未完整验收 |
-| SYNC-09 | 勾选历史记录覆盖重传和删除远端前落盘恢复 | `AutoSyncEngine.swift`、`SyncHistoryView.swift`、`SyncStateStore.swift` | `SyncFingerprintTests.swift`（恢复文件） | Rust + 原生受保护存储 | 删除远端前最终上传包已原子保存；删除后上传失败可再次恢复；成功后清理恢复文件 | 部分实现：恢复核心已测；远端删除+重传生产事务未完成 |
+| SYNC-07 | 上传前远端预检与重复活动决策 | `AutoSyncEngine.swift`、`StravaActivityLookup.swift`、`SyncSession.swift` | `StravaActivityLookupTests.swift` | Rust + Flutter | IoU/开始+时长/开始+距离匹配一致；支持跳过、整批跳过、打开远端、覆盖、整批覆盖 | 已实现，待集成：Rust IoU/时间/距离排序、网页预检、重复决策与覆盖事务；ghost与双目标恢复回归收尾中 |
+| SYNC-08 | 同步进度、结果备注、取消、继续上次同步与整批重试 | `SyncSession.swift`、`AutoSyncEngine.swift` | 无编排自动测试 | Flutter + Rust | processed/uploaded/deduped/failed 计数不漂移；取消快速终止；继续只跑剩余；重试按原配置执行 | 已实现，待集成：原配置检查点/全局恢复队列/用户显式继续；模型级崩溃窗口回归通过，端到端重启未验收 |
+| SYNC-09 | 勾选历史记录覆盖重传和删除远端前落盘恢复 | `AutoSyncEngine.swift`、`SyncHistoryView.swift`、`SyncStateStore.swift` | `SyncFingerprintTests.swift`（恢复文件） | Rust + 原生受保护存储 | 删除远端前最终上传包已原子保存；删除后上传失败可再次恢复；成功后清理恢复文件 | 已实现，待集成：删除前持久FIT/意图、阶段续传、ghost CAS与双目标完成凭证；独立恢复复核通过，真实远端未验收 |
 | SYNC-10 | 批次内速度尖峰修复、GCJ、虚拟功率的固定处理顺序 | `AutoSyncEngine.swift` | 各处理器有单测，顺序无端到端测试 | Rust | 首传和重传均严格执行“尖峰 → GCJ → 虚拟功率 → 探测 → 上传”；各开关只影响对应步骤 | 已实现，未验证：固定准备顺序已接，新可取消 FFI 尚未生成 |
 
 ## 6. Strava
 
 | ID | 当前功能 | Swift 实现基线 | 已有测试 | 目标归属 | 对等验收条件 | 状态 |
 |---|---|---|---|---|---|---|
-| STRAVA-01 | API/网页两种上传模式和统一上传契约 | `StravaUploading.swift`、两个 Uploader | `StravaActivityLookupTests.swift`（轮询/错误） | Rust 接口 + 原生认证/WebView | 两模式 readiness、上传结果、错误和重复语义统一；切换模式不丢各自凭证 | 部分实现：Apple 网页/各平台 API 接线；Windows 网页能力缺失 |
+| STRAVA-01 | API/网页两种上传模式和统一上传契约 | `StravaUploading.swift`、两个 Uploader | `StravaActivityLookupTests.swift`（轮询/错误） | Rust 接口 + 原生认证/WebView | 两模式 readiness、上传结果、错误和重复语义统一；切换模式不丢各自凭证 | 已实现，待端到端：Apple/Android/Windows原生网络适配独立CI通过，API/网页生产FFI及真实账号未验收 |
 | STRAVA-02 | OAuth 自定义 scheme、token 保存/刷新与 scope | `StravaAPIUploader.swift`、`StravaUploading.swift`、`Info.plist` | 无真实 OAuth 自动测试 | iOS AuthenticationServices / Android 浏览器认证 + Rust token 客户端 | `healthworkoutexport://localhost/callback` 在 iOS 保持兼容；授权、取消、过期刷新、撤销后重登均通过 | 部分实现：刷新重试生命周期修复；真实 OAuth/各平台验收未做 |
 | STRAVA-03 | Uploads API multipart FIT、轮询、错误清洗与远端 ID | `StravaAPIUploader.swift`、`StravaUploading.swift` | `StravaActivityLookupTests.swift` | Rust | 首次立即轮询、总预算约 70 秒、处理中/成功/重复/硬失败分支一致；HTML 错误不会直接展示 | 核心已测；实际上传/重复处理及 FFI 验收未做 |
 | STRAVA-04 | API 活动列表、详情速度、分页和限额响应头 | `StravaAPIUploader.swift`、`StravaActivityLookup.swift` | `StravaActivityLookupTests.swift` | Rust | 活动分页无重复遗漏；ID 类型兼容；15 分钟/每日 read/overall 限额解析与 429 保留 | 核心已测：限额/429/详情 URL；新桥接与展示未验证 |
-| STRAVA-05 | WebView 登录 Cookie、CSRF 上传、网页活动列表和 Cookie 删除远端 | `StravaWebUploader.swift` | 重复文案有单测；真实网页无自动测试 | 原生 WebView/Cookie + Rust/原生网页客户端 | 登录后 Cookie 可恢复；CSRF 上传可用；Cookie 过期提示明确；覆盖删除只命中目标活动；网页改版失败不损坏本地状态 | 部分实现：Apple 网络边界、Android 上传补齐；Windows 网页仍缺；原生删除尚未接入安全覆盖事务 |
+| STRAVA-05 | WebView 登录 Cookie、CSRF 上传、网页活动列表和 Cookie 删除远端 | `StravaWebUploader.swift` | 重复文案有单测；真实网页无自动测试 | 原生 WebView/Cookie + Rust/原生网页客户端 | 登录后 Cookie 可恢复；CSRF 上传可用；Cookie 过期提示明确；覆盖删除只命中目标活动；网页改版失败不损坏本地状态 | 已实现，待端到端：Windows WebView2/WinHTTP已补、四平台原生边界已编译测试；真实网站登录/上传/删除未运行 |
 | STRAVA-06 | duplicate 文案/HTML 解析与活动 ID 提取 | `StravaActivityLookup.swift` | `StravaActivityLookupTests.swift` | Rust | 大小写、纯文本、HTML 链接、缺失和 NSNull/数字 ID 等现有用例全部通过 | 核心已测；实际上传/重复处理及 FFI 验收未做 |
-| STRAVA-07 | 远端活动匹配、可打开 ID、远端 ID 回填 | `StravaActivityLookup.swift`、`SyncStateStore.swift`、`SyncHistoryView.swift` | `StravaActivityLookupTests.swift`、`SyncFingerprintTests.swift` | Rust + Flutter deep link | 匹配不误伤热身/短段；回填严格小于 2 分钟且 ID 不重复占用；有效 ID 可打开 Strava | 部分实现：核心 ID/速度规则存在；扫描与远端 ID 回填 UI 仍缺失 |
-| STRAVA-08 | 骑行异常速度扫描：摘要、最佳成绩和速度流 | `StravaActivityLookup.swift`、两个 Uploader、`SyncHistoryView.swift` | `StravaActivityLookupTests.swift` | Rust + Flutter | 仅骑行参与；阈值、最佳成绩优先级、占位 ID 与本地记录标记和 Swift 一致 | 部分实现：核心 ID/速度规则存在；扫描与远端 ID 回填 UI 仍缺失 |
+| STRAVA-07 | 远端活动匹配、可打开 ID、远端 ID 回填 | `StravaActivityLookup.swift`、`SyncStateStore.swift`、`SyncHistoryView.swift` | `StravaActivityLookupTests.swift`、`SyncFingerprintTests.swift` | Rust + Flutter deep link | 匹配不误伤热身/短段；回填严格小于 2 分钟且 ID 不重复占用；有效 ID 可打开 Strava | 已实现，待集成：远端排名、有效ID打开、回填UI和可追溯写入已接，绑定/真实账号待验证 |
+| STRAVA-08 | 骑行异常速度扫描：摘要、最佳成绩和速度流 | `StravaActivityLookup.swift`、两个 Uploader、`SyncHistoryView.swift` | `StravaActivityLookupTests.swift` | Rust + Flutter | 仅骑行参与；阈值、最佳成绩优先级、占位 ID 与本地记录标记和 Swift 一致 | 已实现，待集成：摘要/最佳成绩/99.5百分位速度流规则、可取消历史扫描UI已接 |
 | STRAVA-09 | API 通勤自动标记 | `CommuteClassifier.swift`、`AutoSyncEngine.swift` | `CommuteClassifierTests.swift` | Rust | `<5km` 或“均速 `<28km/h` 且距离 `<16km`”严格边界通过；只在 API 上传写 commute；生产链路接入后再标完成 | 核心已测；实际上传/重复处理及 FFI 验收未做 |
-| STRAVA-10 | 虚拟功率活动描述仅在可支持的上传路径写入 | `AutoSyncEngine.swift`、`StravaAPIUploader.swift`、`StravaWebUploader.swift` | `VirtualPowerSocialCopyTests.swift` | Rust + 上传适配 | 仅 `powerSource=virtual` 时生成；API 成功携带描述；网页不支持时不谎报已写入 | 未完成：FIT 来源标记已测，但自动同步尚未将 prepared.activityDescription 传给 API 上传器 |
+| STRAVA-10 | 虚拟功率活动描述仅在可支持的上传路径写入 | `AutoSyncEngine.swift`、`StravaAPIUploader.swift`、`StravaWebUploader.swift` | `VirtualPowerSocialCopyTests.swift` | Rust + 上传适配 | 仅 `powerSource=virtual` 时生成；API 成功携带描述；网页不支持时不谎报已写入 | 已实现，待集成：准备结果描述传到API上传/元数据更新，网页能力不支持时明确说明 |
 
 ## 7. 存储
 
 | ID | 当前功能 | Swift 实现基线 | 已有测试 | 目标归属 | 对等验收条件 | 状态 |
 |---|---|---|---|---|---|---|
 | STORE-01 | `sync_state.json` 状态机：pending/uploaded/failed/duplicate/channel | `SyncStateStore.swift` | `SyncFingerprintTests.swift` | Rust 持久化模型 + 原生文件目录 | 冷启动往返不丢字段；uploaded 可被后台硬错误改为 failed；duplicate 可补远端 ID；旧字段兼容 | 核心已测：边界与隐私；新增 Flutter 跨实例串行化未完成 FFI 验证 |
-| STORE-02 | 按指纹保存最终同步 FIT，并维护主活动索引/徽标 | `SyncStateStore.swift` | `SyncFingerprintTests.swift` | Rust 索引 + 原生文件存储 | 上传成功原子保存；列表索引只反映真实存在文件；删除记录同步删 FIT；旧记录无文件时正确降级 | 部分实现：原生文件+状态索引存在；三源徽标刷新与四平台未验收 |
-| STORE-03 | `pending_resync` 覆盖恢复包 | `SyncStateStore.swift` 中 `ResyncRecoveryStore` | `SyncFingerprintTests.swift` | Rust 编解码 + 原生受保护文件 | 仅合法十六进制指纹可成为文件名；保存/读取/删除往返一致；崩溃后可恢复 | 核心已测：FIT/哈希/阶段约束；完整覆盖生产事务未接入 |
+| STORE-02 | 按指纹保存最终同步 FIT，并维护主活动索引/徽标 | `SyncStateStore.swift` | `SyncFingerprintTests.swift` | Rust 索引 + 原生文件存储 | 上传成功原子保存；列表索引只反映真实存在文件；删除记录同步删 FIT；旧记录无文件时正确降级 | 已实现，待集成：原生文件/状态索引/三源徽标刷新；健康准备FIT与已上传FIT独立存储，平台UI未验收 |
+| STORE-03 | `pending_resync` 覆盖恢复包 | `SyncStateStore.swift` 中 `ResyncRecoveryStore` | `SyncFingerprintTests.swift` | Rust 编解码 + 原生受保护文件 | 仅合法十六进制指纹可成为文件名；保存/读取/删除往返一致；崩溃后可恢复 | 核心已测，生产待集成：最终FIT/哈希/阶段校验与删除/上传恢复；旧格式显式采用，ghost续传CAS已补 |
 | STORE-04 | Strava、虚拟功率与界面偏好 | `StravaUploading.swift`、`VirtualPowerSettings.swift`、各 ViewModel | 部分纯规则测试 | Flutter preferences + 原生安全存储 | 模式、GCJ、惯性、质量、车重、CdA 等默认值和持久化一致；凭证绝不进入普通 preferences | 已实现，未验证：功率参数 UI 与固定键持久化补齐 |
 | STORE-05 | Open-Meteo 缓存 | `OpenMeteoWeatherCache.swift` | `OpenMeteoWeatherCacheTests.swift` | Rust | 同网格/同日/同来源命中；跨日或来源变化未命中；容量和生命周期不会无限增长 | 核心已测：有界网格/日期/来源缓存已接天气客户端 |
 | STORE-06 | 现有数据迁移与回滚 | 当前 Swift 文件/Keychain/UserDefaults 键 | 无迁移测试 | 原生迁移层 + Rust schema | 首次新版本启动可读取原 App 的凭证、设置、同步记录、最终 FIT 和恢复文件；失败不删除旧数据；可回滚 | 部分实现：Apple 复用旧 BundleID/Keychain/Defaults/文件布局；升级回滚真机未验收 |
@@ -156,8 +156,8 @@
 | SEC-02 | 顽鹿认证请求只允许可信 HTTPS 主机 | `OnelapClient.swift` | `ActivityMatcherTests.swift` | Rust URL 校验 | HTTPS、精确允许域、重定向后主机均校验；HTTP、子域伪装、用户名主机混淆全部拒绝 | 核心已测：固定 HTTPS/凭据域名/RSA/Cookie/重定向边界 |
 | SEC-03 | 行者 RSA 登录与会话 Cookie 边界 | `XingzheClient.swift` | `XingzheRateLimitTests.swift`（非安全专项） | Rust + 原生安全存储 | 密码只在登录请求短暂存在；RSA/随机数失败直接中止；sessionid 不发送给非行者域名 | 核心已测：固定 HTTPS/凭据域名/RSA/Cookie/重定向边界 |
 | SEC-04 | OAuth state、回调 scheme、token 刷新和网页 CSRF/Cookie 隔离 | `StravaAPIUploader.swift`、`StravaWebUploader.swift` | 无安全专项测试 | 原生认证/WebView + Rust | 回调必须匹配本次 state 和 scheme；Cookie 仅发 Strava；CSRF 缺失不上传/删除；重定向不可越权 | 部分实现：Apple 会话隔离/拒绝重定向补齐；OAuth/CSRF 平台验收未做 |
-| SEC-05 | 同步 FIT/恢复文件完整保护、原子写入、排除备份 | `SyncStateStore.swift` | `SyncFingerprintTests.swift` | iOS 原生文件保护 / Android 加密存储 / 桌面权限 | iOS 维持 complete file protection 与不备份；中断写入不产生半文件；各平台采用等价的最小权限 | 部分实现：Apple 文件保护与 Windows 适配存在；Android/Windows 权限原子性待验收 |
-| SEC-06 | HealthKit 本地处理、最小授权与隐私披露 | `HealthKitService.swift`、`Info.plist`、教程 | 无；需真机/审核 | 原生 | 只读且只请求当前需要类型；未授权数据不上传；隐私文案与实际流向一致 | 部分实现：天气数据外发说明已更正；真机最小权限/撤销未验收 |
+| SEC-05 | 同步 FIT/恢复文件完整保护、原子写入、排除备份 | `SyncStateStore.swift` | `SyncFingerprintTests.swift` | iOS 原生文件保护 / Android 加密存储 / 桌面权限 | iOS 维持 complete file protection 与不备份；中断写入不产生半文件；各平台采用等价的最小权限 | 已实现，待设备验收：iOS文件保护、macOS目录0700/文件0600及原子替换、Android私有目录、Windows适配；独立原生CI通过 |
+| SEC-06 | HealthKit 本地处理、最小授权与隐私披露 | `HealthKitService.swift`、`Info.plist`、教程 | 无；需真机/审核 | 原生 | 读取与写入分别显式申请当前需要类型；未授权数据不上传；隐私文案与实际流向一致 | 部分实现：天气数据外发说明已更正；真机最小权限/撤销未验收 |
 | SEC-07 | 不可信 FIT、JSON、远端响应和文件名输入验证 | FIT/导出/Client/Store 各实现 | 仅部分非 FIT、JSON nil、错误解析测试 | Rust | 畸形/超大输入有上限并返回可诊断错误；路径穿越、zip slip、崩溃、越界和秘密回显测试通过 | 核心已测：FIT/JSON/恢复/URL/数值边界；平台文件输入仍需验收 |
 
 ## 9. 后台任务与生命周期
@@ -166,9 +166,9 @@
 |---|---|---|---|---|---|---|
 | BG-01 | 关闭自动同步页或切换 Tab 后，同步在 App 进程内继续 | `SyncSession.swift`、`RootTabView.swift`、`AutoSyncView.swift` | 无生命周期测试 | Flutter 全局 session + Rust worker | 页面销毁/重建和 Tab 切换不取消任务；任意入口看到同一进度；同一时间只允许一个批次 | 已有全局会话；窗口/页签/生命周期平台验收未做 |
 | BG-02 | 用户主动停止与网络/天气取消传播 | `SyncSession.swift`、`AutoSyncEngine.swift`、`FitVirtualPowerFiller.swift`、`OpenMeteoWeatherClient.swift` | `FitVirtualPowerFillerTests.swift`（取消） | Flutter → Rust cancellation token | 停止后不再开始新上传；网络和天气请求可取消；Cancellation 不被当作普通失败或触发 Archive 回退 | 部分实现：新增天气/顽鹿取消 FFI；绑定阻塞，原生上传取消待验收 |
-| BG-03 | 失败后继续、整批重试和覆盖恢复 | `SyncSession.swift`、`SyncStateStore.swift`、`AutoSyncEngine.swift` | `SyncFingerprintTests.swift`（恢复） | Rust + 持久化 | 前台中断、进程终止和设备重启后都能识别可恢复项；不会重复删除远端或重复上传成功项 | 部分实现：本进程继续/重试、恢复核心已补；进程重启与覆盖未完成 |
+| BG-03 | 失败后继续、整批重试和覆盖恢复 | `SyncSession.swift`、`SyncStateStore.swift`、`AutoSyncEngine.swift` | `SyncFingerprintTests.swift`（恢复） | Rust + 持久化 | 前台中断、进程终止和设备重启后都能识别可恢复项；不会重复删除远端或重复上传成功项 | 已实现，待集成：分目标检查点、事务代际/远端ID凭证与源接线独立复核通过；真实进程重启未验收 |
 | BG-04 | 长历史同步的前台限制与平台后台能力 | 教程注明“全部可能较久，保持 App 在前台” | 无 | Flutter + iOS BGTask/Android WorkManager（仅在能力允许时） | 首先完整保留“前台运行”语义；若增加系统后台任务，必须满足 HealthKit/网络平台限制、可取消且不会改变幂等结果 | 部分实现：保持前台语义；不宣称支持 OS 后台调度 |
-| BG-05 | 系统挂起、低内存、无网和应用升级恢复 | 当前实现仅由本地状态部分覆盖 | 无 | 原生生命周期 + Rust | 每个阶段在持久化检查点后可安全重入；恢复后计数、记录和远端状态一致；无数据损坏 | 未完整实现：系统挂起/升级/低内存检查点恢复未验收 |
+| BG-05 | 系统挂起、低内存、无网和应用升级恢复 | 当前实现仅由本地状态部分覆盖 | 无 | 原生生命周期 + Rust | 每个阶段在持久化检查点后可安全重入；恢复后计数、记录和远端状态一致；无数据损坏 | 部分验收：原生原子存储、分目标检查点/完成凭证模型回归已过；OS挂起/低内存/升级真机未验收 |
 
 ## 10. 导入导出
 
@@ -180,8 +180,27 @@
 | IO-04 | 批量并发导出与进度 | `ExportPipeline.swift` | 无并发专项测试 | Rust worker + Flutter | 并发上限不会压垮 HealthKit/第三方源；进度从 0 到总数单调；任一失败可诊断且不分享残缺结果 | 已实现，未验证：独立导出/时区回归已通过；完整三源/平台链路仍待验证 |
 | IO-05 | 单文件直接分享，多文件 ZIP | `ExportPipeline.swift` 中 `ZipWriter` | 无 ZIP 专测 | Rust ZIP + Flutter/原生分享 | 单文件不额外打包；多文件 zip 可由系统工具解压；CRC、UTF-8 文件名和空选择错误正确 | 已实现，未验证：独立导出/时区回归已通过；完整三源/平台链路仍待验证 |
 | IO-06 | 文件名、时区候选和上海时区保证 | `ExportPipeline.swift`、`WorkoutBundle.swift` | `FitActivityEncoderTests.swift` | Rust | 文件名时间戳、类型清洗、ID 前缀、当前时区与固定候选同 Swift；跨夏令时测试通过 | 已实现，未验证：独立导出/时区回归已通过；完整三源/平台链路仍待验证 |
-| IO-07 | 导入一个/多个 FIT 和从 HealthKit 训练生成待合并 FIT | `FitMergeView.swift`、`HealthKitService.swift`、`FitActivityEncoder.swift` | `FitActivityEncoderTests.swift` | Flutter 文件选择 + 原生 HealthKit + Rust FIT | 支持安全作用域/平台文件权限；拒绝无效 FIT；两种来源可混合；重复文件处理明确 | 部分实现：文件导入/单文件/多文件合并；训练选取与所有平台尚未验收 |
+| IO-07 | 导入一个/多个 FIT 和从 HealthKit 训练生成待合并 FIT | `FitMergeView.swift`、`HealthKitService.swift`、`FitActivityEncoder.swift` | `FitActivityEncoderTests.swift` | Flutter 文件选择 + 原生 HealthKit + Rust FIT | 支持安全作用域/平台文件权限；拒绝无效 FIT；两种来源可混合；重复文件处理明确 | 已实现，待集成：健康训练批量选择+本地多FIT可混合，大小/重复/主源/对齐约束；四平台UI未验收 |
 | IO-08 | 分享、保存、结果删除与历史临时目录清理 | `DateRangeAndExportViews.swift`、`FitMergeView.swift`、`ExportPipeline.swift` | 无 | Flutter + 原生文件/分享 API | iOS/Android/桌面均可保存或分享；删除只作用于本次临时结果；旧临时目录可控清理且不删同步 FIT | 部分实现：分享/保存/删除已补；四平台临时文件生命周期未验收 |
+
+## 11. 第二轮完整 Swift 对照补充（原矩阵遗漏项）
+
+以下是现有 Swift 中实际存在的功能，不是额外产品需求。此前 82 行不能单独代表全部能力。
+
+| ID | 当前功能 | Swift 实现基线 | 已有测试 | 目标归属 | 对等验收条件 | 状态 |
+|---|---|---|---|---|---|---|
+| UI-12 | 自定义活动标题与默认通勤标题 | `SyncSession.swift`、`AutoSyncView.swift` | Rust multipart/metadata与Dart目标测试 | Flutter + Rust | 标题在上传及刷新重试不丢失，API处理后更新保留原描述 | 已实现，待FFI/平台验收 |
+| UI-13 | 仅问题/每活动预览、错误阻止与警告确认 | `SyncPreviewView.swift`、`PreparedFITBuilder.swift` | FIT preview/Flutter quality tests | Rust + Flutter | 原始/最终数据、覆盖计数、质量门槛、处理说明一致 | 已实现，待FFI/平台验收 |
+| UI-14 | 匹配歧义说明与手工重选补源后重建 | `ActivityMatcher.swift`、`SyncPreviewView.swift` | candidate/rebuild tests | Rust + Flutter | 候选顺序和手工候选边界一致，重建后必须再次预览 | 已实现，待FFI/平台验收 |
+| FIT-13 | 完整体检、时间加权摘要、图表与坐标不变性校验 | `FITInspection.swift` | 真FIT fixtures/红绿测试 | Rust | 完整Record/Lap/Session坐标hash，图表只下采样显示；无时间/非法坐标为错误 | 核心已测；异步桥接待生成 |
+| FIT-14 | 逐补源真实填充计数、起点兜底、处理位移报告 | `PreparedFITBuilder.swift`、`FitMerger.swift` | merge/report/坐标位移测试 | Rust | 实际写入点计数，零填充可诊断，速度失败按活动起点兜底，坐标均位移不虚构 | 核心/API单测已过；新DTO待生成 |
+| HK-08 | FIT 转换为健康写入草稿 | `HealthWorkoutDraft.swift` | Rust health_draft fixtures | Rust | 摘要/运动类型/序列/事件/路线单位对齐，缺失数据不伪造 | 核心/API单测已过；FFI未验收 |
+| HK-09 | 写入授权、幂等训练与路线部分失败 | `HealthKitService.swift` | macOS native parser XCTest | Apple 原生 | 用户显式写权限，fingerprint幂等，至少1秒采集区间；路线失败保留已写UUID并提示 | 已实现，独立Apple编译/18项XCTest通过；真实HealthKit未验收 |
+| HK-10 | 近邻训练提示与健康UUID/跳过/错误独立状态 | `AppleHealthImportPass.swift` | Dart health runner/Rust state tests | Flutter + Rust + 原生 | 既有导入不重复写，接近活动由用户决定，健康结果不覆盖Strava结果 | 已实现，待FFI/设备验收 |
+| SYNC-11 | Strava与健康双目标、健康-only及目标间取消 | `SyncSession.swift`、`AppleHealthImportPass.swift` | destination/checkpoint/recovery tests | Flutter + Rust | 单目标不触发另一个；部分成功重启后只继续未完成目标，不重复删除已成功替换 | 已实现，待集成：分目标持久进度/完成凭证和源接线独立复核通过；FFI及真实重启未验收 |
+| SYNC-12 | 覆盖后的ghost duplicate限时重试 | `OverwriteGhostDuplicate` | Rust renewal CAS/Dart runner tests | Rust + Flutter | 10秒窗/2秒等待，可靠远端存在性检查，每次新ID先落盘，不重复删除 | 已实现，待集成：存在/不存在/未知三分支与代际采用回归通过；真实Strava未验收 |
+| STORE-07 | 老版设置/恢复数据采用与全局持久队列 | `SyncSession.swift`、`SyncStateStore.swift` | checkpoint/legacy/原生prefs tests | Flutter + 原生 + Rust | 复用原键，旧无阶段恢复必须明确选择，原配置/任务在页面关闭后保留 | 已实现，双目标恢复子集独立复核通过；真机升级/回滚待验收 |
+| MAP-01 | WGS OSM底图、离线默认、缩放/复位与隐私门槛 | `TrackMapView.swift` | synthetic tile/cache/projection/widget tests | Flutter | 仅确认WGS才在线；每视图明确同意；可见署名、HTTP缓存/限额，无后台或被遮页面续发 | 地图/详情29项子集通过；地图25项独立复核通过，均使用合成mock瓦片；平台UI待验收 |
 
 ## 完成门槛
 

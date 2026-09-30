@@ -18,4 +18,4 @@ runs:
       shell: bash
       run: |
         rustc --version
-        flutter --version
+        flutter --suppress-analytics --version

@@ -53,8 +53,29 @@ final class AutoSyncCheckpoint {
       'skipLocalHistory',
       'mode',
       'virtualPower',
+      'customTitle',
+      'previewPolicy',
+      'uploadToStrava',
+      'writeToHealth',
     });
     const sources = {'healthkit', 'xingzhe', 'onelap'};
+    final title = config['customTitle'];
+    if ((title != null &&
+            (title is! String ||
+                utf8.encode(title).length > 8192 ||
+                RegExp(r'[\x00-\x1f\x7f]').hasMatch(title))) ||
+        (config['previewPolicy'] != null &&
+            !{
+              'issuesOnly',
+              'everyActivity',
+            }.contains(config['previewPolicy'])) ||
+        (config['uploadToStrava'] != null &&
+            config['uploadToStrava'] is! bool) ||
+        (config['writeToHealth'] != null && config['writeToHealth'] is! bool) ||
+        (config['uploadToStrava'] == false &&
+            config['writeToHealth'] != true)) {
+      throw const FormatException('同步目标或预览配置无效');
+    }
     final primary = config['primary'];
     final supplements = config['supplements'];
     final activities = config['activities'];

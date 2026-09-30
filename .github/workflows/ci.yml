@@ -25,6 +25,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.98.1
@@ -46,6 +48,18 @@ jobs:
             ${{ runner.temp }}/api-verification/test.log
             ${{ runner.temp }}/api-verification/source-manifest.json
           retention-days: 7
+  flutter-contracts:
+    name: Dart and UI contracts (excludes FFI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-flutter-rust
+      - run: flutter --suppress-analytics pub get --enforce-lockfile
+        working-directory: flutter_app
+      - run: bash scripts/verify-flutter-contracts.sh
   # Intentionally remains a required, honest integration check. New APIs need
   # approved binding generation; this workflow never executes a generator.
   core-and-flutter:
@@ -53,6 +67,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-flutter-rust
       - run: rustup component add rustfmt clippy
       - run: cargo fmt --manifest-path rust/workout_core/Cargo.toml --check

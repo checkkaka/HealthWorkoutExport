@@ -8,8 +8,17 @@ import 'sync_state_store.dart';
 /// pending record and final FIT exist. Once remoteDeleted/uploading is durable,
 /// the old remote ID is never deleted again.
 final class SyncRecoveryRunner {
-  const SyncRecoveryRunner(this.store);
+  SyncRecoveryRunner(
+    this.store, {
+    Duration Function()? elapsed,
+    Future<void> Function(Duration duration)? delay,
+    // Keep the injected clock private while retaining a readable constructor.
+    // ignore: prefer_initializing_formals
+  }) : _elapsed = elapsed,
+       _delay = delay ?? ((duration) => Future<void>.delayed(duration));
   final SyncStateStore store;
+  final Duration Function()? _elapsed;
+  final Future<void> Function(Duration duration) _delay;
 
   Future<rust.StravaUploadFfiResponse> run({
     required String fingerprint,
@@ -20,6 +29,7 @@ final class SyncRecoveryRunner {
     upload,
     required Future<void> Function(String remoteId) deleteRemote,
     bool Function()? cancelled,
+    Future<bool?> Function(String remoteId)? remoteExists,
   }) async {
     void checkCancelled() {
       if (cancelled?.call() == true) throw const RecoveryCancelled();
@@ -35,9 +45,34 @@ final class SyncRecoveryRunner {
     // overwrite still has the old uploaded record and must not be mistaken for it.
     if (record is Map &&
         record['status'] == 'uploaded' &&
+        transaction.phase == SyncRecoveryPhase.uploading &&
         (transaction.remoteIdToReplace == null ||
-            (transaction.phase == SyncRecoveryPhase.uploading &&
-                record['remoteId'] != transaction.remoteIdToReplace))) {
+            record['remoteId'] != transaction.remoteIdToReplace)) {
+      // A newly resumed queue can adopt this already-completed upload. Persist
+      // its proof before removing the last recovery file, so a crash before the
+      // queue checkpoint cannot lose per-destination completion.
+      if (data.recoveryBatchId != null &&
+          (record['recoveryBatchId'] != data.recoveryBatchId ||
+              record['uploadExternalId'] != transaction.externalId)) {
+        await store.markUploaded(
+          fingerprint: fingerprint,
+          updatedAt: DateTime.now(),
+          remoteId: record['remoteId'] as String?,
+          isDuplicate: record['isDuplicate'] == true,
+          distanceMeters: (record['distanceMeters'] as num?)?.toDouble(),
+          durationSeconds: (record['durationSeconds'] as num?)?.toDouble(),
+          message: record['message'] as String?,
+          uploadChannel: switch (record['uploadChannel']) {
+            'api' => SyncUploadChannel.api,
+            'web' => SyncUploadChannel.web,
+            _ => null,
+          },
+          hasVirtualPower: record['hasVirtualPower'] as bool?,
+          coordinatesWgs84: record['coordinatesWgs84'] as bool?,
+          recoveryBatchId: data.recoveryBatchId,
+          uploadExternalId: transaction.externalId,
+        );
+      }
       try {
         await store.deleteRecovery(fingerprint);
       } catch (_) {
@@ -66,12 +101,56 @@ final class SyncRecoveryRunner {
       transaction = await store.markRecoveryUploading(fingerprint);
     }
     checkCancelled();
-    final response = await upload(data, transaction.externalId);
-    if (response.status == rust.StravaUploadFfiStatus.cancelled) {
-      throw const RecoveryCancelled();
-    }
-    if (response.status != rust.StravaUploadFfiStatus.completed) {
-      throw const RecoveryIncomplete();
+    var response = await upload(data, transaction.externalId);
+    Stopwatch? ghostClock;
+    Duration? injectedStart;
+    var retries = 0;
+    while (true) {
+      if (response.status == rust.StravaUploadFfiStatus.cancelled) {
+        throw const RecoveryCancelled();
+      }
+      if (response.status != rust.StravaUploadFfiStatus.completed) {
+        throw const RecoveryIncomplete();
+      }
+      if (!response.isDuplicate || transaction.remoteIdToReplace == null) break;
+      final duplicateId = response.remoteId;
+      bool ghost = duplicateId == transaction.remoteIdToReplace;
+      if (!ghost) {
+        checkCancelled();
+        if (duplicateId == null ||
+            !RegExp(r'^[0-9]{1,32}$').hasMatch(duplicateId)) {
+          throw const RecoveryUnverifiedDuplicate();
+        }
+        final exists = await remoteExists?.call(duplicateId);
+        checkCancelled();
+        if (exists == null) throw const RecoveryUnverifiedDuplicate();
+        ghost = !exists;
+      }
+      if (!ghost) break;
+      ghostClock ??= Stopwatch()..start();
+      injectedStart ??= _elapsed?.call();
+      Duration elapsed() => _elapsed == null
+          ? ghostClock!.elapsed
+          : _elapsed() - (injectedStart ?? Duration.zero);
+      if (elapsed() >= const Duration(seconds: 10) || retries >= 5) {
+        throw const RecoveryGhostDuplicate();
+      }
+      // Short waits make Stop responsive without starting a new POST or delete.
+      for (var step = 0; step < 20; step++) {
+        checkCancelled();
+        await _delay(const Duration(milliseconds: 100));
+      }
+      checkCancelled();
+      if (elapsed() >= const Duration(seconds: 10)) {
+        throw const RecoveryGhostDuplicate();
+      }
+      transaction = await store.renewRecoveryExternalId(
+        fingerprint,
+        expectedExternalId: transaction.externalId,
+      );
+      checkCancelled();
+      retries++;
+      response = await upload(data, transaction.externalId);
     }
     // Do not lose a completed remote effect when Stop was pressed in flight.
     await store.markUploaded(
@@ -81,9 +160,14 @@ final class SyncRecoveryRunner {
       isDuplicate: response.isDuplicate,
       distanceMeters: data.distanceMeters,
       durationSeconds: data.durationSeconds,
-      message: data.message,
+      message: response.error?.message ?? data.message,
       uploadChannel: data.channel,
       hasVirtualPower: data.hasVirtualPower,
+      coordinatesWgs84: data.coordinatesWgs84,
+      recoveryBatchId: data.recoveryBatchId,
+      uploadExternalId: data.recoveryBatchId == null
+          ? null
+          : transaction.externalId,
     );
     try {
       await store.deleteRecovery(fingerprint);
@@ -96,6 +180,14 @@ final class SyncRecoveryRunner {
 
 final class RecoveryCleanupFailed implements Exception {
   const RecoveryCleanupFailed();
+}
+
+final class RecoveryGhostDuplicate implements Exception {
+  const RecoveryGhostDuplicate();
+}
+
+final class RecoveryUnverifiedDuplicate implements Exception {
+  const RecoveryUnverifiedDuplicate();
 }
 
 final class RecoveryCancelled implements Exception {
@@ -123,6 +215,8 @@ final class RecoveryUploadData {
     required this.hasVirtualPower,
     this.activityDescription,
     this.batchAt,
+    this.coordinatesWgs84,
+    this.recoveryBatchId,
   });
   factory RecoveryUploadData.fromJson(Uint8List bytes) {
     final value = jsonDecode(utf8.decode(bytes));
@@ -149,6 +243,18 @@ final class RecoveryUploadData {
     final message = value['uploadMessage'];
     final distance = value['distanceMeters'];
     final description = value['activityDescription'];
+    final channel = value['uploadChannel'];
+    final coordinates = value['coordinatesWgs84'];
+    final batchId = value['recoveryBatchId'];
+    if ((coordinates != null && coordinates is! bool) ||
+        (batchId != null &&
+            (batchId is! String ||
+                !RegExp(r'^[a-f0-9]{64}$').hasMatch(batchId)))) {
+      throw const FormatException('恢复来源或批次标识无效');
+    }
+    if (channel != null && channel != 'api' && channel != 'web') {
+      throw const FormatException('恢复上传通道未知，未执行任何网络操作');
+    }
     if (supplements is! List ||
         supplements.any((item) => item is! String) ||
         (message != null && message is! String) ||
@@ -177,6 +283,8 @@ final class RecoveryUploadData {
           : SyncUploadChannel.api,
       hasVirtualPower: value['hasVirtualPower'] == true,
       activityDescription: description as String?,
+      coordinatesWgs84: coordinates as bool?,
+      recoveryBatchId: batchId as String?,
       batchAt: value['batchAt'] is num
           ? DateTime.fromMillisecondsSinceEpoch(
               (((value['batchAt'] as num).toDouble() + 978307200) * 1000)
@@ -200,6 +308,8 @@ final class RecoveryUploadData {
   final bool hasVirtualPower;
   final String? activityDescription;
   final DateTime? batchAt;
+  final bool? coordinatesWgs84;
+  final String? recoveryBatchId;
 
   Uint8List encode() => Uint8List.fromList(
     utf8.encode(
@@ -222,6 +332,8 @@ final class RecoveryUploadData {
         'uploadChannel': channel.name,
         'hasVirtualPower': hasVirtualPower,
         'activityDescription': activityDescription,
+        if (coordinatesWgs84 != null) 'coordinatesWgs84': coordinatesWgs84,
+        if (recoveryBatchId != null) 'recoveryBatchId': recoveryBatchId,
         if (batchAt != null)
           'batchAt': batchAt!.millisecondsSinceEpoch / 1000 - 978307200,
       }),
@@ -241,5 +353,7 @@ final class RecoveryUploadData {
     uploadChannel: channel,
     hasVirtualPower: hasVirtualPower,
     batchAt: batchAt,
+    coordinatesWgs84: coordinatesWgs84,
+    recoveryBatchId: recoveryBatchId,
   );
 }

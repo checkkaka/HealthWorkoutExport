@@ -6,6 +6,7 @@ import 'package:health_workout_export/auto_sync_controller.dart';
 import 'package:health_workout_export/src/rust/api/simple.dart' as rust;
 import 'package:health_workout_export/sync_state_store.dart';
 import 'package:health_workout_export/workout_source.dart';
+import 'package:health_workout_export/sync_preview_models.dart';
 
 const _uuid = 'A4B64E8C-0012-4A0B-993E-140FC6B721C0';
 
@@ -36,6 +37,8 @@ void main() {
     List<rust.StravaRemoteActivityResult> remoteActivities = const [],
     Future<void> Function()? markRemoteDuplicate,
   }) => AutoSyncController(
+    inspectFit: ({required data}) async =>
+        '{"summary":{},"issues":[],"track":[],"series":{}}',
     fingerprint:
         ({
           required primarySourceId,
@@ -62,6 +65,7 @@ void main() {
           required filename,
           required commute,
           description,
+          name,
         }) async {
           order.add('upload');
           expect(externalId, fingerprint);
@@ -331,6 +335,8 @@ void main() {
       );
       String? uploadedExternalId;
       final result = await AutoSyncController(
+        inspectFit: ({required data}) async =>
+            '{"summary":{},"issues":[],"track":[],"series":{}}',
         stateStore: store,
         upload:
             ({
@@ -340,6 +346,7 @@ void main() {
               required filename,
               required commute,
               description,
+              name,
             }) async {
               uploadedExternalId = externalId;
               expect(logicalOperationId, 'recovery-$fingerprint');
@@ -385,6 +392,8 @@ void main() {
     void Function(String stage)? onStage,
     List<rust.StravaRemoteActivityResult> remotes = const [],
   }) => AutoSyncController(
+    inspectFit: ({required data}) async =>
+        '{"summary":{},"issues":[],"track":[],"series":{}}',
     fingerprint:
         ({
           required primarySourceId,
@@ -436,6 +445,8 @@ void main() {
             rewrittenCoordinateCount: 0,
             virtualPowerFilledCount: 0,
             powerSourceVirtual: false,
+            averageCoordinateDisplacementMeters: 0,
+            supplementReportsJson: '[]',
           );
         },
     persist: ({required record, required fit}) async {
@@ -450,6 +461,7 @@ void main() {
           required filename,
           required commute,
           description,
+          name,
         }) async {
           order.add('upload');
           onStage?.call('upload');
@@ -648,6 +660,8 @@ void main() {
     );
     final results =
         await AutoSyncController(
+          inspectFit: ({required data}) async =>
+              '{"summary":{},"issues":[],"track":[],"series":{}}',
           fingerprint:
               ({
                 required primarySourceId,
@@ -668,6 +682,7 @@ void main() {
                 required filename,
                 required commute,
                 description,
+                name,
               }) async {
                 order.add('upload-$filename');
                 return const rust.StravaUploadFfiResponse(
@@ -705,6 +720,8 @@ void main() {
                   rewrittenCoordinateCount: 0,
                   virtualPowerFilledCount: 0,
                   powerSourceVirtual: false,
+                  averageCoordinateDisplacementMeters: 0,
+                  supplementReportsJson: '[]',
                 );
               },
           matchIndex: ({required primary, required candidates}) =>
@@ -714,6 +731,8 @@ void main() {
           supplements: [supplement],
           activities: [activity('one'), activity('two')],
           cancelled: () => order.contains('uploaded'),
+          onPreview: (_) async =>
+              const SyncPreviewDecision(SyncPreviewAction.forceUpload),
         );
 
     expect(results, hasLength(1));

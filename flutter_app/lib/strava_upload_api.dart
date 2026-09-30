@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'native_channels.dart';
+import 'strava_metadata_finalizer.dart';
 import 'src/rust/api/simple.dart' as raw;
 
 export 'src/rust/api/simple.dart'
@@ -46,9 +47,17 @@ final class StravaUploadApi {
     required String filename,
     required bool commute,
     String? description,
+    String? name,
   }) {
     try {
-      _validateUpload(accessToken, fit, externalId, filename, description);
+      _validateUpload(
+        accessToken,
+        fit,
+        externalId,
+        filename,
+        description,
+        name,
+      );
     } catch (_) {
       release(handle);
       rethrow;
@@ -61,6 +70,7 @@ final class StravaUploadApi {
       filename: filename,
       commute: commute,
       description: description,
+      name: name,
     );
   }
 
@@ -73,9 +83,17 @@ final class StravaUploadApi {
     required String filename,
     required bool commute,
     String? description,
+    String? name,
   }) {
     try {
-      _validateUpload(accessToken, fit, externalId, filename, description);
+      _validateUpload(
+        accessToken,
+        fit,
+        externalId,
+        filename,
+        description,
+        name,
+      );
     } catch (_) {
       release(handle);
       rethrow;
@@ -88,6 +106,7 @@ final class StravaUploadApi {
       filename: filename,
       commute: commute,
       description: description,
+      name: name,
     );
   }
 
@@ -130,7 +149,11 @@ final class StravaUploadApi {
     String externalId,
     String filename,
     String? description,
+    String? name,
   ) {
+    if (name != null && name.isNotEmpty) {
+      _validateText(name, 'name', _maxTextBytes);
+    }
     _validateText(accessToken, 'accessToken', _maxTextBytes);
     _validateText(externalId, 'externalId', _maxTextBytes);
     _validateText(filename, 'filename', _maxFilenameBytes);
@@ -189,29 +212,36 @@ final class StravaUploadSession {
     required String filename,
     required bool commute,
     String? description,
+    String? name,
   }) {
     final handle = api.reserve(logicalOperationId);
+    final operation = _StravaOperationState();
     return StravaUploadTask._(
       api,
       handle,
+      operation,
       _run(
         handle: handle,
+        operation: operation,
         fit: fit,
         externalId: externalId,
         filename: filename,
         commute: commute,
         description: description,
+        name: name,
       ),
     );
   }
 
   Future<raw.StravaUploadFfiResponse> _run({
     required StravaUploadHandle handle,
+    required _StravaOperationState operation,
     required Uint8List fit,
     required String externalId,
     required String filename,
     required bool commute,
     String? description,
+    String? name,
   }) async {
     try {
       final token = await accessToken();
@@ -223,13 +253,22 @@ final class StravaUploadSession {
         filename: filename,
         commute: commute,
         description: description,
+        name: name,
       );
-      if (first.status != raw.StravaUploadFfiStatus.needsRefresh) return first;
+      if (first.status != raw.StravaUploadFfiStatus.needsRefresh) {
+        return await _finalizeMetadata(
+          first,
+          name: name,
+          commute: commute,
+          description: description,
+          operation: operation,
+        );
+      }
 
       final retry = first.retry;
       if (retry == null) throw const FormatException('Strava 刷新请求缺少续传信息');
       final refreshedAccessToken = await _refreshAccessToken();
-      return await switch (retry.stage) {
+      final response = await switch (retry.stage) {
         raw.StravaUploadRetryStage.upload => api.retryUploadAfterRefresh(
           handle: handle,
           accessToken: refreshedAccessToken,
@@ -238,6 +277,7 @@ final class StravaUploadSession {
           filename: filename,
           commute: commute,
           description: description,
+          name: name,
         ),
         raw.StravaUploadRetryStage.poll => api.resumePollAfterRefresh(
           handle: handle,
@@ -250,10 +290,83 @@ final class StravaUploadSession {
               (throw const FormatException('Strava 轮询续传缺少 attempt')),
         ),
       };
+      return await _finalizeMetadata(
+        response,
+        name: name,
+        commute: commute,
+        description: description,
+        operation: operation,
+      );
     } finally {
       // 未进入 Rust、刷新失败或续传信息损坏时释放；终态已由 Rust 自动释放。
       api.release(handle);
     }
+  }
+
+  Future<raw.StravaUploadFfiResponse> finalizeWebUpload(
+    raw.StravaUploadFfiResponse response, {
+    required String? name,
+    required bool commute,
+    required String? description,
+    bool Function()? cancelled,
+  }) async {
+    if (name == null || response.isDuplicate || response.remoteId == null) {
+      return response;
+    }
+    try {
+      final status = await vault.status();
+      if (!status.hasAccessToken || !status.hasRefreshToken) return response;
+    } catch (_) {
+      return response;
+    }
+    return _finalizeMetadata(
+      response,
+      name: name,
+      commute: commute,
+      description: description,
+      operation: _StravaOperationState(),
+      externalCancelled: cancelled,
+    );
+  }
+
+  Future<raw.StravaUploadFfiResponse> _finalizeMetadata(
+    raw.StravaUploadFfiResponse response, {
+    required String? name,
+    required bool commute,
+    required String? description,
+    required _StravaOperationState operation,
+    bool Function()? externalCancelled,
+  }) async {
+    if (name == null || name.trim().isEmpty) return response;
+    return finalizeUploadedMetadata(
+      response,
+      cancelled: () => operation.cancelled || externalCancelled?.call() == true,
+      update: (refresh) async {
+        final token = refresh
+            ? await _refreshAccessToken()
+            : await accessToken();
+        if (operation.cancelled || externalCancelled?.call() == true) {
+          throw const FormatException('已停止');
+        }
+        final handle = api.reserve(
+          'metadata-${response.remoteId}-${DateTime.now().microsecondsSinceEpoch}',
+        );
+        operation.metadataHandle = handle;
+        try {
+          await raw.stravaUpdateActivityMetadata(
+            operationHandle: handle._value,
+            accessToken: token,
+            activityId: response.remoteId!,
+            name: name.trim(),
+            commute: commute,
+            descriptionNote: description,
+          );
+        } finally {
+          operation.metadataHandle = null;
+          api.release(handle);
+        }
+      },
+    );
   }
 
   /// 仅供同一受控同步链路租用短期 token，调用方不得缓存或写入日志。
@@ -300,11 +413,27 @@ final class StravaUploadSession {
 final stravaUploadSession = StravaUploadSession();
 
 final class StravaUploadTask {
-  const StravaUploadTask._(this._api, this._handle, this.result);
+  const StravaUploadTask._(
+    this._api,
+    this._handle,
+    this._operation,
+    this.result,
+  );
 
   final StravaUploadApi _api;
   final StravaUploadHandle _handle;
+  final _StravaOperationState _operation;
   final Future<raw.StravaUploadFfiResponse> result;
 
-  bool cancel() => _api.cancel(_handle);
+  bool cancel() {
+    _operation.cancelled = true;
+    final metadata = _operation.metadataHandle;
+    if (metadata != null) _api.cancel(metadata);
+    return _api.cancel(_handle);
+  }
+}
+
+final class _StravaOperationState {
+  bool cancelled = false;
+  StravaUploadHandle? metadataHandle;
 }

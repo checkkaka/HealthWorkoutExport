@@ -1,3 +1,11 @@
+import 'dart:io';
+import 'package:share_plus/share_plus.dart';
+import 'activity_detail_page.dart';
+import 'route_map.dart';
+import 'auto_sync_page.dart';
+import 'sync_preview_models.dart';
+import 'workout_source.dart';
+import 'src/rust/api/simple.dart' as rust;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -11,12 +19,20 @@ final class ActivitySyncStatus {
     required this.hasVirtualPower,
     this.remoteId,
     this.message,
+    this.fingerprint,
+    this.appleHealthUuid,
+    this.appleHealthSkipped = false,
+    this.appleHealthError,
+    this.coordinatesWgs84,
   });
   final String status;
   final bool hasSyncedFit;
   final bool hasVirtualPower;
   final String? remoteId;
   final String? message;
+  final String? fingerprint, appleHealthUuid, appleHealthError;
+  final bool appleHealthSkipped;
+  final bool? coordinatesWgs84;
 }
 
 /// 每次状态版本只读取一次清单；所有源页面复用同一未来结果。
@@ -79,6 +95,18 @@ final class ActivitySyncIndex {
                   ? remote
                   : null),
           message: previous?.message ?? record['message'] as String?,
+          fingerprint: hasFit ? entry.key : previous?.fingerprint,
+          appleHealthUuid:
+              previous?.appleHealthUuid ?? record['appleHealthUUID'] as String?,
+          appleHealthSkipped:
+              (previous?.appleHealthSkipped ?? false) ||
+              record['appleHealthSkipped'] == true,
+          appleHealthError:
+              previous?.appleHealthError ??
+              record['appleHealthError'] as String?,
+          coordinatesWgs84: record['coordinatesWgs84'] is bool
+              ? record['coordinatesWgs84'] as bool
+              : null,
         );
       }
       return result;
@@ -134,6 +162,11 @@ class ActivitySyncBadges extends StatelessWidget {
                   ),
               ],
             ),
+            ActivityHealthStatusView(
+              uuid: status.appleHealthUuid,
+              skipped: status.appleHealthSkipped,
+              error: details ? status.appleHealthError : null,
+            ),
             if (details && status.message != null) Text(status.message!),
             if (details && status.remoteId != null)
               TextButton(
@@ -166,34 +199,154 @@ Future<void> showWorkoutActivityDetails(
   required String activityId,
   required String title,
   required DateTime start,
+  DateTime? end,
   required double durationSeconds,
   double? distanceMeters,
-}) => showModalBottomSheet<void>(
-  context: context,
-  isScrollControlled: true,
-  builder: (context) => SafeArea(
-    child: Padding(
-      padding: const EdgeInsets.all(20),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: Theme.of(context).textTheme.headlineSmall),
-            Text('来源：$sourceTitle'),
-            Text('开始：$start'),
-            Text('时长：${(durationSeconds / 60).toStringAsFixed(1)} 分钟'),
-            if (distanceMeters != null)
-              Text('距离：${(distanceMeters / 1000).toStringAsFixed(2)} 公里'),
-            const SizedBox(height: 12),
-            ActivitySyncBadges(
-              sourceId: sourceId,
-              activityId: activityId,
-              details: true,
-            ),
-          ],
+}) async {
+  final sourceType = switch (sourceId) {
+    'xingzhe' => WorkoutSourceId.xingzhe,
+    'onelap' => WorkoutSourceId.onelap,
+    _ => WorkoutSourceId.healthkit,
+  };
+  final WorkoutSource source = switch (sourceType) {
+    WorkoutSourceId.healthkit => HealthKitWorkoutSource(),
+    WorkoutSourceId.xingzhe => XingzheWorkoutSource(),
+    WorkoutSourceId.onelap => OnelapWorkoutSource(),
+  };
+  final activity = WorkoutActivity(
+    id: activityId,
+    sourceId: sourceType,
+    title: title,
+    start: start,
+    end:
+        end ??
+        start.add(Duration(milliseconds: (durationSeconds * 1000).round())),
+    durationSeconds: durationSeconds,
+    distanceMeters: distanceMeters,
+  );
+  var index = ActivitySyncIndex.load();
+  final temporary = <Directory>[];
+  try {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (routeContext) => StatefulBuilder(
+          builder: (context, setRouteState) =>
+              FutureBuilder<Map<String, ActivitySyncStatus>>(
+                future: index,
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData &&
+                      snapshot.connectionState != ConnectionState.done) {
+                    return Scaffold(
+                      appBar: AppBar(title: Text(title)),
+                      body: const Center(child: CircularProgressIndicator()),
+                    );
+                  }
+                  final status = snapshot
+                      .data?[ActivitySyncIndex.key(sourceId, activityId)];
+                  Future<void> configure(bool replace) async {
+                    await Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => AutoSyncPage(
+                          entrySource: sourceType,
+                          selected: [activity],
+                          initialPreviewPolicy: SyncPreviewPolicy.everyActivity,
+                          initialSkipLocalHistory: !replace,
+                        ),
+                      ),
+                    );
+                    if (context.mounted) {
+                      setRouteState(() => index = ActivitySyncIndex.load());
+                    }
+                  }
+
+                  return WorkoutActivityDetailPage(
+                    key: ValueKey(index),
+                    title: title,
+                    sourceTitle: sourceTitle,
+                    loadOriginal: () => source.fetchFit(activity),
+                    loadSynced:
+                        status?.hasSyncedFit == true &&
+                            status?.fingerprint != null
+                        ? () => SyncStateStore().readSyncedFit(
+                            status!.fingerprint!,
+                          )
+                        : null,
+                    inspect: (data) async => FitPreviewInspection.decode(
+                      await rust.inspectFitPreview(data: data),
+                    ),
+                    onExport: (shareContext, bytes, synced) async {
+                      final directory = await Directory.systemTemp.createTemp(
+                        'health-workout-export-detail-',
+                      );
+                      temporary.add(directory);
+                      final file = File(
+                        '${directory.path}${Platform.pathSeparator}${synced ? 'strava' : 'original'}.fit',
+                      );
+                      await file.writeAsBytes(bytes, flush: true);
+                      if (!shareContext.mounted) return;
+                      final render = shareContext.findRenderObject();
+                      final origin = render is RenderBox && render.hasSize
+                          ? render.localToGlobal(Offset.zero) & render.size
+                          : const Rect.fromLTWH(0, 0, 1, 1);
+                      await SharePlus.instance.share(
+                        ShareParams(
+                          files: [XFile(file.path)],
+                          sharePositionOrigin: origin,
+                        ),
+                      );
+                    },
+                    onPreview: () => configure(false),
+                    onOverwrite: status?.remoteId != null
+                        ? () => configure(true)
+                        : null,
+                    onOpenRemote: status?.remoteId != null
+                        ? () => const StravaWebChannel().openActivity(
+                            status!.remoteId!,
+                          )
+                        : null,
+                    mapBuilder: (context, inspection, synced) => WorkoutRouteMap(
+                      contentId:
+                          '$sourceId:$activityId:$synced:${inspection.coordinateValueHash}',
+                      lines: [
+                        RouteMapLine(
+                          id: synced ? 'synced' : 'original',
+                          points: [
+                            for (final point in inspection.track)
+                              RouteMapPoint(
+                                latitude: point.y,
+                                longitude: point.x,
+                              ),
+                          ],
+                          color: Theme.of(context).colorScheme.primary,
+                          coordinateSystem:
+                              (!synced &&
+                                      sourceType ==
+                                          WorkoutSourceId.healthkit) ||
+                                  (synced && status?.coordinatesWgs84 == true)
+                              ? RouteCoordinateSystem.wgs84
+                              : RouteCoordinateSystem.unknown,
+                        ),
+                      ],
+                    ),
+                    statusDetails: ActivitySyncBadges(
+                      sourceId: sourceId,
+                      activityId: activityId,
+                      details: true,
+                    ),
+                  );
+                },
+              ),
         ),
       ),
-    ),
-  ),
-);
+    );
+  } finally {
+    if (source is CancellableWorkoutSource) source.cancelPending();
+    for (final directory in temporary) {
+      try {
+        if (await directory.exists()) await directory.delete(recursive: true);
+      } catch (_) {
+        /* Only this view's temporary copies are eligible. */
+      }
+    }
+  }
+}

@@ -367,6 +367,11 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
             activityId: workout.id,
             title: workout.title,
             start: start,
+            end: workout.endTimeSeconds == null
+                ? null
+                : DateTime.fromMillisecondsSinceEpoch(
+                    (workout.endTimeSeconds! * 1000).round(),
+                  ),
             durationSeconds: workout.durationSeconds,
             distanceMeters: distance,
           ),

@@ -124,6 +124,12 @@ pub fn encode_health_workout_fit(
         .map_err(|error| error.to_string())
 }
 
+/// 解码 FIT 为有界 Apple Health 写入草稿 JSON；本函数不访问健康资料库。
+pub fn decode_fit_health_draft(data: Vec<u8>, fingerprint: String) -> Result<Vec<u8>, String> {
+    crate::health_draft::decode_fit_health_draft_json(&data, &fingerprint)
+        .map_err(|error| error.to_string())
+}
+
 /// 使用行者网页登录契约换取短期 sessionid；凭据只用于本次请求，调用方负责安全保存返回值。
 pub async fn xingzhe_login(account: String, password: String) -> Result<String, String> {
     let client = crate::xingzhe::XingzheLoginClient::new().map_err(|error| error.to_string())?;
@@ -384,8 +390,11 @@ pub struct VirtualPowerFillInput {
 #[derive(Clone, Debug)]
 pub struct PreparedFitResult {
     pub data: Vec<u8>,
+    /// 按输入补源 FIT 顺序的实际字段计数、偏移与说明；无补源为 []。
+    pub supplement_reports_json: String,
     pub repaired_speed_count: u32,
     pub rewritten_coordinate_count: u32,
+    pub average_coordinate_displacement_meters: f64,
     pub virtual_power_filled_count: u32,
     pub power_source_virtual: bool,
     pub activity_description: Option<String>,
@@ -511,11 +520,16 @@ pub async fn prepare_fit_for_upload(
     gcj_enabled: bool,
     virtual_power: Option<VirtualPowerFillInput>,
 ) -> Result<PreparedFitResult, String> {
+    let original_coordinates = gcj_enabled.then(|| primary.clone());
     let refs: Vec<&[u8]> = supplements.iter().map(Vec::as_slice).collect();
-    let merged = if refs.is_empty() {
-        primary
+    let (merged, supplement_reports_json) = if refs.is_empty() {
+        (primary, "[]".to_owned())
     } else {
-        crate::fit::merge_fit_for_sync(&primary, &refs).map_err(|error| format!("{error:?}"))?
+        let result = crate::fit::merge_fit_for_sync_with_report(&primary, &refs)
+            .map_err(|error| format!("{error:?}"))?;
+        let reports_json = serde_json::to_string(&result.supplement_reports)
+            .map_err(|_| "无法编码补源报告".to_owned())?;
+        (result.data, reports_json)
     };
     let spike = crate::fit::fix_fit_speed_spikes(&merged).map_err(|error| format!("{error:?}"))?;
     let repaired_speed_count = u32::try_from(spike.fixed_count).unwrap_or(u32::MAX);
@@ -561,10 +575,17 @@ pub async fn prepare_fit_for_upload(
             data = filled.data;
         }
     }
+    let average_coordinate_displacement_meters = match original_coordinates {
+        Some(original) => crate::fit::average_coordinate_displacement(&original, &data)
+            .map_err(|error| format!("{error:?}"))?,
+        None => 0.0,
+    };
     Ok(PreparedFitResult {
         data,
+        supplement_reports_json,
         repaired_speed_count,
         rewritten_coordinate_count,
+        average_coordinate_displacement_meters,
         virtual_power_filled_count,
         power_source_virtual,
         activity_description,
@@ -870,6 +891,31 @@ mod prepare_fit_ffi_tests {
         assert!(crate::fit::is_valid_fit(&prepared.data));
         assert_eq!(prepared.virtual_power_filled_count, 0);
         assert!(!prepared.power_source_virtual);
+        assert_eq!(prepared.supplement_reports_json, "[]");
+    }
+
+    #[tokio::test]
+    async fn prepared_fit_reports_actual_supplement_fills() {
+        let mut bundle = serde_json::json!({
+            "uuid":"report", "startMs":1700000000000i64, "endMs":1700000060000i64,
+            "durationSeconds":60.0,"activityType":13,"events":[],"series":{},"route":[]
+        });
+        let primary =
+            crate::fit::encode_health_workout_bundle_json(&serde_json::to_vec(&bundle).unwrap(), 0)
+                .unwrap();
+        bundle["series"] = serde_json::json!({"HKQuantityTypeIdentifierHeartRate":[{"dateMs":1700000000000i64,"value":120.0}]});
+        let source =
+            crate::fit::encode_health_workout_bundle_json(&serde_json::to_vec(&bundle).unwrap(), 0)
+                .unwrap();
+        let prepared = prepare_fit_for_upload(primary, vec![source], false, None)
+            .await
+            .unwrap();
+        let reports: serde_json::Value =
+            serde_json::from_str(&prepared.supplement_reports_json).expect("report must be JSON");
+        assert_eq!(reports[0]["index"], 0);
+        assert_eq!(reports[0]["offsetSeconds"], 0);
+        assert_eq!(reports[0]["filledCounts"]["heartRate"], 1);
+        assert_eq!(reports[0]["filledCounts"]["power"], 0);
     }
 }
 
@@ -1097,6 +1143,7 @@ pub async fn strava_upload_fit(
     filename: String,
     commute: bool,
     description: Option<String>,
+    name: Option<String>,
 ) -> StravaUploadFfiResponse {
     let mut operation = match UploadOperation::begin(operation_handle) {
         Ok(operation) => operation,
@@ -1112,6 +1159,7 @@ pub async fn strava_upload_fit(
                     &filename,
                     commute,
                     description.as_deref(),
+                    name.as_deref(),
                     &operation.cancellation,
                 )
                 .await
@@ -1138,6 +1186,7 @@ pub async fn strava_retry_upload_after_refresh(
     filename: String,
     commute: bool,
     description: Option<String>,
+    name: Option<String>,
 ) -> StravaUploadFfiResponse {
     let operation = match UploadOperation::begin(operation_handle) {
         Ok(operation) => operation,
@@ -1153,6 +1202,7 @@ pub async fn strava_retry_upload_after_refresh(
                     &filename,
                     commute,
                     description.as_deref(),
+                    name.as_deref(),
                     &operation.cancellation,
                 )
                 .await
@@ -1240,6 +1290,30 @@ pub async fn strava_list_remote_activities(
         )
         .await
         .map(|activities| activities.into_iter().map(remote_activity_result).collect())
+        .map_err(remote_activity_error)
+}
+
+/// 上传成功后的幂等元数据更新。调用前预留 operation handle；失败不应重新上传 FIT。
+pub async fn strava_update_activity_metadata(
+    operation_handle: String,
+    access_token: String,
+    activity_id: String,
+    name: String,
+    commute: bool,
+    description_note: Option<String>,
+) -> Result<(), String> {
+    let operation = UploadOperation::begin(operation_handle).map_err(remote_operation_error)?;
+    let client = crate::strava::StravaActivityClient::new().map_err(remote_activity_error)?;
+    client
+        .update_activity_metadata(
+            &access_token,
+            &activity_id,
+            &name,
+            commute,
+            description_note.as_deref(),
+            &operation.cancellation,
+        )
+        .await
         .map_err(remote_activity_error)
 }
 
@@ -1664,6 +1738,7 @@ mod upload_ffi_tests {
             "ride.fit".to_owned(),
             false,
             None,
+            None,
         )
         .await;
         assert_eq!(response.status, StravaUploadFfiStatus::Failed);
@@ -1731,4 +1806,9 @@ mod preparation_cancellation_tests {
         assert!(result.is_err());
         assert!(!strava_release_remote_read(reserved.handle));
     }
+}
+
+/// 预览使用异步工作线程；完整坐标摘要与有界显示数据分别计算。
+pub fn inspect_fit_preview(data: Vec<u8>) -> Result<String, String> {
+    crate::fit::inspect_fit_preview_json(&data)
 }

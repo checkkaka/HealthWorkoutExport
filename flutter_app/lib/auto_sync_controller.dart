@@ -10,6 +10,8 @@ import 'strava_upload_api.dart';
 import 'sync_state_store.dart';
 import 'sync_recovery_runner.dart';
 import 'sync_history_logic.dart';
+import 'sync_preview_models.dart';
+import 'recovery_batch_checkpoint.dart';
 export 'sync_history_logic.dart' show isAnomalousStravaSpeed;
 import 'workout_export.dart';
 import 'workout_source.dart';
@@ -31,10 +33,17 @@ typedef AutoSyncUpload =
       required String filename,
       required bool commute,
       String? description,
+      String? name,
     });
 
 typedef AutoSyncPersist =
     Future<void> Function({
+      required SyncPendingRecord record,
+      required Uint8List fit,
+    });
+
+typedef AutoSyncHealthImport =
+    Future<AutoSyncResult> Function({
       required SyncPendingRecord record,
       required Uint8List fit,
     });
@@ -153,6 +162,7 @@ final class AutoSyncController {
     bool Function({double? distanceMeters, required double durationSeconds})?
     commute,
     FitPreparer? prepareFit,
+    Future<String> Function({required List<int> data})? inspectFit,
     AutoSyncMatchIndex? matchIndex,
   }) : _healthKit = healthKit ?? const HealthKitChannel(),
        _stateStore = stateStore ?? SyncStateStore(),
@@ -178,6 +188,7 @@ final class AutoSyncController {
        _stableDedupe = stableDedupe ?? rust.stableDedupeMatches,
        // ignore: prefer_initializing_formals
        _prepareFit = prepareFit,
+       _inspectFit = inspectFit ?? rust.inspectFitPreview,
        _matchIndex = matchIndex ?? rust.bestActivityMatchIndex,
        // ignore: prefer_initializing_formals
        _remoteSpeed = remoteSpeed,
@@ -198,6 +209,7 @@ final class AutoSyncController {
   final AutoSyncIsLocallyUploaded? _isLocallyUploadedOverride;
   final AutoSyncStableDedupe _stableDedupe;
   final FitPreparer? _prepareFit;
+  final Future<String> Function({required List<int> data}) _inspectFit;
   final AutoSyncMatchIndex _matchIndex;
   final AutoSyncRemoteSpeed? _remoteSpeed;
   final AutoSyncRemoteMatchIndex _remoteMatchIndex;
@@ -273,7 +285,15 @@ final class AutoSyncController {
     AutoSyncRemoteActivities? remoteActivities,
     Future<void> Function(String remoteId)? deleteRemote,
     Future<void> Function(AutoSyncResult result)? onResult,
+    SyncPreviewPolicy previewPolicy = SyncPreviewPolicy.issuesOnly,
+    SyncPreviewChooser? onPreview,
+    String? customTitle,
+    bool uploadToStrava = true,
+    AutoSyncHealthImport? healthImport,
   }) async {
+    if (!uploadToStrava && healthImport == null) {
+      throw const AutoSyncUploadException('没有可执行的同步目标');
+    }
     if (activities.any((activity) => activity.sourceId != primary.id)) {
       throw const AutoSyncUploadException('已选活动与主数据源不一致');
     }
@@ -334,6 +354,11 @@ final class AutoSyncController {
         skipLocalHistory: skipLocalHistory,
         remoteActivities: remoteActivities,
         deleteRemote: deleteRemote,
+        previewPolicy: previewPolicy,
+        onPreview: onPreview,
+        customTitle: customTitle,
+        uploadToStrava: uploadToStrava,
+        healthImport: healthImport,
       );
       if (result.cancelled) break;
       results.add(result);
@@ -379,6 +404,11 @@ final class AutoSyncController {
     required bool skipLocalHistory,
     AutoSyncRemoteActivities? remoteActivities,
     Future<void> Function(String remoteId)? deleteRemote,
+    required SyncPreviewPolicy previewPolicy,
+    SyncPreviewChooser? onPreview,
+    String? customTitle,
+    required bool uploadToStrava,
+    AutoSyncHealthImport? healthImport,
   }) async {
     String? fingerprint;
     var persisted = false;
@@ -394,7 +424,40 @@ final class AutoSyncController {
         supplementSourceIds: supplementIds,
         destination: 'strava',
       );
-      if (_persist == null) {
+      if (!uploadToStrava) {
+        final record = await _stateStore.recordFor(fingerprint);
+        if (record?['appleHealthUUID'] != null ||
+            record?['appleHealthSkipped'] == true) {
+          return AutoSyncResult(
+            workoutId: activity.id,
+            fingerprint: fingerprint,
+            remoteId: null,
+            isDuplicate: true,
+            message: '健康已处理，未重复写入',
+          );
+        }
+        try {
+          final fit = await _stateStore.readFitForHealth(fingerprint);
+          _checkCancelled(cancelled);
+          return await healthImport!(
+            record: SyncPendingRecord(
+              fingerprint: fingerprint,
+              primarySourceId: primary.id.value,
+              primaryActivityId: activity.id,
+              updatedAt: DateTime.now(),
+              startDate: activity.start,
+              title: activity.title,
+              supplementSourceIds: supplementIds,
+              distanceMeters: activity.distanceMeters,
+              durationSeconds: activity.durationSeconds,
+            ),
+            fit: fit,
+          );
+        } on PlatformException catch (error) {
+          if (error.code != 'sync_file_missing') rethrow;
+        }
+      }
+      if (uploadToStrava && _persist == null) {
         try {
           await _stateStore.readRecovery(fingerprint);
           return await resumeRecovery(
@@ -407,7 +470,7 @@ final class AutoSyncController {
           if (error.code != 'sync_file_missing') rethrow;
         }
       }
-      final local = skipLocalHistory
+      final local = uploadToStrava && skipLocalHistory
           ? await _localDuplicate(activity, fingerprint)
           : (matches: false, remoteId: null);
       _checkCancelled(cancelled);
@@ -439,7 +502,7 @@ final class AutoSyncController {
         );
       }
       var overwriteRemainingAfter = overwriteDuplicate;
-      final remote = performRemotePreflight
+      final remote = uploadToStrava && performRemotePreflight
           ? await _stableRemoteMatchActivity(
               activity,
               fingerprint,
@@ -522,34 +585,217 @@ final class AutoSyncController {
       _checkCancelled(cancelled);
       final primaryFit = await primary.fetchFit(activity);
       _checkCancelled(cancelled);
-      final supplementFits = <Uint8List>[];
-      for (final source in supplements) {
-        _checkCancelled(cancelled);
-        final candidates = supplementCache[source.id] ?? const [];
-        final matchIndex = _matchIndex(
-          primary: activity.interval,
-          candidates: [for (final candidate in candidates) candidate.interval],
-        );
-        if (matchIndex == null) continue;
-        try {
-          supplementFits.add(await source.fetchFit(candidates[matchIndex]));
-        } catch (_) {
-          // 单条补源失败不拖垮主活动。
-        }
-      }
-      _checkCancelled(cancelled);
-      final prepared = await (_prepareFit ?? _prepareWithCancellation)(
-        primary: primaryFit,
-        supplements: supplementFits,
-        gcjEnabled: gcjEnabled,
-        virtualPower: virtualPower,
+      final original = FitPreviewInspection.decode(
+        await _inspectFit(data: primaryFit),
       );
       _checkCancelled(cancelled);
+      PreviewCandidate candidate(WorkoutActivity value) => PreviewCandidate(
+        id: value.id,
+        title: value.title,
+        start: value.start,
+        end: value.end,
+        durationSeconds: value.durationSeconds,
+      );
+      final ranked = <WorkoutSourceId, List<PreviewCandidate>>{};
+      final selected = <String, String>{};
+      for (final source in supplements) {
+        final candidates = supplementCache[source.id] ?? const [];
+        ranked[source.id] = rankPreviewCandidates(
+          candidate(activity),
+          candidates.map(candidate).toList(),
+        );
+        final index = _matchIndex(
+          primary: activity.interval,
+          candidates: [for (final item in candidates) item.interval],
+        );
+        if (index != null &&
+            ranked[source.id]!.any((item) => item.id == candidates[index].id)) {
+          selected[source.id.value] = candidates[index].id;
+        }
+      }
+      final fitCache = <String, Uint8List>{};
+      var manuallyResolved = false;
+      var forcePreview = false;
+      late rust.PreparedFitResult prepared;
+      while (true) {
+        final supplementFits = <Uint8List>[];
+        final successfulSupplementNames = <String>[];
+        final issues = <FitQualityIssue>[];
+        for (final source in supplements) {
+          _checkCancelled(cancelled);
+          final id = selected[source.id.value];
+          if (id == null || id.isEmpty) continue;
+          final selectedActivity =
+              (supplementCache[source.id] ?? const <WorkoutActivity>[])
+                  .where((item) => item.id == id)
+                  .firstOrNull;
+          if (selectedActivity == null) continue;
+          try {
+            final key = '${source.id.value}:$id';
+            supplementFits.add(
+              fitCache[key] ??= await source.fetchFit(selectedActivity),
+            );
+            successfulSupplementNames.add(source.id.title);
+          } catch (_) {
+            issues.add(
+              FitQualityIssue(
+                'supplement-fetch-${source.id.value}',
+                'warning',
+                '补源读取失败',
+                '${source.id.title}未参与本次合并',
+              ),
+            );
+          }
+        }
+        _checkCancelled(cancelled);
+        if (original.issues.any((i) => i.severity == 'error')) {
+          prepared = rust.PreparedFitResult(
+            data: primaryFit,
+            repairedSpeedCount: 0,
+            rewrittenCoordinateCount: 0,
+            virtualPowerFilledCount: 0,
+            powerSourceVirtual: false,
+            averageCoordinateDisplacementMeters: 0,
+            supplementReportsJson: '[]',
+          );
+        } else {
+          prepared = await (_prepareFit ?? _prepareWithCancellation)(
+            primary: primaryFit,
+            supplements: supplementFits,
+            gcjEnabled: gcjEnabled,
+            virtualPower: virtualPower,
+          );
+        }
+        _checkCancelled(cancelled);
+        final finalFit = FitPreviewInspection.decode(
+          await _inspectFit(data: prepared.data),
+        );
+        _checkCancelled(cancelled);
+        issues.addAll(original.issues.where((i) => i.severity == 'error'));
+        issues.addAll(finalFit.issues);
+        issues.addAll(
+          processingQualityIssues(
+            original: original,
+            finalFit: finalFit,
+            gcjEnabled: gcjEnabled,
+            repairedSpeedCount: prepared.repairedSpeedCount,
+            rewrittenCoordinateCount: prepared.rewrittenCoordinateCount,
+            virtualPowerCount: prepared.virtualPowerFilledCount,
+            averageCoordinateDisplacementMeters:
+                prepared.averageCoordinateDisplacementMeters,
+          ),
+        );
+        final reportNames = original.issues.any((i) => i.severity == 'error')
+            ? const <String>[]
+            : successfulSupplementNames;
+        final reports = parseSupplementReports(
+          prepared.supplementReportsJson,
+          expectedCount: reportNames.length,
+        );
+        issues.addAll(supplementQualityIssues(reports, reportNames));
+        final fieldSources = previewFieldSources(
+          primaryName: primary.id.title,
+          original: original,
+          finalFit: finalFit,
+          reports: reports,
+          supplementNames: reportNames,
+          virtualPower: prepared.powerSourceVirtual,
+        );
+        final prompt = SyncPreviewPrompt(
+          title: activity.title,
+          original: original,
+          finalFit: finalFit,
+          issues: issues,
+          fieldSources: fieldSources,
+          originalCoordinatesWgs84: primary.id == WorkoutSourceId.healthkit,
+          finalCoordinatesWgs84:
+              (primary.id == WorkoutSourceId.healthkit && !gcjEnabled) ||
+              prepared.rewrittenCoordinateCount > 0,
+          groups: [
+            for (final source in supplements)
+              if ((ranked[source.id] ?? []).isNotEmpty)
+                PreviewCandidateGroup(
+                  sourceId: source.id.value,
+                  sourceTitle: source.id.title,
+                  candidates: ranked[source.id]!,
+                  selectedId: selected[source.id.value],
+                ),
+          ],
+        );
+        final ambiguous =
+            !manuallyResolved && ranked.values.any(requiresMatchConfirmation);
+        final show =
+            forcePreview ||
+            previewPolicy == SyncPreviewPolicy.everyActivity ||
+            prompt.hasErrors ||
+            prompt.hasWarnings ||
+            ambiguous;
+        if (!show) break;
+        forcePreview = false;
+        final decision =
+            await onPreview?.call(prompt) ??
+            const SyncPreviewDecision(SyncPreviewAction.stop);
+        _checkCancelled(cancelled);
+        switch (decision.action) {
+          case SyncPreviewAction.stop:
+            throw const _AutoSyncCancelled();
+          case SyncPreviewAction.skip:
+            return AutoSyncResult(
+              workoutId: activity.id,
+              fingerprint: fingerprint,
+              remoteId: null,
+              isDuplicate: true,
+              message: '预览后跳过',
+            );
+          case SyncPreviewAction.rebuild:
+            selected.clear();
+            for (final group in prompt.groups) {
+              final id = decision.selections[group.sourceId];
+              if (id != null && group.candidates.any((c) => c.id == id)) {
+                selected[group.sourceId] = id;
+              }
+            }
+            manuallyResolved = true;
+            forcePreview = true;
+            continue;
+          case SyncPreviewAction.upload:
+            if (prompt.hasErrors || prompt.hasWarnings) continue;
+          case SyncPreviewAction.forceUpload:
+            if (prompt.hasErrors) continue;
+        }
+        break;
+      }
+      final effectiveTitle = customTitle?.trim().isNotEmpty == true
+          ? customTitle!.trim()
+          : _commute(
+              distanceMeters: activity.distanceMeters,
+              durationSeconds: activity.durationSeconds,
+            )
+          ? '通勤🚲'
+          : activity.title;
+      if (!uploadToStrava) {
+        final record = SyncPendingRecord(
+          fingerprint: fingerprint,
+          primarySourceId: primary.id.value,
+          primaryActivityId: activity.id,
+          updatedAt: DateTime.now(),
+          startDate: activity.start,
+          title: activity.title,
+          supplementSourceIds: supplementIds,
+          distanceMeters: activity.distanceMeters,
+          durationSeconds: activity.durationSeconds,
+          batchAt: batchAt,
+          hasVirtualPower: prepared.powerSourceVirtual,
+        );
+        await _stateStore.saveHealthFit(record: record, fit: prepared.data);
+        _checkCancelled(cancelled);
+        return await healthImport!(record: record, fit: prepared.data);
+      }
       if (_persist == null) {
         final recovery = RecoveryUploadData(
           primarySourceId: primary.id.value,
           primaryActivityId: activity.id,
-          title: activity.title,
+          title: effectiveTitle,
           startDate: activity.start,
           supplementSourceIds: supplementIds,
           distanceMeters: activity.distanceMeters,
@@ -565,6 +811,10 @@ final class AutoSyncController {
           hasVirtualPower: prepared.powerSourceVirtual,
           activityDescription: prepared.activityDescription,
           batchAt: batchAt,
+          coordinatesWgs84:
+              (primary.id == WorkoutSourceId.healthkit && !gcjEnabled) ||
+              prepared.rewrittenCoordinateCount > 0,
+          recoveryBatchId: RecoveryBatchCheckpoint.newGenerationId(),
         );
         await _stateStore.prepareRecovery(
           fingerprint: fingerprint,
@@ -596,7 +846,7 @@ final class AutoSyncController {
         primaryActivityId: activity.id,
         updatedAt: DateTime.now(),
         startDate: activity.start,
-        title: activity.title,
+        title: effectiveTitle,
         batchAt: batchAt,
         supplementSourceIds: supplementIds,
         distanceMeters: activity.distanceMeters,
@@ -613,6 +863,7 @@ final class AutoSyncController {
         externalId: fingerprint,
         filename: '$fingerprint.fit',
         description: prepared.activityDescription,
+        name: effectiveTitle,
         commute: _commute(
           distanceMeters: activity.distanceMeters,
           durationSeconds: activity.durationSeconds,
@@ -717,6 +968,8 @@ final class AutoSyncController {
     Future<void> Function(String remoteId)? deleteRemote,
     bool Function()? cancelled,
     bool replaceExisting = false,
+    String? customTitle,
+    String? recoveryBatchId,
   }) async {
     String? workoutId;
     String? remoteId;
@@ -769,6 +1022,9 @@ final class AutoSyncController {
               ),
               'uploadChannel': existing['uploadChannel'] ?? 'api',
               'hasVirtualPower': existing['hasVirtualPower'] ?? false,
+              'coordinatesWgs84': existing['coordinatesWgs84'],
+              'recoveryBatchId':
+                  recoveryBatchId ?? RecoveryBatchCheckpoint.newGenerationId(),
               'activityDescription': existing['hasVirtualPower'] == true
                   ? '功率计还在许愿清单里，本场瓦特是风、坡和速度一起算的，看看就好～（出自 HealthWorkoutExport）'
                   : null,
@@ -790,12 +1046,51 @@ final class AutoSyncController {
         await _stateStore.readRecovery(fingerprint),
       );
       workoutId = data.primaryActivityId;
+      if (customTitle?.trim().isNotEmpty == true &&
+          customTitle!.trim() != data.title) {
+        final title = customTitle.trim();
+        if (utf8.encode(title).length > 8192 ||
+            RegExp(r'[\x00-\x1f\x7f]').hasMatch(title)) {
+          throw const AutoSyncRecoveryException('标题包含控制字符或过长');
+        }
+        final payload =
+            jsonDecode(utf8.decode(await _stateStore.readRecovery(fingerprint)))
+                as Map<String, dynamic>;
+        payload['title'] = title;
+        await _stateStore.writeRecovery(
+          fingerprint,
+          Uint8List.fromList(utf8.encode(jsonEncode(payload))),
+        );
+      }
+      if (recoveryBatchId != null && recoveryBatchId != data.recoveryBatchId) {
+        if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(recoveryBatchId)) {
+          throw const AutoSyncRecoveryException('恢复批次标识无效');
+        }
+        final payload =
+            jsonDecode(utf8.decode(await _stateStore.readRecovery(fingerprint)))
+                as Map<String, dynamic>;
+        payload['recoveryBatchId'] = recoveryBatchId;
+        await _stateStore.writeRecovery(
+          fingerprint,
+          Uint8List.fromList(utf8.encode(jsonEncode(payload))),
+        );
+      }
       if (data.channel == SyncUploadChannel.web && uploadOverride == null) {
         throw const AutoSyncRecoveryException('该记录需要 Strava 网页登录后恢复');
       }
       final response = await SyncRecoveryRunner(_stateStore).run(
         fingerprint: fingerprint,
         cancelled: cancelled,
+        remoteExists: (id) async {
+          try {
+            return await const StravaWebChannel().readActivitySpeedData(id) !=
+                null;
+          } catch (_) {
+            // Only an authenticated native HTTP 404 proves absence. Network,
+            // authorization and parsing failures never authorize another POST.
+            return null;
+          }
+        },
         deleteRemote:
             deleteRemote ??
             (_) async {
@@ -808,6 +1103,7 @@ final class AutoSyncController {
           filename: saved.filename,
           commute: saved.commute,
           description: saved.activityDescription,
+          name: saved.title,
           upload: saved.channel == SyncUploadChannel.web
               ? uploadOverride
               : null,
@@ -820,6 +1116,7 @@ final class AutoSyncController {
         fingerprint: fingerprint,
         remoteId: remoteId,
         isDuplicate: response.isDuplicate,
+        message: response.error?.message,
       );
     } on RecoveryCancelled {
       return AutoSyncResult.cancelled(
@@ -1128,6 +1425,8 @@ final class AutoSyncController {
   static String _safeRecoveryFailureMessage(Object error) => switch (error) {
     AutoSyncRecoveryException() => error.message,
     AutoSyncUploadException() => error.message,
+    RecoveryGhostDuplicate() => 'Strava 暂时仍返回已删除活动；恢复文件已保留，请稍后继续',
+    RecoveryUnverifiedDuplicate() => '无法确认重复活动是否存在；恢复文件已保留，请检查 Strava 后继续',
     _ => '重传恢复失败',
   };
 
@@ -1139,6 +1438,7 @@ final class AutoSyncController {
     required bool commute,
     AutoSyncUpload? upload,
     String? description,
+    String? name,
   }) async {
     final uploader = upload ?? _upload;
     if (uploader != null) {
@@ -1149,6 +1449,7 @@ final class AutoSyncController {
         filename: filename,
         commute: commute,
         description: description,
+        name: name,
       );
     }
     final task = _uploadSession.start(
@@ -1158,6 +1459,7 @@ final class AutoSyncController {
       filename: filename,
       commute: commute,
       description: description,
+      name: name,
     );
     _activeUploadTask = task;
     try {

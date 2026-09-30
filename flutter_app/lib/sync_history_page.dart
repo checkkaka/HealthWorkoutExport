@@ -4,6 +4,10 @@ import 'auto_sync_controller.dart';
 import 'auto_sync_session.dart';
 import 'native_channels.dart';
 import 'sync_state_store.dart';
+import 'recovery_legacy_dialog.dart';
+import 'recovery_batch_checkpoint.dart';
+import 'apple_health_import.dart';
+import 'apple_health_import_dialog.dart';
 import 'sync_history_logic.dart';
 import 'strava_remote_repository.dart';
 import 'src/rust/api/simple.dart' as rust;
@@ -29,6 +33,7 @@ class _SyncHistoryPageState extends State<SyncHistoryPage> {
   final _anomalies = <String, rust.StravaActivitySpeedResult>{};
   var _stopRequested = false;
   var _recovering = false;
+  var _canWriteHealth = false;
   @override
   void dispose() {
     _stopRequested = true;
@@ -42,6 +47,9 @@ class _SyncHistoryPageState extends State<SyncHistoryPage> {
   void initState() {
     super.initState();
     _reload();
+    const HealthKitChannel().canWriteWorkouts().then((value) {
+      if (mounted) setState(() => _canWriteHealth = value);
+    });
   }
 
   @override
@@ -218,6 +226,16 @@ class _SyncHistoryPageState extends State<SyncHistoryPage> {
                               : _confirmOverwrite,
                           child: const Text('覆盖重传所选'),
                         ),
+                        if (_canWriteHealth)
+                          OutlinedButton(
+                            onPressed: _busy || _selected.isEmpty
+                                ? null
+                                : () => _resync(
+                                    uploadToStrava: false,
+                                    writeToHealth: true,
+                                  ),
+                            child: const Text('写入健康所选'),
+                          ),
                         OutlinedButton(
                           onPressed: _busy ? null : _backfill,
                           child: const Text('补全远端 ID'),
@@ -348,12 +366,22 @@ class _SyncHistoryPageState extends State<SyncHistoryPage> {
   }
 
   Future<void> _confirmOverwrite() async {
+    var title = '';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text('覆盖所选 ${_selected.length} 条活动？'),
-        content: const Text(
-          '先保存最终 FIT，再永久删除对应 Strava 活动并上传。评论、点赞和旧链接无法恢复。需要网页登录；缺少远端 ID 或同步 FIT 的记录不会删除。',
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              '先保存最终 FIT，再永久删除对应 Strava 活动并上传。评论、点赞和旧链接无法恢复。需要网页登录；缺少远端 ID 或同步 FIT 的记录不会删除。',
+            ),
+            TextField(
+              onChanged: (value) => title = value,
+              decoration: const InputDecoration(labelText: '本批新标题（可选）'),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -367,7 +395,9 @@ class _SyncHistoryPageState extends State<SyncHistoryPage> {
         ],
       ),
     );
-    if (confirmed == true && mounted) await _resync(replaceExisting: true);
+    if (confirmed == true && mounted) {
+      await _resync(replaceExisting: true, customTitle: title);
+    }
   }
 
   Future<void> _backfill() async {
@@ -479,7 +509,12 @@ class _SyncHistoryPageState extends State<SyncHistoryPage> {
     }
   }
 
-  Future<void> _resync({bool replaceExisting = false}) async {
+  Future<void> _resync({
+    bool replaceExisting = false,
+    bool uploadToStrava = true,
+    bool writeToHealth = false,
+    String? customTitle,
+  }) async {
     if (AutoSyncSession.instance.isRunning) {
       setState(() => _error = '已有同步批次在运行');
       return;
@@ -493,14 +528,30 @@ class _SyncHistoryPageState extends State<SyncHistoryPage> {
     var completed = 0;
     final failures = <String>[];
     try {
-      for (final fingerprint in _selected.toList()) {
-        if (_stopped) break;
-        final result =
-            await (widget.resumeRecovery?.call(fingerprint) ??
-                AutoSyncSession.instance.resumeRecovery(
-                  fingerprint,
-                  replaceExisting: replaceExisting,
-                ));
+      final fingerprints = _selected.toList();
+      final List<AutoSyncResult> outcomes;
+      if (widget.resumeRecovery == null) {
+        outcomes = await AutoSyncSession.instance.runRecoveryBatch(
+          fingerprints,
+          replaceExisting: replaceExisting,
+          uploadToStrava: uploadToStrava,
+          writeToHealth: writeToHealth,
+          customTitle: customTitle,
+          onHealthNearby: (prompt) => mounted
+              ? showAppleHealthNearbyDialog(context, prompt)
+              : Future.value(AppleHealthNearbyDecision.skipOnce),
+          onLegacy: (prompt) => mounted
+              ? showLegacyRecoveryDialog(context, prompt)
+              : Future.value(LegacyRecoveryDecision.stop),
+        );
+      } else {
+        outcomes = [];
+        for (final fingerprint in fingerprints) {
+          if (_stopped) break;
+          outcomes.add(await widget.resumeRecovery!(fingerprint));
+        }
+      }
+      for (final result in outcomes) {
         if (result.succeeded) {
           completed++;
         } else {
