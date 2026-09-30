@@ -118,7 +118,7 @@ class RuntimeWorkflowGuards(unittest.TestCase):
     def test_no_credentials_generators_security_changes_or_terms_acceptance(self):
         workflow, script = self.sources()
         text = workflow + script
-        for forbidden in ("secrets.", "contents: write", "id-token: write", "pull_request_target:", "flutter_rust_bridge_codegen", "frb_codegen", "cargo expand", "--licenses", "yes |", "setup-android@", "sudo ", "chmod", "-downloadPlatform", "-allowProvisioningUpdates", "security import", "signtool", "build ipa", "fastlane", "adb root", "pm clear", "uninstall", "--no-keep-app-running"):
+        for forbidden in ("secrets.", "contents: write", "id-token: write", "pull_request_target:", "flutter_rust_bridge_codegen", "frb_codegen", "cargo expand", "--licenses", "yes |", "setup-android@", "chmod", "-downloadPlatform", "-allowProvisioningUpdates", "security import", "signtool", "build ipa", "fastlane", "adb root", "pm clear", "uninstall", "--no-keep-app-running"):
             self.assertNotIn(forbidden, text)
         for key in ("CI", "BOT", "DASH__SUPPRESS_ANALYTICS", "FLUTTER_SUPPRESS_ANALYTICS", "COCOAPODS_DISABLE_STATS"):
             self.assertIn(f'{key}: "true"', workflow)
@@ -131,6 +131,12 @@ class RuntimeWorkflowGuards(unittest.TestCase):
         self.assertIn("android.googlesource.com", script)
         self.assertIn("flutter --suppress-analytics pub get --enforce-lockfile", workflow)
         self.assertIn("git diff --exit-code", workflow)
+
+    def test_only_official_emulator_runtime_dependency_install_is_elevated(self):
+        workflow, script = self.sources()
+        commands = [line.strip() for line in workflow.splitlines() if line.strip().startswith("sudo ")]
+        self.assertEqual(commands, ["sudo apt-get update", "sudo apt-get install --yes --no-install-recommends libpulse0"])
+        self.assertNotIn("sudo ", script)
 
     def test_host_driver_retains_partial_failure_evidence(self):
         driver = ROOT / "flutter_app/test_driver/runtime_driver.dart"

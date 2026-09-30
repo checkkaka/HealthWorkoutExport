@@ -9,7 +9,7 @@ permissions:
 
 concurrency:
   group: runtime-validation-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   CI: "true"
@@ -52,6 +52,12 @@ jobs:
           distribution: temurin
           java-version: '17'
           overwrite-settings: false
+      - name: Install official Ubuntu emulator runtime libraries
+        if: matrix.platform == 'android'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libpulse0
       - name: Resolve committed dependencies explicitly
         working-directory: flutter_app
         run: flutter --suppress-analytics pub get --enforce-lockfile
