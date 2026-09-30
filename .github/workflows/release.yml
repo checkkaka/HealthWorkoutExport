@@ -66,7 +66,16 @@ jobs:
           distribution: temurin
           java-version: "17"
           cache: gradle
-      - uses: android-actions/setup-android@v3
+      - name: Prepare only required Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          # Release owners must accept applicable terms separately. Never accept all licenses.
+          "$SDKMANAGER" 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358' </dev/null
+          test -f "$ANDROID_HOME/platforms/android-36/android.jar"
+          test -f "$ANDROID_HOME/ndk/28.2.13676358/source.properties"
       - name: Decode Android keystore
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}

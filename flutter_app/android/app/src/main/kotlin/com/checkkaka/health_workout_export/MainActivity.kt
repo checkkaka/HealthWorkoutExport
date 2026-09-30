@@ -147,22 +147,14 @@ class NativeChannels {
     fun handleIntent(intent: Intent) {
         val uri = intent.data ?: return
         val result = oauthResult ?: return
-        oauthResult = null
+        if (!uri.scheme.equals("healthworkoutexport", ignoreCase = true)) return
         val state = expectedOAuthState
+        oauthResult = null
         expectedOAuthState = null
-        if (uri.scheme != "healthworkoutexport" || uri.host != "localhost" || uri.path != "/callback") {
-            result.error("oauth_invalid_callback", "Strava 回调 scheme 或 state 校验失败", null)
-            return
-        }
-        if (uri.getQueryParameter("state") != state) {
-            result.error("oauth_invalid_callback", "Strava 回调 scheme 或 state 校验失败", null)
-            return
-        }
-        val code = uri.getQueryParameter("code")
-        if (code.isNullOrEmpty()) {
-            result.error("oauth_cancelled", "已取消 Strava 授权", null)
-        } else {
-            result.success(code)
+        try {
+            result.success(StravaOAuthSecurity.callbackCode(uri.toString(), state))
+        } catch (error: StravaOAuthSecurity.OAuthFailure) {
+            result.error(error.code, if (error.code == "oauth_cancelled") "已取消 Strava 授权" else "Strava 回调校验失败", null)
         }
     }
 
@@ -306,6 +298,15 @@ class NativeChannels {
     }
 
     private fun handleOAuth(activity: Activity, call: MethodCall, result: MethodChannel.Result) {
+        if (call.method == "cancelAuthorization") {
+            val pending = oauthResult
+            oauthResult = null
+            expectedOAuthState = null
+            pending?.error("oauth_cancelled", "已取消 Strava 授权", null)
+            // Custom Tabs belongs to the browser. Clearing the pending state makes late callbacks inert.
+            result.success(null)
+            return
+        }
         if (call.method != "authorize") {
             result.notImplemented()
             return
@@ -320,16 +321,21 @@ class NativeChannels {
             result.error("invalid_arguments", "authorizationUrl 和合法 callbackScheme 均不能为空", null)
             return
         }
-        val uri = Uri.parse(rawUrl)
-        if (uri.scheme != "https" || uri.host != "www.strava.com" || uri.path != "/oauth/mobile/authorize") {
+        val state = StravaOAuthSecurity.makeState()
+        val url = try { StravaOAuthSecurity.authorizationUrl(rawUrl, state) }
+        catch (_: IllegalArgumentException) {
             result.error("oauth_configuration_error", "Strava 授权地址或随机状态无效", null)
             return
         }
-        val state = UUID.randomUUID().toString().replace("-", "")
         expectedOAuthState = state
         oauthResult = result
-        val url = uri.buildUpon().appendQueryParameter("state", state).build()
-        CustomTabsIntent.Builder().build().launchUrl(activity, url)
+        try {
+            CustomTabsIntent.Builder().build().launchUrl(activity, Uri.parse(url))
+        } catch (_: Exception) {
+            oauthResult = null
+            expectedOAuthState = null
+            result.error("oauth_failed", "无法打开 Strava 授权页面", null)
+        }
     }
 
     private fun handleWeb(
@@ -819,6 +825,8 @@ class NativeChannels {
         const val HEALTH_CONNECT_PACKAGE = "com.google.android.apps.healthdata"
         val ALLOWED_PREFERENCE_KEYS = setOf(
             "strava.uploadMode",
+            "sync_preview_policy",
+            "write_to_apple_health",
             "strava.gcjCorrectionEnabled",
             "virtualPower.enabled",
             "virtualPower.includeInertia",

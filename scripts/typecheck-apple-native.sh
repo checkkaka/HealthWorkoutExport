@@ -82,4 +82,41 @@ check_platform() {
 }
 check_platform ios iphonesimulator "$arch-apple-ios17.0-simulator" "$ios_framework" Runner
 check_platform macos macosx "$arch-apple-macos14.0" "$mac_framework" health_workout_export
-echo "Apple production plugin and XCTest source typechecking passed; no app/device tests were run"
+if [[ "${RUN_MACOS_NATIVE_TESTS:-0}" == 1 ]]; then
+  echo "Building standalone macOS XCTest bundle from the real plugins and tests"
+  mac_sdk="$(xcrun --sdk macosx --show-sdk-path)"
+  mac_platform="$(xcrun --sdk macosx --show-sdk-platform-path)"
+  xctest_frameworks="$mac_platform/Developer/Library/Frameworks"
+  mac_module="$work/modules/macos"
+  bundle="$work/HealthNativeTests.xctest"
+  mkdir -p "$bundle/Contents/MacOS"
+  xcrun --sdk macosx swiftc -swift-version 5 -parse-as-library -enable-testing \
+    -sdk "$mac_sdk" -target "$arch-apple-macos14.0" -F "$mac_framework" \
+    -module-cache-path "$work/module-cache/macos" -module-name health_workout_export \
+    -emit-module -emit-module-path "$mac_module/health_workout_export.swiftmodule" \
+    -emit-library -o "$mac_module/libhealth_workout_export.dylib" \
+    -Xlinker -install_name -Xlinker @rpath/libhealth_workout_export.dylib \
+    -Xlinker -rpath -Xlinker "$mac_framework" \
+    "$repo_root/flutter_app/macos/Runner/"*Plugin.swift
+  xcrun --sdk macosx swiftc -swift-version 5 -parse-as-library \
+    -sdk "$mac_sdk" -target "$arch-apple-macos14.0" \
+    -F "$mac_framework" -F "$xctest_frameworks" -I "$mac_platform/Developer/usr/lib" \
+    -I "$mac_module" -L "$mac_module" -lhealth_workout_export -framework XCTest \
+    -module-cache-path "$work/module-cache/macos" -module-name HealthNativeTests \
+    -emit-library -o "$bundle/Contents/MacOS/HealthNativeTests" \
+    -Xlinker -rpath -Xlinker "$mac_module" -Xlinker -rpath -Xlinker "$mac_framework" \
+    -Xlinker -rpath -Xlinker "$xctest_frameworks" \
+    "$repo_root/flutter_app/macos/RunnerTests/RunnerTests.swift"
+  python3 - "$bundle/Contents/Info.plist" <<'PYTESTPLIST'
+import plistlib, sys
+with open(sys.argv[1], "wb") as stream:
+    plistlib.dump({
+        "CFBundleIdentifier": "com.checkkaka.HealthWorkoutExport.NativeTests",
+        "CFBundleName": "HealthNativeTests", "CFBundleExecutable": "HealthNativeTests",
+        "CFBundlePackageType": "BNDL", "CFBundleVersion": "1",
+    }, stream)
+PYTESTPLIST
+  xcrun --sdk macosx xctest "$bundle"
+  echo "Standalone macOS XCTest execution passed; no real health/account/device data was used"
+fi
+echo "Apple production plugin and XCTest source typechecking passed; device acceptance remains separate"

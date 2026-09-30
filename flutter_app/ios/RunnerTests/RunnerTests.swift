@@ -878,3 +878,166 @@ extension RunnerTests {
     XCTAssertNil(StravaWebPlugin.activityPageURL(page: 1, afterMs: .min, beforeMs: .max))
   }
 }
+
+
+extension RunnerTests {
+  func testOAuthRejectsUserinfoPortsFragmentsAndAmbiguousCallbacks() {
+    for value in [
+      "https://user@www.strava.com/oauth/mobile/authorize",
+      "https://www.strava.com:444/oauth/mobile/authorize",
+      "https://www.strava.com/oauth/mobile/authorize#fragment",
+      "https://www.strava.com/oauth/mobile/%61uthorize",
+    ] {
+      XCTAssertThrowsError(try StravaOAuthSecurity.authorizationURL(from: value, state: "state"))
+    }
+    for value in [
+      "healthworkoutexport://user@localhost/callback?state=state&code=code",
+      "healthworkoutexport://localhost:443/callback?state=state&code=code",
+      "healthworkoutexport://localhost/callback?state=state&code=code#fragment",
+      "healthworkoutexport://localhost/callback?state=state&state=state&code=code",
+    ] {
+      XCTAssertFalse(StravaOAuthSecurity.isValidCallback(
+        URL(string: value)!, callbackScheme: "healthworkoutexport", expectedState: "state"
+      ))
+    }
+  }
+
+  func testBatchSessionHasFixedPathBoundedJsonAndAtomicRoundTrip() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("BatchSessionTests.\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let storage = SyncFilesPlugin.Storage(rootURL: root)
+    XCTAssertEqual(try storage.url(for: .batchSession).lastPathComponent, "auto-sync-batch.json")
+    let data = Data(#"{"version":1,"phase":"uploading"}"#.utf8)
+    try storage.write(data, kind: .batchSession)
+    XCTAssertEqual(try storage.read(.batchSession), data)
+    XCTAssertThrowsError(try storage.write(Data("[]".utf8), kind: .batchSession))
+    XCTAssertThrowsError(try storage.write(Data(count: 4 * 1_024 * 1_024 + 1), kind: .batchSession))
+    XCTAssertEqual(try storage.read(.batchSession), data)
+    try storage.delete(.batchSession)
+    try storage.delete(.batchSession)
+    XCTAssertThrowsError(try storage.read(.batchSession))
+  }
+}
+
+
+extension RunnerTests {
+  private func healthWriteDraftData(_ edit: (inout [String: Any]) -> Void = { _ in }) throws -> Data {
+    var payload: [String: Any] = [
+      "fingerprint": String(repeating: "a", count: 64),
+      "activityType": 13, "startMs": 1_000, "endMs": 4_000, "durationSeconds": 3.0,
+      "distanceMeters": NSNull(), "energyKilocalories": NSNull(),
+      "locations": [["latitude": 31.5, "longitude": 120.5, "timestampMs": 1_500]],
+      "heartRate": [["dateMs": 1_500, "value": 140.0, "unit": "count/min"]],
+      "cadence": [["dateMs": 1_500, "value": 90.0, "unit": "rpm"]],
+      "power": [["dateMs": 1_500, "value": 180.0, "unit": "W"]],
+      "speed": [["dateMs": 1_500, "value": 7.0, "unit": "m/s"]],
+      "events": [["type": "pause", "dateMs": 2_000], ["type": "resume", "dateMs": 3_000]],
+    ]
+    edit(&payload)
+    return try JSONSerialization.data(withJSONObject: payload)
+  }
+
+  func testHealthWriteDraftPreservesSparseValuesAndUnits() throws {
+    let draft = try HealthWorkoutWriteDraft.parse(healthWriteDraftData())
+    XCTAssertEqual(draft.workoutType, .cycling)
+    XCTAssertEqual(draft.fingerprint, String(repeating: "a", count: 64))
+    XCTAssertNil(draft.distanceMeters)
+    XCTAssertNil(draft.energyKilocalories)
+    XCTAssertNil(draft.locations.first?.altitudeMeters)
+    XCTAssertEqual(draft.locations.first?.timestampMs, 1_500)
+    XCTAssertEqual(draft.cadence.first?.unit, "rpm")
+    XCTAssertEqual(draft.heartRate.first?.value, 140)
+    XCTAssertEqual(draft.events.count, 2)
+  }
+
+  func testHealthWriteDraftRejectsMalformedBoundariesAndUnrecognizedUnits() throws {
+    let mutations: [(inout [String: Any]) -> Void] = [
+      { $0["fingerprint"] = "../unsafe" },
+      { $0["activityType"] = 999_999 },
+      { $0["startMs"] = true },
+      { $0["startMs"] = 5_000 },
+      { $0["durationSeconds"] = 10_000 },
+      { $0["distanceMeters"] = -1 },
+      { $0["heartRate"] = [["dateMs": -9_000_000_000_000_000, "value": 140, "unit": "count/min"]] },
+      { $0["speed"] = [["dateMs": 1_500, "value": 7, "unit": "km/h"]] },
+      { $0["power"] = [["dateMs": 1_500, "value": -10, "unit": "W"]] },
+      { $0["locations"] = [["latitude": 91, "longitude": 120, "timestampMs": 1_500]] },
+      { $0["events"] = [["type": "delete", "dateMs": 2_000]] },
+      { $0["events"] = [["type": "pause", "dateMs": 3_000], ["type": "resume", "dateMs": 2_000]] },
+    ]
+    for mutation in mutations {
+      XCTAssertThrowsError(try HealthWorkoutWriteDraft.parse(healthWriteDraftData(mutation)))
+    }
+    XCTAssertThrowsError(try HealthWorkoutWriteDraft.parse(Data()))
+    XCTAssertThrowsError(try HealthWorkoutWriteDraft.parse(Data(count: HealthWorkoutWriteDraft.maximumBytes + 1)))
+  }
+}
+
+
+extension RunnerTests {
+  func testHealthWriteCollectionCoversRealSamplesOutsideSummary() throws {
+    let data = try healthWriteDraftData {
+      $0["heartRate"] = [["dateMs": 500, "value": 140, "unit": "count/min"]]
+      $0["speed"] = [["dateMs": 5_000, "value": 7, "unit": "m/s"]]
+    }
+    let draft = try HealthWorkoutWriteDraft.parse(data)
+    XCTAssertEqual(draft.startMs, 1_000)
+    XCTAssertEqual(draft.endMs, 4_000)
+    XCTAssertEqual(draft.collectionStartMs, 500)
+    XCTAssertEqual(draft.collectionEndMs, 6_000)
+  }
+}
+
+
+extension RunnerTests {
+  func testHealthWriteEqualSummaryTimesRetainOneSecondCollection() throws {
+    let data = try healthWriteDraftData {
+      $0["startMs"] = 1_000
+      $0["endMs"] = 1_000
+      $0["durationSeconds"] = 0
+      $0["locations"] = []
+      $0["heartRate"] = [["dateMs": 1_000, "value": 140, "unit": "count/min"]]
+      $0["cadence"] = []
+      $0["power"] = []
+      $0["speed"] = []
+      $0["events"] = []
+    }
+    let draft = try HealthWorkoutWriteDraft.parse(data)
+    XCTAssertEqual(draft.startMs, draft.endMs)
+    XCTAssertGreaterThanOrEqual(draft.collectionEndMs, draft.collectionStartMs + 1_000)
+  }
+
+  func testHealthWriteEqualSummaryWithoutSamplesStillHasPositiveCollection() throws {
+    let data = try healthWriteDraftData {
+      $0["startMs"] = 1_000
+      $0["endMs"] = 1_000
+      $0["durationSeconds"] = 0
+      for key in ["locations", "heartRate", "cadence", "power", "speed", "events"] { $0[key] = [] }
+    }
+    let draft = try HealthWorkoutWriteDraft.parse(data)
+    XCTAssertEqual(draft.collectionEndMs, 2_000)
+  }
+}
+
+
+extension RunnerTests {
+  func testPreferencesPreserveLegacyPreviewAndHealthWriteKeys() throws {
+    let suite = "PreferencesMigrationTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    defaults.set("issuesOnly", forKey: "sync_preview_policy")
+    defaults.set(true, forKey: "write_to_apple_health")
+    let plugin = PreferencesPlugin(defaults: defaults)
+    var value: Any?
+    plugin.handle(FlutterMethodCall(methodName: "read", arguments: ["key": "sync_preview_policy"])) { value = $0 }
+    XCTAssertEqual(value as? String, "issuesOnly")
+    plugin.handle(FlutterMethodCall(methodName: "read", arguments: ["key": "write_to_apple_health"])) { value = $0 }
+    XCTAssertEqual(value as? Bool, true)
+    plugin.handle(FlutterMethodCall(methodName: "write", arguments: ["key": "sync_preview_policy", "value": "everyActivity"])) { value = $0 }
+    XCTAssertNil(value)
+    XCTAssertEqual(defaults.string(forKey: "sync_preview_policy"), "everyActivity")
+    plugin.handle(FlutterMethodCall(methodName: "write", arguments: ["key": "write_to_apple_health", "value": false])) { value = $0 }
+    XCTAssertNil(value)
+    XCTAssertFalse(defaults.bool(forKey: "write_to_apple_health"))
+  }
+}

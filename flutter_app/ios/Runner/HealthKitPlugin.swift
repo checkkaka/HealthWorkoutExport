@@ -7,12 +7,14 @@ import Foundation
   import FlutterMacOS
 #endif
 import HealthKit
+import CoreLocation
 
 /// Flutter 的 HealthKit 只读边界；返回训练摘要与完整原始明细，FIT 编码留在 Rust 层。
 final class HealthKitPlugin: NSObject, FlutterPlugin {
   private static let channelName = "health_workout_export/healthkit"
   static let detailConcurrencyLimit = 3
   private let store = HKHealthStore()
+  private var isWritingWorkout = false
 
   private static let quantityIdentifiers: [HKQuantityTypeIdentifier] = [
     .heartRate,
@@ -25,6 +27,7 @@ final class HealthKitPlugin: NSObject, FlutterPlugin {
     .cyclingSpeed,
     .stepCount,
     .runningPower,
+    .cyclingPower,
     .runningStrideLength,
     .runningVerticalOscillation,
     .runningGroundContactTime,
@@ -57,6 +60,14 @@ final class HealthKitPlugin: NSObject, FlutterPlugin {
 
   func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
+    case "canWriteWorkouts":
+      finish(result, with: HKHealthStore.isHealthDataAvailable())
+    case "requestWriteAuthorization":
+      requestWriteAuthorization(result: result)
+    case "findNearbyWorkouts":
+      findNearbyWorkouts(arguments: call.arguments, result: result)
+    case "writeWorkout":
+      DispatchQueue.main.async { self.writeWorkout(arguments: call.arguments, result: result) }
     case "isAvailable":
       finish(result, with: HKHealthStore.isHealthDataAvailable())
     case "requestAuthorization":
@@ -327,7 +338,7 @@ final class HealthKitPlugin: NSObject, FlutterPlugin {
       return .meter()
     case .runningSpeed, .cyclingSpeed:
       return HKUnit.meter().unitDivided(by: .second())
-    case .runningPower:
+    case .runningPower, .cyclingPower:
       return .watt()
     case .runningGroundContactTime:
       return .secondUnit(with: .milli)
@@ -632,5 +643,323 @@ extension HKWorkoutActivityType {
     case .other: return "其他"
     default: return "训练"
     }
+  }
+}
+
+/// Validated wire draft from Rust. Never decodes a file path or accepts arbitrary HealthKit metadata.
+struct HealthWorkoutWriteDraft: Decodable {
+  static let maximumBytes = 64 * 1_024 * 1_024
+  static let maximumPoints = 1_000_000
+
+  struct Quantity: Decodable {
+    let dateMs: Int64
+    let value: Double
+    let unit: String
+    var date: Date { Date(timeIntervalSince1970: Double(dateMs) / 1_000) }
+  }
+  struct Location: Decodable {
+    let latitude: Double
+    let longitude: Double
+    let altitudeMeters: Double?
+    let timestampMs: Int64
+    var date: Date { Date(timeIntervalSince1970: Double(timestampMs) / 1_000) }
+  }
+  struct Event: Decodable {
+    let type: String
+    let dateMs: Int64
+    var date: Date { Date(timeIntervalSince1970: Double(dateMs) / 1_000) }
+  }
+  let fingerprint: String
+  let activityType: UInt
+  let startMs: Int64
+  let endMs: Int64
+  let durationSeconds: Double
+  let distanceMeters: Double?
+  let energyKilocalories: Double?
+  let locations: [Location]
+  let heartRate: [Quantity]
+  let cadence: [Quantity]
+  let power: [Quantity]
+  let speed: [Quantity]
+  let events: [Event]
+  var start: Date { Date(timeIntervalSince1970: Double(startMs) / 1_000) }
+  var end: Date { Date(timeIntervalSince1970: Double(endMs) / 1_000) }
+  private var sampleTimes: [Int64] {
+    heartRate.map(\.dateMs) + cadence.map(\.dateMs) + power.map(\.dateMs)
+      + speed.map(\.dateMs) + locations.map(\.timestampMs) + events.map(\.dateMs)
+  }
+  var collectionStartMs: Int64 { min(startMs, sampleTimes.min() ?? startMs) }
+  var collectionEndMs: Int64 { max(startMs + 1_000, max(endMs, (sampleTimes.max() ?? (endMs - 1_000)) + 1_000)) }
+  private static let supportedTypes: [HKWorkoutActivityType] = [
+    .running, .cycling, .walking, .hiking, .swimming, .traditionalStrengthTraining,
+    .rowing, .elliptical, .soccer, .basketball, .tennis, .golf, .downhillSkiing,
+    .snowboarding, .climbing, .other,
+  ]
+  var workoutType: HKWorkoutActivityType { Self.supportedTypes.first { $0.rawValue == activityType }! }
+
+  static func parse(_ data: Data) throws -> HealthWorkoutWriteDraft {
+    guard !data.isEmpty, data.count <= maximumBytes else { throw HealthWorkoutWriteError.invalidDraft }
+    let draft = try JSONDecoder().decode(Self.self, from: data)
+    guard draft.fingerprint.utf8.count == 64,
+      draft.fingerprint.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+      supportedTypes.contains(where: { $0.rawValue == draft.activityType }),
+      draft.startMs >= -2_208_988_800_000, draft.endMs <= 7_258_118_400_000,
+      draft.startMs <= draft.endMs, draft.endMs - draft.startMs <= 366 * 86_400_000,
+      draft.durationSeconds.isFinite, draft.durationSeconds >= 0,
+      draft.locations.count + draft.heartRate.count + draft.cadence.count + draft.power.count
+        + draft.speed.count + draft.events.count <= maximumPoints
+    else { throw HealthWorkoutWriteError.invalidDraft }
+    if let distance = draft.distanceMeters, !distance.isFinite || !(0...1_000_000_000).contains(distance) {
+      throw HealthWorkoutWriteError.invalidDraft
+    }
+    if let energy = draft.energyKilocalories, !energy.isFinite || !(0...10_000_000).contains(energy) {
+      throw HealthWorkoutWriteError.invalidDraft
+    }
+    func validateTimes(_ times: [Int64]) throws {
+      guard times.allSatisfy({ $0 >= -2_208_988_800_000 && $0 <= 7_258_118_399_000 }),
+        zip(times, times.dropFirst()).allSatisfy({ $0.0 <= $0.1 })
+      else { throw HealthWorkoutWriteError.invalidDraft }
+    }
+    for (points, unit, maximum) in [
+      (draft.heartRate, "count/min", 1_000.0), (draft.cadence, "rpm", 10_000.0),
+      (draft.power, "W", 100_000.0), (draft.speed, "m/s", 1_000.0),
+    ] {
+      try validateTimes(points.map(\.dateMs))
+      guard points.allSatisfy({ $0.unit == unit && $0.value.isFinite && (0...maximum).contains($0.value) })
+      else { throw HealthWorkoutWriteError.invalidDraft }
+    }
+    try validateTimes(draft.locations.map(\.timestampMs))
+    guard draft.locations.allSatisfy({ point in
+      point.latitude.isFinite && point.longitude.isFinite
+        && (-90...90).contains(point.latitude) && (-180...180).contains(point.longitude)
+        && (point.altitudeMeters.map { $0.isFinite && (-12_000...100_000).contains($0) } ?? true)
+    }) else { throw HealthWorkoutWriteError.invalidDraft }
+    try validateTimes(draft.events.map(\.dateMs))
+    guard draft.events.allSatisfy({ $0.type == "pause" || $0.type == "resume" }) else {
+      throw HealthWorkoutWriteError.invalidDraft
+    }
+    guard draft.collectionEndMs <= 7_258_118_400_000,
+      draft.collectionEndMs - draft.collectionStartMs <= 366 * 86_400_000,
+      draft.durationSeconds <= Double(draft.collectionEndMs - draft.collectionStartMs) / 1_000 + 1
+    else { throw HealthWorkoutWriteError.invalidDraft }
+    return draft
+  }
+}
+
+private enum HealthWorkoutWriteError: Error {
+  case invalidDraft
+  case unauthorized
+  case unavailableType
+  case queryTooLarge
+  case failed
+  case partial(UUID, String)
+}
+
+extension HealthKitPlugin {
+  private static var writeTypes: Set<HKSampleType> {
+    var types: Set<HKSampleType> = [HKObjectType.workoutType(), HKSeriesType.workoutRoute()]
+    for identifier in [
+      HKQuantityTypeIdentifier.heartRate, .activeEnergyBurned, .distanceWalkingRunning,
+      .distanceCycling, .distanceSwimming, .runningSpeed, .cyclingSpeed,
+      .cyclingCadence, .runningPower, .cyclingPower,
+    ] {
+      if let type = HKQuantityType.quantityType(forIdentifier: identifier) { types.insert(type) }
+    }
+    return types
+  }
+
+  private func requestWriteAuthorization(result: @escaping FlutterResult) {
+    guard HKHealthStore.isHealthDataAvailable() else {
+      finish(result, errorCode: "healthkit_unavailable", message: "此设备不支持写入健康训练")
+      return
+    }
+    store.requestAuthorization(toShare: Self.writeTypes, read: Self.readTypes) { _, error in
+      if error != nil || self.store.authorizationStatus(for: HKObjectType.workoutType()) != .sharingAuthorized {
+        self.finish(result, errorCode: "authorization_failed", message: "未获得健康训练写入权限")
+      } else { self.finish(result, with: nil) }
+    }
+  }
+
+  private func findNearbyWorkouts(arguments: Any?, result: @escaping FlutterResult) {
+    guard HKHealthStore.isHealthDataAvailable() else {
+      finish(result, errorCode: "healthkit_unavailable", message: "此设备不支持 HealthKit")
+      return
+    }
+    let interval: (start: Date, end: Date)
+    do { interval = try Self.parseInterval(arguments: arguments) }
+    catch { finish(result, errorCode: "invalid_arguments", message: "训练查重日期区间无效"); return }
+    let query = HKSampleQuery(
+      sampleType: .workoutType(),
+      predicate: HKQuery.predicateForSamples(withStart: interval.start, end: interval.end, options: .strictStartDate),
+      limit: 10_001,
+      sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
+    ) { _, samples, error in
+      let workouts = (samples as? [HKWorkout]) ?? []
+      guard error == nil, workouts.count <= 10_000 else {
+        self.finish(result, errorCode: "query_failed", message: "无法读取健康训练查重列表，请缩小日期范围后重试")
+        return
+      }
+      self.finish(result, with: workouts.filter { $0.startDate >= interval.start && $0.startDate < interval.end }.map { workout in
+        [
+          "uuid": workout.uuid.uuidString,
+          "startMs": Self.millisecondsSinceEpoch(workout.startDate),
+          "endMs": Self.millisecondsSinceEpoch(workout.endDate),
+          "durationSeconds": workout.duration,
+          "distanceMeters": workout.totalDistance?.doubleValue(for: .meter()) as Any? ?? NSNull(),
+          "sourceName": workout.sourceRevision.source.name,
+          "syncIdentifier": workout.metadata?[HKMetadataKeySyncIdentifier] as? String as Any? ?? NSNull(),
+        ] as [String: Any]
+      })
+    }
+    store.execute(query)
+  }
+
+  private func writeWorkout(arguments: Any?, result: @escaping FlutterResult) {
+    dispatchPrecondition(condition: .onQueue(.main))
+    guard !isWritingWorkout else {
+      finish(result, errorCode: "healthkit_write_in_progress", message: "已有训练写入正在进行")
+      return
+    }
+    let draft: HealthWorkoutWriteDraft
+    do {
+      guard let args = arguments as? [String: Any], let bytes = args["draftJson"] as? FlutterStandardTypedData else {
+        throw HealthWorkoutWriteError.invalidDraft
+      }
+      draft = try HealthWorkoutWriteDraft.parse(bytes.data)
+    } catch { finish(result, errorCode: "invalid_arguments", message: "健康训练草稿字段、时间或样本无效"); return }
+    guard HKHealthStore.isHealthDataAvailable() else {
+      finish(result, errorCode: "healthkit_unavailable", message: "此设备不支持写入健康训练")
+      return
+    }
+    isWritingWorkout = true
+    Task {
+      let response: Any
+      do { response = try await saveValidatedDraft(draft).uuidString }
+      catch HealthWorkoutWriteError.unauthorized {
+        response = FlutterError(code: "authorization_failed", message: "部分健康数据写入权限未授予，请重新授权", details: nil)
+      } catch HealthWorkoutWriteError.partial(let uuid, let fingerprint) {
+        response = FlutterError(code: "healthkit_write_partial", message: "训练已写入，但路线保存失败，请检查健康记录后重试路线", details: [
+          "uuid": uuid.uuidString, "fingerprint": fingerprint, "routeWritten": false, "workoutWritten": true,
+        ])
+      } catch {
+        response = FlutterError(code: "healthkit_write_failed", message: "健康训练写入未完成，请检查权限后重试", details: nil)
+      }
+      await MainActor.run { self.isWritingWorkout = false; result(response) }
+    }
+  }
+
+  private static func distanceWriteIdentifier(_ type: HKWorkoutActivityType) -> HKQuantityTypeIdentifier {
+    switch type {
+    case .cycling: return .distanceCycling
+    case .swimming: return .distanceSwimming
+    default: return .distanceWalkingRunning
+    }
+  }
+
+  private func requireWritePermission(_ type: HKSampleType) throws {
+    guard store.authorizationStatus(for: type) == .sharingAuthorized else { throw HealthWorkoutWriteError.unauthorized }
+  }
+
+  private func existingWorkout(fingerprint: String) async throws -> HKWorkout? {
+    try await withCheckedThrowingContinuation { continuation in
+      let query = HKSampleQuery(
+        sampleType: .workoutType(),
+        predicate: HKQuery.predicateForObjects(withMetadataKey: HKMetadataKeySyncIdentifier, allowedValues: [fingerprint]),
+        limit: 1, sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
+      ) { _, samples, error in
+        if let error { continuation.resume(throwing: error) }
+        else { continuation.resume(returning: samples?.first as? HKWorkout) }
+      }
+      store.execute(query)
+    }
+  }
+
+  private func saveValidatedDraft(_ draft: HealthWorkoutWriteDraft) async throws -> UUID {
+    let existing = try await existingWorkout(fingerprint: draft.fingerprint)
+    if let existing { return existing.uuid }
+    try requireWritePermission(.workoutType())
+    var quantities: [(HKQuantityTypeIdentifier, HKUnit, [HealthWorkoutWriteDraft.Quantity], Double)] = [
+      (.heartRate, HKUnit.count().unitDivided(by: .minute()), draft.heartRate, 1),
+      (draft.workoutType == .cycling ? .cyclingPower : .runningPower, .watt(), draft.power, 1),
+      (draft.workoutType == .cycling ? .cyclingSpeed : .runningSpeed,
+        HKUnit.meter().unitDivided(by: .second()), draft.speed, 1),
+    ]
+    if draft.workoutType == .cycling {
+      quantities.append((.cyclingCadence, HKUnit.count().unitDivided(by: .second()), draft.cadence, 1.0 / 60))
+    }
+    for (identifier, _, points, _) in quantities where !points.isEmpty {
+      guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else { throw HealthWorkoutWriteError.unavailableType }
+      try requireWritePermission(type)
+    }
+    if draft.locations.count >= 2 { try requireWritePermission(HKSeriesType.workoutRoute()) }
+    for (identifier, value) in [(Self.distanceWriteIdentifier(draft.workoutType), draft.distanceMeters), (.activeEnergyBurned, draft.energyKilocalories)] {
+      if let value, value > 0 {
+        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else { throw HealthWorkoutWriteError.unavailableType }
+        try requireWritePermission(type)
+      }
+    }
+    let configuration = HKWorkoutConfiguration()
+    configuration.activityType = draft.workoutType
+    configuration.locationType = draft.locations.count >= 2 ? .outdoor : .indoor
+    let builder = HKWorkoutBuilder(healthStore: store, configuration: configuration, device: .local())
+    var finished = false
+    defer { if !finished { builder.discardWorkout() } }
+    let start = Date(timeIntervalSince1970: Double(draft.collectionStartMs) / 1_000)
+    let end = Date(timeIntervalSince1970: Double(draft.collectionEndMs) / 1_000)
+    try await builder.beginCollection(at: start)
+    try await builder.addMetadata([
+      HKMetadataKeySyncIdentifier: draft.fingerprint,
+      HKMetadataKeySyncVersion: NSNumber(value: 1),
+      "HealthWorkoutExport.OriginalDurationSeconds": draft.durationSeconds,
+      "HealthWorkoutExport.OmittedNonCyclingCadenceCount": draft.workoutType == .cycling ? 0 : draft.cadence.count,
+    ])
+    for (identifier, unit, points, scale) in quantities where !points.isEmpty {
+      guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else { throw HealthWorkoutWriteError.unavailableType }
+      for offset in stride(from: 0, to: points.count, by: 1_000) {
+        let samples = points[offset..<min(offset + 1_000, points.count)].map { point in
+          HKQuantitySample(type: type, quantity: HKQuantity(unit: unit, doubleValue: point.value * scale), start: point.date, end: point.date)
+        }
+        try await builder.addSamples(samples)
+      }
+    }
+    var totals: [HKSample] = []
+    for (identifier, unit, value) in [
+      (Self.distanceWriteIdentifier(draft.workoutType), HKUnit.meter(), draft.distanceMeters),
+      (.activeEnergyBurned, HKUnit.kilocalorie(), draft.energyKilocalories),
+    ] {
+      if let value, value > 0, let type = HKQuantityType.quantityType(forIdentifier: identifier) {
+        totals.append(HKQuantitySample(type: type, quantity: HKQuantity(unit: unit, doubleValue: value), start: start, end: end))
+      }
+    }
+    if !totals.isEmpty { try await builder.addSamples(totals) }
+    if !draft.events.isEmpty {
+      try await builder.addWorkoutEvents(draft.events.map { event in
+        HKWorkoutEvent(type: event.type == "pause" ? .pause : .resume, dateInterval: DateInterval(start: event.date, duration: 1), metadata: nil)
+      })
+    }
+    try await builder.endCollection(at: end)
+    guard let workout = try await builder.finishWorkout() else { throw HealthWorkoutWriteError.failed }
+    finished = true
+    if draft.locations.count >= 2 {
+      do { try await saveDraftRoute(draft, workout: workout) }
+      catch { throw HealthWorkoutWriteError.partial(workout.uuid, draft.fingerprint) }
+    }
+    return workout.uuid
+  }
+
+  private func saveDraftRoute(_ draft: HealthWorkoutWriteDraft, workout: HKWorkout) async throws {
+    try requireWritePermission(HKSeriesType.workoutRoute())
+    let builder = HKWorkoutRouteBuilder(healthStore: store, device: .local())
+    for offset in stride(from: 0, to: draft.locations.count, by: 100) {
+      let locations = draft.locations[offset..<min(offset + 100, draft.locations.count)].map { point in
+        CLLocation(
+          coordinate: CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude),
+          altitude: point.altitudeMeters ?? 0, horizontalAccuracy: 5,
+          verticalAccuracy: point.altitudeMeters == nil ? -1 : 3, timestamp: point.date
+        )
+      }
+      try await builder.insertRouteData(locations)
+    }
+    _ = try await builder.finishRoute(with: workout, metadata: nil)
   }
 }

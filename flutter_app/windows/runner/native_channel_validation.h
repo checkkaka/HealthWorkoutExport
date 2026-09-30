@@ -33,7 +33,8 @@ inline bool IsPreferenceKey(std::string_view key) {
   return key == "strava.uploadMode" || key == "strava.gcjCorrectionEnabled" ||
          key == "virtualPower.enabled" || key == "virtualPower.includeInertia" ||
          key == "virtualPower.riderMassKg" || key == "virtualPower.bikeMassKg" ||
-         key == "virtualPower.cda";
+         key == "virtualPower.cda" || key == "sync_preview_policy" ||
+         key == "write_to_apple_health";
 }
 inline bool IsNonEmptyText(std::string_view value) {
   return !value.empty() && value.size() <= kCredentialLimit &&

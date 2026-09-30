@@ -89,7 +89,7 @@ jobs:
           path: build/windows-native/Testing/Temporary/
           retention-days: 7
   apple-native:
-    name: iOS and macOS Swift plugin and XCTest type-check (no app execution)
+    name: iOS Swift type-check and macOS native XCTest (no app execution)
     runs-on: macos-latest
     timeout-minutes: 25
     steps:
@@ -106,4 +106,5 @@ jobs:
       - name: Type-check actual Swift sources against official Flutter and Apple SDKs
         env:
           FLUTTER_ROOT: ${{ github.workspace }}/.native-flutter
+          RUN_MACOS_NATIVE_TESTS: "1"
         run: bash scripts/typecheck-apple-native.sh

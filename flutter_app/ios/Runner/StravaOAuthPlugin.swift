@@ -28,7 +28,10 @@ enum StravaOAuthSecurity {
       var components = URLComponents(string: rawURL),
       components.scheme?.lowercased() == "https",
       components.host?.lowercased() == "www.strava.com",
-      components.path == "/oauth/mobile/authorize",
+      components.percentEncodedPath == "/oauth/mobile/authorize",
+      components.user == nil, components.password == nil,
+      components.port == nil || components.port == 443,
+      components.fragment == nil,
       components.queryItems?.contains(where: { $0.name == "state" }) != true
     else {
       if URLComponents(string: rawURL)?.queryItems?.contains(where: { $0.name == "state" }) == true
@@ -53,7 +56,10 @@ enum StravaOAuthSecurity {
     guard
       callback.scheme?.caseInsensitiveCompare(callbackScheme) == .orderedSame,
       callback.host?.lowercased() == "localhost",
-      callback.path == "/callback"
+      callback.path == "/callback",
+      callback.user == nil, callback.password == nil, callback.port == nil,
+      callback.fragment == nil,
+      URLComponents(url: callback, resolvingAgainstBaseURL: false)?.percentEncodedPath == "/callback"
     else {
       return false
     }
@@ -99,6 +105,8 @@ enum StravaOAuthSecurity {
   final class StravaOAuthPlugin: NSObject, FlutterPlugin {
     private static let channelName = "health_workout_export/strava_oauth"
     private var authSession: ASWebAuthenticationSession?
+    private var authResult: FlutterResult?
+    private var generation = 0
 
     static func register(with registrar: FlutterPluginRegistrar) {
       let plugin = StravaOAuthPlugin()
@@ -112,6 +120,19 @@ enum StravaOAuthSecurity {
     }
 
     func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+      if call.method == "cancelAuthorization" {
+        DispatchQueue.main.async {
+          let session = self.authSession
+          let pending = self.authResult
+          self.authSession = nil
+          self.authResult = nil
+          self.generation &+= 1
+          session?.cancel()
+          pending?(self.error("oauth_cancelled", "已取消 Strava 授权"))
+          result(nil)
+        }
+        return
+      }
       guard call.method == "authorize" else {
         result(FlutterMethodNotImplemented)
         return
@@ -142,7 +163,7 @@ enum StravaOAuthSecurity {
       callbackScheme: String,
       result: @escaping FlutterResult
     ) {
-      guard authSession == nil else {
+      guard authSession == nil, authResult == nil else {
         result(error("oauth_in_progress", "已有 Strava 授权正在进行"))
         return
       }
@@ -160,14 +181,16 @@ enum StravaOAuthSecurity {
         return
       }
 
+      generation &+= 1
+      let operation = generation
+      authResult = result
       let session = ASWebAuthenticationSession(url: url, callbackURLScheme: callbackScheme) {
         [weak self] callback, sessionError in
         DispatchQueue.main.async {
-          guard let self else { return }
-          self.authSession = nil
+          guard let self, self.generation == operation, self.authResult != nil else { return }
           if let sessionError {
             let code = (sessionError as? ASWebAuthenticationSessionError)?.code
-            result(
+            self.finishAuthorization(
               code == .canceledLogin
                 ? self.error("oauth_cancelled", "已取消 Strava 授权")
                 : self.error("oauth_failed", "Strava 授权会话失败")
@@ -182,34 +205,40 @@ enum StravaOAuthSecurity {
               expectedState: state
             )
           else {
-            result(self.error("oauth_invalid_callback", "Strava 回调 scheme 或 state 校验失败"))
+            self.finishAuthorization(self.error("oauth_invalid_callback", "Strava 回调 scheme 或 state 校验失败"))
             return
           }
 
           let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
           if items.contains(where: { $0.name == "error" && $0.value == "access_denied" }) {
-            result(self.error("oauth_cancelled", "已取消 Strava 授权"))
+            self.finishAuthorization(self.error("oauth_cancelled", "已取消 Strava 授权"))
             return
           }
           if items.contains(where: { $0.name == "error" }) {
-            result(self.error("oauth_failed", "Strava 拒绝了授权请求"))
+            self.finishAuthorization(self.error("oauth_failed", "Strava 拒绝了授权请求"))
             return
           }
           let codes = items.filter { $0.name == "code" }.compactMap(\.value).filter { !$0.isEmpty }
           guard codes.count == 1 else {
-            result(self.error("oauth_invalid_callback", "Strava 回调缺少唯一授权码"))
+            self.finishAuthorization(self.error("oauth_invalid_callback", "Strava 回调缺少唯一授权码"))
             return
           }
-          result(codes[0])
+          self.finishAuthorization(codes[0])
         }
       }
       session.presentationContextProvider = self
       session.prefersEphemeralWebBrowserSession = false
       authSession = session
       if !session.start() {
-        authSession = nil
-        result(error("oauth_failed", "无法启动 Strava 授权会话"))
+        finishAuthorization(error("oauth_failed", "无法启动 Strava 授权会话"))
       }
+    }
+
+    private func finishAuthorization(_ value: Any?) {
+      let result = authResult
+      authResult = nil
+      authSession = nil
+      result?(value)
     }
 
     private func error(_ code: String, _ message: String) -> FlutterError {

@@ -30,7 +30,7 @@ int main() {
     Check(!IsActivityId(value), "activity URL injection rejected");
   Check(!IsActivityId(std::string(33, '1')), "oversized activity ID rejected");
   for (const auto& key : {"strava.uploadMode", "strava.gcjCorrectionEnabled", "virtualPower.enabled",
-                         "virtualPower.includeInertia", "virtualPower.riderMassKg", "virtualPower.bikeMassKg", "virtualPower.cda"})
+                         "virtualPower.includeInertia", "virtualPower.riderMassKg", "virtualPower.bikeMassKg", "virtualPower.cda", "sync_preview_policy", "write_to_apple_health"})
     Check(IsPreferenceKey(key), "preference allowlist accepts known key");
   for (const auto& key : {"", "strava.clientSecret", "strava.accessToken", "onelap.refresh", "../sync_state.json", "STRAVA.uploadMode"})
     Check(!IsPreferenceKey(key), "credentials and arbitrary preference paths rejected");
