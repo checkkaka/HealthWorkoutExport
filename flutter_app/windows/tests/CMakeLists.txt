@@ -20,6 +20,13 @@ foreach(test_name native_channel_validation strava_web oauth_validation)
   endif()
 endforeach()
 
+if(WIN32)
+  add_executable(windows_private_acl_test windows_private_acl_test.cpp)
+  hwe_native_settings(windows_private_acl_test)
+  target_link_libraries(windows_private_acl_test PRIVATE advapi32.lib ole32.lib)
+  add_test(NAME windows_private_acl COMMAND windows_private_acl_test)
+endif()
+
 # Independent real-MSVC adapter compilation. Only the Flutter C++ header source
 # checkout is needed; no flutter command, pub resolution, Dart build or FRB codegen.
 option(HWE_COMPILE_WINDOWS_ADAPTERS "Compile the production Win32 adapter sources" ${WIN32})

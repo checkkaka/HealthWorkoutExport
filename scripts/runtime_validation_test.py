@@ -95,6 +95,7 @@ class RuntimeValidationTests(unittest.TestCase):
             runner.collect_apple_diagnostics()
             self.assertTrue(any(args[:2] == ["codesign", "--display"] for args, _ in commands))
             self.assertTrue(any(args[:2] == ["otool", "-L"] for args, _ in commands))
+            self.assertTrue(any(args[:2] == ["codesign", "--verify"] for args, _ in commands))
             self.assertFalse(any("--sign" in args or "--force" in args for args, _ in commands))
             logs = [args for args, _ in commands if args[:2] == ["log", "show"]]
             self.assertEqual(len(logs), 1)

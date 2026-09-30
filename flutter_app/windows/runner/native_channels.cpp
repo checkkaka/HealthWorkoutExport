@@ -21,6 +21,7 @@
 #include <utility>
 
 #include "native_channel_validation.h"
+#include "private_storage_access.h"
 #include "strava_web_plugin.h"
 #include "strava_oauth.h"
 #include "windows_timezone.h"
@@ -213,7 +214,7 @@ class PrivateStorage {
   }
   bool OpenDirectory(const std::wstring& path, bool create, Failure* error) {
     if (create && !CreateDirectoryW(path.c_str(), &attributes_) && GetLastError() != ERROR_ALREADY_EXISTS) return error->Win32(GetLastError(), "CreatePrivateDirectory");
-    Handle directory(CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES | (create ? WRITE_DAC : 0),
+    Handle directory(CreateFileW(path.c_str(), (create ? native_channels::kPrivateDirectoryAccess : FILE_READ_ATTRIBUTES),
       FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
       FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
     if (!directory.valid()) return error->Win32(GetLastError(), "OpenPrivateDirectory");

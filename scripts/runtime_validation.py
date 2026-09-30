@@ -254,9 +254,10 @@ class Runner:
         app = APP / "build/macos/Build/Products/Debug/health_workout_export.app"
         commands = [
             (["codesign", "--display", "--verbose=4", "--entitlements", ":-", str(app)], "macos-signing.log"),
+            (["codesign", "--verify", "--deep", "--strict", "--verbose=4", str(app)], "macos-signature-verification.log"),
             (["otool", "-L", str(app / "Contents/MacOS/health_workout_export")], "macos-linkage.log"),
             (["log", "show", "--last", "10m", "--style", "compact", "--predicate",
-              'process == "health_workout_export" OR eventMessage CONTAINS "com.checkkaka.HealthWorkoutExport"'], "macos-app-system.log"),
+              'process == "health_workout_export" OR eventMessage CONTAINS "com.checkkaka.HealthWorkoutExport" OR ((process == "taskgated-helper" OR process == "amfid") AND eventMessage CONTAINS "health_workout_export")'], "macos-app-system.log"),
         ]
         for args, filename in commands:
             try:
