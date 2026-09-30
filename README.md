@@ -5,6 +5,23 @@
 
 **详细使用教程（推荐先读）：** [docs/使用教程.md](docs/使用教程.md)
 
+## Flutter + Rust 迁移分支
+
+`codex/flutter-rust-migration` 保留 Swift 基线，跨平台客户端位于 `flutter_app`，Rust 核心位于 `rust/workout_core`。功能对等按 [迁移矩阵](docs/flutter-rust-parity.md) 逐项验证；界面存在或能编译不代表四个平台均已迁移完成。
+
+固定工具版本见 `.fvmrc` 和 `rust-toolchain.toml`。本地验证：
+
+```bash
+cargo test --manifest-path rust/workout_core/Cargo.toml --locked
+cargo clippy --manifest-path rust/workout_core/Cargo.toml --locked --all-targets -- -D warnings
+cd flutter_app
+flutter pub get --enforce-lockfile
+flutter analyze
+flutter test
+```
+
+Flutter 单测包含真实 Rust FFI 调用，需要 Cargo 可用。Linux 仅用于核心及 Flutter 单测，不是本项目交付平台。iOS/macOS 编译与真机健康权限、Android Health Connect、Windows 原生通道仍需相应平台验收。
+
 ## 打开工程
 
 ```bash
@@ -56,7 +73,8 @@ App 运行时会在自身沙盒中用 `sync_state.json` 记录同步指纹，并
 
 已成功上传会跳过；补源集合变更会生成新键。同步 FIT 使用完整文件保护并排除系统备份，删除同步记录时一并清理；这些文件都不会提交到仓库。
 
-- HealthKit 数据、同步状态和待恢复任务仅保存在设备本地
+- HealthKit 原始读取、同步状态和待恢复任务在设备本地处理/保存；执行 Strava 同步时所选运动数据会上传至 Strava
+- 开启默认关闭的虚拟功率功能后，会向 Open-Meteo 发送最多 12 个沿途坐标和活动日期以查询天气；天气缓存仅驻留进程内
 - 顽鹿、行者与 Strava 的登录凭证保存在系统 Keychain
 - 登录凭证只发送给对应平台；顽鹿凭证仅允许发送到顽鹿 HTTPS 域名
 - 导出文件由用户通过系统分享面板自行处理，项目不包含任何账号、Cookie 或个人运动数据

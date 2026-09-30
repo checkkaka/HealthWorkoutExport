@@ -1,0 +1,21 @@
+Independent native utility checks (not platform application builds)
+
+Windows portable C++17:
+  g++ -std=c++17 -Wall -Wextra -Werror -pedantic -O2 flutter_app/windows/tests/native_channel_validation_test.cpp -o /tmp/hwe-windows-native-validation
+  /tmp/hwe-windows-native-validation
+Result: 134 native validation assertions passed
+  python3 flutter_app/windows/tests/check_native_contract.py
+Result: Windows native channel registration, security API, vault and unsupported-flow contract checks passed
+Not run: MSVC/Win32 compilation, Credential Manager runtime, ACL/device behavior, OAuth, WebView2.
+
+Android transport utility, using verified Temurin JDK 17.0.20.1:
+  javac -Xlint:all -Werror -cp junit-4.13.2.jar:hamcrest-core-1.3.jar -d <temporary-test-output> flutter_app/android/app/src/main/java/com/checkkaka/health_workout_export/StravaWebClient.java flutter_app/android/app/src/test/java/com/checkkaka/health_workout_export/StravaWebClientTest.java
+  java -cp <temporary-test-output>:junit-4.13.2.jar:hamcrest-core-1.3.jar org.junit.runner.JUnitCore com.checkkaka.health_workout_export.StravaWebClientTest
+Result: OK (16 tests), synthetic transport, no real accounts or remote requests
+Not run: Android Kotlin app/APK build, Health Connect, actual WebView login/upload.
+
+Environment blockers:
+- Official JDK and Android command-line tools downloaded and checksum verified.
+- sdkmanager could not retrieve platform/NDK manifests because Java TLS certificate validation failed through the environment proxy (PKIX trust chain).
+- TLS was not disabled; no certificate trust store was changed.
+- Apple platforms require Xcode and device authorization tests, neither run here.

@@ -1,9 +1,13 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
 import 'auto_sync_page.dart';
+import 'activity_sync_status.dart';
 import 'date_range.dart';
+import 'export_controls.dart';
+import 'workout_export.dart';
 import 'native_channels.dart';
 import 'src/rust/api/simple.dart';
 import 'workout_source.dart';
@@ -24,6 +28,7 @@ final class ThirdPartyWorkout {
     required this.title,
     required this.startTimeSeconds,
     required this.durationSeconds,
+    this.endTimeSeconds,
     this.distanceMeters,
   });
 
@@ -31,6 +36,7 @@ final class ThirdPartyWorkout {
   final String title;
   final double startTimeSeconds;
   final double durationSeconds;
+  final double? endTimeSeconds;
   final double? distanceMeters;
 }
 
@@ -77,6 +83,11 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
   var _loading = true;
   var _loggingIn = false;
   var _requestId = 0;
+  CancellableWorkoutSource? _activeSource;
+  var _exporting = false;
+  var _loggingOut = false;
+  DateTime _customStart = DateTime.now().subtract(const Duration(days: 30));
+  DateTime _customEnd = DateTime.now();
   String? _error;
   List<ThirdPartyWorkout> _workouts = const [];
   final _selected = <String>{};
@@ -89,6 +100,7 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
 
   @override
   void dispose() {
+    _activeSource?.cancelPending();
     _password.clear();
     _account.dispose();
     _password.dispose();
@@ -106,12 +118,45 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
           style: Theme.of(context).textTheme.titleMedium,
         ),
         const SizedBox(height: 12),
-        if (_loading)
+        if (_loading && !_configured)
           const Center(child: CircularProgressIndicator())
         else if (!_configured)
           _loginCard(source)
         else
           ..._activityContent(source),
+        if (_configured) ...[
+          const SizedBox(height: 16),
+          WorkoutExportControls(
+            key: ValueKey('${source.name}Export'),
+            activities: [
+              for (final workout in _workouts)
+                if (_selected.contains(workout.id)) _exportActivity(workout),
+            ],
+            onBusyChanged: (busy) => setState(() => _exporting = busy),
+            disabled: _loggingOut || _loading || _error != null,
+            currentTimeZoneIdentifier: Platform.isWindows || Platform.isLinux
+                ? null
+                : const HealthKitChannel().currentTimeZoneIdentifier,
+            loadOriginalFit: (activity) =>
+                workoutSourceFor(
+                  source == ThirdPartySourceType.xingzhe
+                      ? WorkoutSourceId.xingzhe
+                      : WorkoutSourceId.onelap,
+                ).fetchFit(
+                  WorkoutActivity(
+                    id: activity.id,
+                    sourceId: source == ThirdPartySourceType.xingzhe
+                        ? WorkoutSourceId.xingzhe
+                        : WorkoutSourceId.onelap,
+                    title: activity.title,
+                    start: activity.start,
+                    end: activity.end,
+                    durationSeconds: activity.durationSeconds,
+                    distanceMeters: activity.distanceMeters,
+                  ),
+                ),
+          ),
+        ],
       ],
     );
   }
@@ -175,13 +220,11 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
       spacing: 8,
       runSpacing: 8,
       children: [
-        for (final preset in ActivityDatePreset.values.where(
-          (preset) => preset != ActivityDatePreset.custom,
-        ))
+        for (final preset in ActivityDatePreset.values)
           ChoiceChip(
             label: Text(preset.title),
             selected: _preset == preset,
-            onSelected: _loading
+            onSelected: _loading || _exporting || _loggingOut
                 ? null
                 : (_) {
                     setState(() => _preset = preset);
@@ -190,17 +233,32 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
           ),
       ],
     ),
+    if (_preset == ActivityDatePreset.custom) ...[
+      const SizedBox(height: 12),
+      OutlinedButton(
+        onPressed: _exporting || _loggingOut ? null : () => _selectDate(true),
+        child: Text('开始：${_dateTimeText(_customStart)}'),
+      ),
+      OutlinedButton(
+        onPressed: _exporting || _loggingOut ? null : () => _selectDate(false),
+        child: Text('结束：${_dateTimeText(_customEnd)}'),
+      ),
+    ],
     const SizedBox(height: 12),
     Row(
       children: [
         TextButton.icon(
-          onPressed: _loading ? null : () => unawaited(_loadWorkouts()),
+          onPressed: _loading || _exporting || _loggingOut
+              ? null
+              : () => unawaited(_loadWorkouts()),
           icon: const Icon(Icons.refresh),
           label: const Text('刷新'),
         ),
         const Spacer(),
         TextButton(
-          onPressed: _loggingIn ? null : () => unawaited(_logout()),
+          onPressed: _loggingIn || _exporting || _loggingOut
+              ? null
+              : () => unawaited(_logout()),
           child: const Text('退出登录'),
         ),
       ],
@@ -213,65 +271,71 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
       const Card(
         child: Padding(padding: EdgeInsets.all(16), child: Text('当前时间范围内没有活动')),
       )
-    else
-      ...[
-        Row(
-          children: [
-            Text('已选择 ${_selected.length}/${_workouts.length}'),
-            const Spacer(),
-            TextButton(
-              onPressed: () => setState(() {
-                _selected
-                  ..clear()
-                  ..addAll(_workouts.map((workout) => workout.id));
-              }),
-              child: const Text('全选'),
-            ),
-            TextButton(
-              onPressed: () => setState(_selected.clear),
-              child: const Text('取消全选'),
-            ),
-          ],
-        ),
-        for (final workout in _workouts) _workoutCard(workout, source),
-        FilledButton(
-          onPressed: _selected.isEmpty
-              ? null
-              : () {
-                  final sourceId = source == ThirdPartySourceType.xingzhe
-                      ? WorkoutSourceId.xingzhe
-                      : WorkoutSourceId.onelap;
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => AutoSyncPage(
-                        entrySource: sourceId,
-                        selected: [
-                          for (final workout in _workouts)
-                            if (_selected.contains(workout.id))
-                              WorkoutActivity(
-                                id: workout.id,
-                                sourceId: sourceId,
-                                title: workout.title,
-                                start: DateTime.fromMillisecondsSinceEpoch(
-                                  (workout.startTimeSeconds * 1000).round(),
-                                ),
-                                end: DateTime.fromMillisecondsSinceEpoch(
-                                  ((workout.startTimeSeconds +
-                                              workout.durationSeconds) *
-                                          1000)
-                                      .round(),
-                                ),
-                                durationSeconds: workout.durationSeconds,
-                                distanceMeters: workout.distanceMeters,
+    else ...[
+      Row(
+        children: [
+          Text('已选择 ${_selected.length}/${_workouts.length}'),
+          const Spacer(),
+          TextButton(
+            onPressed: _exporting || _loggingOut
+                ? null
+                : () => setState(() {
+                    _selected
+                      ..clear()
+                      ..addAll(_workouts.map((workout) => workout.id));
+                  }),
+            child: const Text('全选'),
+          ),
+          TextButton(
+            onPressed: _exporting || _loggingOut
+                ? null
+                : () => setState(_selected.clear),
+            child: const Text('取消全选'),
+          ),
+        ],
+      ),
+      for (final workout in _workouts) _workoutCard(workout, source),
+      FilledButton(
+        onPressed: _selected.isEmpty || _exporting || _loggingOut
+            ? null
+            : () {
+                final sourceId = source == ThirdPartySourceType.xingzhe
+                    ? WorkoutSourceId.xingzhe
+                    : WorkoutSourceId.onelap;
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => AutoSyncPage(
+                      entrySource: sourceId,
+                      selected: [
+                        for (final workout in _workouts)
+                          if (_selected.contains(workout.id))
+                            WorkoutActivity(
+                              id: workout.id,
+                              sourceId: sourceId,
+                              title: workout.title,
+                              start: DateTime.fromMillisecondsSinceEpoch(
+                                (workout.startTimeSeconds * 1000).round(),
                               ),
-                        ],
-                      ),
+                              end: DateTime.fromMillisecondsSinceEpoch(
+                                ((workout.endTimeSeconds ??
+                                            (workout.startTimeSeconds +
+                                                workout.durationSeconds)) *
+                                        1000)
+                                    .round(),
+                              ),
+                              durationSeconds: workout.durationSeconds,
+                              distanceMeters: workout.distanceMeters,
+                            ),
+                      ],
                     ),
-                  );
-                },
-          child: const Text('自动同步所选'),
-        ),
-      ],
+                  ),
+                );
+              },
+        child: const Text('自动同步所选'),
+      ),
+      const SizedBox(height: 16),
+      const SizedBox(height: 16),
+    ],
   ];
 
   Widget _errorCard(String error) => Card(
@@ -287,13 +351,35 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
       key: ValueKey('${source.name}-${workout.id}'),
       child: CheckboxListTile(
         value: _selected.contains(workout.id),
-        onChanged: (_) => setState(() {
-          if (!_selected.add(workout.id)) _selected.remove(workout.id);
-        }),
+        onChanged: _exporting || _loggingOut
+            ? null
+            : (_) => setState(() {
+                if (!_selected.add(workout.id)) _selected.remove(workout.id);
+              }),
         title: Text(workout.title),
-        subtitle: Text(
-          '${_dateTimeText(start)} · ${_durationText(workout.durationSeconds)}'
-          '${distance == null ? '' : ' · ${(distance / 1000).toStringAsFixed(2)} 公里'}',
+        secondary: IconButton(
+          tooltip: '活动详情',
+          icon: const Icon(Icons.info_outline),
+          onPressed: () => showWorkoutActivityDetails(
+            context,
+            sourceId: source.name,
+            sourceTitle: source.title,
+            activityId: workout.id,
+            title: workout.title,
+            start: start,
+            durationSeconds: workout.durationSeconds,
+            distanceMeters: distance,
+          ),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${_dateTimeText(start)} · ${_durationText(workout.durationSeconds)}'
+              '${distance == null ? '' : ' · ${(distance / 1000).toStringAsFixed(2)} 公里'}',
+            ),
+            ActivitySyncBadges(sourceId: source.name, activityId: workout.id),
+          ],
         ),
       ),
     );
@@ -326,7 +412,61 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
     }
   }
 
+  WorkoutExportActivity _exportActivity(ThirdPartyWorkout workout) =>
+      WorkoutExportActivity(
+        id: workout.id,
+        sourceId: widget.source.name,
+        title: workout.title,
+        start: DateTime.fromMillisecondsSinceEpoch(
+          (workout.startTimeSeconds * 1000).round(),
+        ),
+        end: DateTime.fromMillisecondsSinceEpoch(
+          ((workout.endTimeSeconds ??
+                      (workout.startTimeSeconds + workout.durationSeconds)) *
+                  1000)
+              .round(),
+        ),
+        durationSeconds: workout.durationSeconds,
+        distanceMeters: workout.distanceMeters,
+      );
+
+  Future<void> _selectDate(bool isStart) async {
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: isStart ? _customStart : _customEnd,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      helpText: isStart ? '选择开始日期' : '选择结束日期',
+      cancelText: '取消',
+      confirmText: '确定',
+    );
+    if (selected == null || !mounted) return;
+    setState(() {
+      if (isStart) {
+        _customStart = selected;
+      } else {
+        _customEnd = selected;
+      }
+    });
+    await _loadWorkouts();
+  }
+
   Future<void> _logout() async {
+    if (_loggingOut || _exporting) return;
+    setState(() => _loggingOut = true);
+    final accepted = await confirmDestructiveAction(
+      context,
+      title: '退出${widget.source.title}登录？',
+      message: '将清除本机保存的账号、密码和会话；再次使用此数据源需要重新登录。',
+      confirmLabel: '退出登录',
+    );
+    if (!mounted) return;
+    if (!accepted) {
+      setState(() => _loggingOut = false);
+      return;
+    }
+    _activeSource?.cancelPending();
+    ++_requestId;
     try {
       switch (widget.source) {
         case ThirdPartySourceType.xingzhe:
@@ -334,14 +474,20 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
         case ThirdPartySourceType.onelap:
           await widget.onelapVault.clearAuthorization();
       }
-    } catch (_) {}
-    if (!mounted) return;
-    setState(() {
-      _configured = false;
-      _workouts = const [];
-      _selected.clear();
-      _error = null;
-    });
+      if (!mounted) return;
+      _account.clear();
+      _password.clear();
+      setState(() {
+        _configured = false;
+        _workouts = const [];
+        _selected.clear();
+        _error = null;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _error = '退出失败，登录信息尚未确认清除，请重试');
+    } finally {
+      if (mounted) setState(() => _loggingOut = false);
+    }
   }
 
   Future<void> _login() async {
@@ -374,7 +520,7 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
   }
 
   Future<void> _loadWorkouts() async {
-    if (!_configured) return;
+    if (!_configured || _exporting || _loggingOut) return;
     final requestId = ++_requestId;
     setState(() {
       _loading = true;
@@ -383,7 +529,11 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
     try {
       final workouts = await (widget.load ?? _loadWithVault)(
         source: widget.source,
-        interval: _preset.resolve(now: DateTime.now()),
+        interval: _preset.resolve(
+          now: DateTime.now(),
+          customStart: _customStart,
+          customEnd: _customEnd,
+        ),
         operationId:
             '${widget.source.name}-$requestId-${DateTime.now().microsecondsSinceEpoch}',
       );
@@ -425,6 +575,7 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
           password: password,
           token: session.token,
           uid: session.uid,
+          refreshToken: session.refreshToken,
         );
     }
   }
@@ -434,53 +585,24 @@ class _ThirdPartySourcePageState extends State<ThirdPartySourcePage> {
     required DateInterval interval,
     required String operationId,
   }) async {
-    final fromSeconds = interval.start.millisecondsSinceEpoch ~/ 1000;
-    final toSeconds = interval.endExclusive.millisecondsSinceEpoch ~/ 1000;
-    switch (source) {
-      case ThirdPartySourceType.xingzhe:
-        final lease = await widget.xingzheVault.lease();
-        final sessionId = lease.sessionId;
-        if (sessionId == null) throw StateError('缺少行者会话');
-        final reservation = xingzheReserveList(operationId: operationId);
-        final workouts = await xingzheListWorkouts(
-          operationHandle: reservation.handle,
-          sessionId: sessionId,
-          fromSeconds: fromSeconds,
-          toSeconds: toSeconds,
-        );
-        return [
-          for (final workout in workouts)
-            ThirdPartyWorkout(
-              id: workout.id,
-              title: workout.title,
-              startTimeSeconds: workout.startTimeSeconds,
-              durationSeconds: workout.durationSeconds,
-              distanceMeters: workout.distanceMeters,
-            ),
-        ];
-      case ThirdPartySourceType.onelap:
-        final lease = await widget.onelapVault.lease();
-        final token = lease.token;
-        final uid = lease.uid;
-        if (token == null || uid == null) throw StateError('缺少顽鹿会话');
-        final workouts = await onelapListWorkouts(
-          token: token,
-          uid: uid,
-          fromSeconds: fromSeconds,
-          toSeconds: toSeconds,
-          timezoneOffsetSeconds: DateTime.now().timeZoneOffset.inSeconds,
-        );
-        return [
-          for (final workout in workouts)
-            ThirdPartyWorkout(
-              id: workout.id,
-              title: workout.title,
-              startTimeSeconds: workout.startTimeSeconds,
-              durationSeconds: workout.durationSeconds,
-              distanceMeters: workout.distanceMeters,
-            ),
-        ];
-    }
+    final workoutSource = source == ThirdPartySourceType.xingzhe
+        ? XingzheWorkoutSource(vault: widget.xingzheVault)
+        : OnelapWorkoutSource(vault: widget.onelapVault);
+    _activeSource?.cancelPending();
+    _activeSource = workoutSource;
+    final workouts = await workoutSource.listActivities(interval);
+    if (identical(_activeSource, workoutSource)) _activeSource = null;
+    return [
+      for (final workout in workouts)
+        ThirdPartyWorkout(
+          id: workout.id,
+          title: workout.title,
+          startTimeSeconds: workout.start.millisecondsSinceEpoch / 1000,
+          endTimeSeconds: workout.end.millisecondsSinceEpoch / 1000,
+          durationSeconds: workout.durationSeconds,
+          distanceMeters: workout.distanceMeters,
+        ),
+    ];
   }
 }
 

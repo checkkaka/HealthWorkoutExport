@@ -1,0 +1,3 @@
+00:00 +0: loading <clean-base-plus-core-patch>/flutter_app/test/rust_bridge_test.dart
+00:00 +0: Flutter 通过真实 Rust 核心判定通勤
+00:13 +1: All tests passed!

@@ -1,0 +1,66 @@
+name: Verify migration
+
+"on":
+  pull_request:
+  push:
+    branches: [main, codex/flutter-rust-migration]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+  BOT: "true"
+  DASH__SUPPRESS_ANALYTICS: "true"
+
+jobs:
+  isolated-core:
+    name: Rust core only (excludes FFI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust/workout_core
+      - run: cargo fetch --manifest-path rust/workout_core/Cargo.toml --locked
+      - run: bash scripts/verify-core-only.sh rust/workout_core "$RUNNER_TEMP/core-verification"
+      - run: bash scripts/verify-rust-api-only.sh rust/workout_core "$RUNNER_TEMP/api-verification"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: isolated-core-evidence
+          path: |
+            ${{ runner.temp }}/core-verification/test.log
+            ${{ runner.temp }}/core-verification/clippy.log
+            ${{ runner.temp }}/core-verification/source-manifest.json
+            ${{ runner.temp }}/api-verification/test.log
+            ${{ runner.temp }}/api-verification/source-manifest.json
+          retention-days: 7
+  # Intentionally remains a required, honest integration check. New APIs need
+  # approved binding generation; this workflow never executes a generator.
+  core-and-flutter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-flutter-rust
+      - run: rustup component add rustfmt clippy
+      - run: cargo fmt --manifest-path rust/workout_core/Cargo.toml --check
+      - run: cargo clippy --manifest-path rust/workout_core/Cargo.toml --locked --all-targets -- -D warnings
+      - run: cargo test --manifest-path rust/workout_core/Cargo.toml --locked
+      - run: flutter --suppress-analytics pub get --enforce-lockfile
+        working-directory: flutter_app
+      - run: flutter --suppress-analytics analyze
+        working-directory: flutter_app
+      - run: flutter --suppress-analytics test
+        working-directory: flutter_app

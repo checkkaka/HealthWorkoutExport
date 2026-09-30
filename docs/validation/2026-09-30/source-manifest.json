@@ -1,0 +1,24 @@
+{
+  "source": "<worktree>/rust/workout_core",
+  "exclusions": [
+    "src/api/**",
+    "src/frb_generated.rs",
+    "lib.rs mod api declaration",
+    "lib.rs #[allow(unsafe_code)] mod frb_generated declaration"
+  ],
+  "source_sha256": {
+    "fit.rs": "9027fd4e8f8b6064ffea2fa627ff876151fcd969351c5151975d80c6592e0c64",
+    "fit_alignment.rs": "5a5b641cf3a16d7e24342ada29d85db93ea1d041d476ff246149dd1bd9823102",
+    "fit_document.rs": "037530becefa5b147483a3e52250a9a7df2048f2b10c1265c2ac593f4362d0cf",
+    "fit_merge.rs": "4f47c277e0ad4865e3e78b1130ce72f09da7dee8fb7906ab8ad9f1b1384210e4",
+    "fit_virtual_power.rs": "6380beb3564fa09b25634c3aa530a1afb0e273913c29a545f8a69007bb088d35",
+    "fit_weather.rs": "b80b8fddf04122e6afe73c4fa47dd2cbae0d1301bb54295512cdf280baeb051d",
+    "health_fit.rs": "fc6bf5e9e9e1f0a6b911561446a672279015329c8d2d909e87e722b70ea688ed",
+    "lib.rs": "1eb4211d43a07cd2001e36d5d79a075b6f2d3c060f17bce206fb1edbebeace89",
+    "onelap.rs": "f4aad8545bb8ec6e812e3cd8f5007614ca56a7e4d7e9538cfc469939a93ff8db",
+    "strava.rs": "9e273a9a8084099fa96b45e91ec740ca3531963ce8915224fbf9afe750ac6299",
+    "sync_state.rs": "b067365c6b9ef065a79be95de42032347075ba0621ba3081a37501df74cb1569",
+    "weather.rs": "ed1c0fb6f5dd9e354918cb9ef5128e69b82d0500cdc852b8801456788a378a3f",
+    "xingzhe.rs": "16ef4ebde10fc68424d93baa65973fa5db08dced8eff6169da64bf5085d7017c"
+  }
+}

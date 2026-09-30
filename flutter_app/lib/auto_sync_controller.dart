@@ -1,11 +1,16 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
+
 import 'date_range.dart';
 import 'native_channels.dart';
 import 'src/rust/api/simple.dart' as rust;
 import 'strava_upload_api.dart';
 import 'sync_state_store.dart';
+import 'sync_recovery_runner.dart';
+import 'sync_history_logic.dart';
+export 'sync_history_logic.dart' show isAnomalousStravaSpeed;
 import 'workout_export.dart';
 import 'workout_source.dart';
 
@@ -25,6 +30,7 @@ typedef AutoSyncUpload =
       required String externalId,
       required String filename,
       required bool commute,
+      String? description,
     });
 
 typedef AutoSyncPersist =
@@ -56,7 +62,18 @@ typedef AutoSyncRemoteActivities =
       required DateTime before,
     });
 
+typedef AutoSyncRemoteSpeed =
+    Future<rust.StravaActivitySpeedResult?> Function(String remoteId);
+
 typedef AutoSyncIsLocallyUploaded = Future<bool> Function(String fingerprint);
+
+typedef AutoSyncRemoteMatchIndex =
+    int? Function({
+      required double startTimeSeconds,
+      required double endTimeSeconds,
+      double? distanceMeters,
+      required List<rust.StravaRemoteActivityResult> candidates,
+    });
 
 typedef AutoSyncStableDedupe =
     bool Function({
@@ -115,7 +132,7 @@ typedef DuplicatePrompt =
       required String reason,
     });
 
-/// 健康首传、补源合并与恢复重传。批次取消由 [cancelled] 在条目之间检查。
+/// 健康首传、补源合并与恢复重传；每次副作用前检查取消。
 final class AutoSyncController {
   AutoSyncController({
     HealthKitChannel? healthKit,
@@ -131,6 +148,8 @@ final class AutoSyncController {
     AutoSyncMarkRemoteDuplicate? markRemoteDuplicate,
     AutoSyncIsLocallyUploaded? isLocallyUploaded,
     AutoSyncStableDedupe? stableDedupe,
+    AutoSyncRemoteSpeed? remoteSpeed,
+    AutoSyncRemoteMatchIndex? remoteMatchIndex,
     bool Function({double? distanceMeters, required double durationSeconds})?
     commute,
     FitPreparer? prepareFit,
@@ -157,8 +176,13 @@ final class AutoSyncController {
        _isLocallyUploadedOverride = isLocallyUploaded,
        // ignore: prefer_initializing_formals
        _stableDedupe = stableDedupe ?? rust.stableDedupeMatches,
-       _prepareFit = prepareFit ?? rust.prepareFitForUpload,
-       _matchIndex = matchIndex ?? rust.bestActivityMatchIndex;
+       // ignore: prefer_initializing_formals
+       _prepareFit = prepareFit,
+       _matchIndex = matchIndex ?? rust.bestActivityMatchIndex,
+       // ignore: prefer_initializing_formals
+       _remoteSpeed = remoteSpeed,
+       _remoteMatchIndex =
+           remoteMatchIndex ?? rust.stravaBestRemoteActivityMatchIndex;
 
   final HealthKitChannel _healthKit;
   final SyncStateStore _stateStore;
@@ -173,10 +197,55 @@ final class AutoSyncController {
   final AutoSyncMarkRemoteDuplicate? _markRemoteDuplicate;
   final AutoSyncIsLocallyUploaded? _isLocallyUploadedOverride;
   final AutoSyncStableDedupe _stableDedupe;
-  final FitPreparer _prepareFit;
+  final FitPreparer? _prepareFit;
   final AutoSyncMatchIndex _matchIndex;
+  final AutoSyncRemoteSpeed? _remoteSpeed;
+  final AutoSyncRemoteMatchIndex _remoteMatchIndex;
   final bool Function({double? distanceMeters, required double durationSeconds})
   _commute;
+
+  StravaUploadTask? _activeUploadTask;
+  String? _activeRemoteHandle;
+  String? _activePreparationHandle;
+
+  /// 中止可取消的原生 Rust 请求；不可取消的读取返回后也不会开始下一步。
+  void cancelActiveOperations() {
+    _activeUploadTask?.cancel();
+    final handle = _activeRemoteHandle;
+    if (handle != null) rust.stravaCancelRemoteRead(operationHandle: handle);
+    final preparation = _activePreparationHandle;
+    if (preparation != null) {
+      rust.stravaCancelRemoteRead(operationHandle: preparation);
+    }
+  }
+
+  Future<rust.PreparedFitResult> _prepareWithCancellation({
+    required List<int> primary,
+    required List<Uint8List> supplements,
+    required bool gcjEnabled,
+    rust.VirtualPowerFillInput? virtualPower,
+  }) async {
+    final reservation = rust.stravaReserveRemoteRead(
+      operationId: 'prepare-fit-${DateTime.now().microsecondsSinceEpoch}',
+    );
+    _activePreparationHandle = reservation.handle;
+    try {
+      return await rust.prepareFitForUploadCancellable(
+        operationHandle: reservation.handle,
+        primary: primary,
+        supplements: supplements,
+        gcjEnabled: gcjEnabled,
+        virtualPower: virtualPower,
+      );
+    } finally {
+      _activePreparationHandle = null;
+      rust.stravaReleaseRemoteRead(operationHandle: reservation.handle);
+    }
+  }
+
+  static void _checkCancelled(bool Function()? cancelled) {
+    if (cancelled?.call() == true) throw const _AutoSyncCancelled();
+  }
 
   /// 返回逐条结果。调用方可继续处理失败项；当前控制器绝不伪装为远端去重成功。
   Future<List<AutoSyncResult>> sync(List<String> workoutIds) async {
@@ -187,7 +256,7 @@ final class AutoSyncController {
     return results;
   }
 
-  /// 主源 + 可选补源的完整批次。取消只在两条活动之间生效，不会半写 FIT。
+  /// 主源 + 可选补源的完整批次。取消后不再开始新的上传。
   Future<List<AutoSyncResult>> syncBatch({
     required WorkoutSource primary,
     required List<WorkoutSource> supplements,
@@ -198,16 +267,26 @@ final class AutoSyncController {
     bool Function()? cancelled,
     void Function(AutoSyncProgress progress)? onProgress,
     AutoSyncUpload? upload,
+    SyncUploadChannel uploadChannel = SyncUploadChannel.api,
+    bool performRemotePreflight = true,
+    bool skipLocalHistory = true,
+    AutoSyncRemoteActivities? remoteActivities,
+    Future<void> Function(String remoteId)? deleteRemote,
+    Future<void> Function(AutoSyncResult result)? onResult,
   }) async {
+    if (activities.any((activity) => activity.sourceId != primary.id)) {
+      throw const AutoSyncUploadException('已选活动与主数据源不一致');
+    }
     final results = <AutoSyncResult>[];
     var uploaded = 0;
     var deduped = 0;
     var failed = 0;
     var skipRemaining = false;
     var overwriteRemaining = false;
+    final batchAt = DateTime.now();
     final supplementCache = <WorkoutSourceId, List<WorkoutActivity>>{};
     for (final supplement in supplements) {
-      if (activities.isEmpty) break;
+      if (activities.isEmpty || cancelled?.call() == true) break;
       final start = activities
           .map((activity) => activity.start)
           .reduce((a, b) => a.isBefore(b) ? a : b)
@@ -248,8 +327,17 @@ final class AutoSyncController {
         overwriteDuplicate: overwriteRemaining,
         onDuplicate: onDuplicate,
         upload: upload,
+        uploadChannel: uploadChannel,
+        performRemotePreflight: performRemotePreflight,
+        cancelled: cancelled,
+        batchAt: batchAt,
+        skipLocalHistory: skipLocalHistory,
+        remoteActivities: remoteActivities,
+        deleteRemote: deleteRemote,
       );
+      if (result.cancelled) break;
       results.add(result);
+      await onResult?.call(result);
       if (result.failed) {
         failed += 1;
       } else if (result.isDuplicate) {
@@ -284,11 +372,21 @@ final class AutoSyncController {
     required bool overwriteDuplicate,
     required DuplicatePrompt? onDuplicate,
     AutoSyncUpload? upload,
+    required SyncUploadChannel uploadChannel,
+    required bool performRemotePreflight,
+    required bool Function()? cancelled,
+    required DateTime batchAt,
+    required bool skipLocalHistory,
+    AutoSyncRemoteActivities? remoteActivities,
+    Future<void> Function(String remoteId)? deleteRemote,
   }) async {
     String? fingerprint;
     var persisted = false;
     try {
-      final supplementIds = supplements.map((source) => source.id.value).toList();
+      _checkCancelled(cancelled);
+      final supplementIds = supplements
+          .map((source) => source.id.value)
+          .toList();
       fingerprint = _fingerprint(
         primarySourceId: primary.id.value,
         primaryActivityId: activity.id,
@@ -296,19 +394,77 @@ final class AutoSyncController {
         supplementSourceIds: supplementIds,
         destination: 'strava',
       );
-      if (await _isLocallyUploaded(fingerprint)) {
+      if (_persist == null) {
+        try {
+          await _stateStore.readRecovery(fingerprint);
+          return await resumeRecovery(
+            fingerprint,
+            uploadOverride: upload,
+            deleteRemote: deleteRemote,
+            cancelled: cancelled,
+          );
+        } on PlatformException catch (error) {
+          if (error.code != 'sync_file_missing') rethrow;
+        }
+      }
+      final local = skipLocalHistory
+          ? await _localDuplicate(activity, fingerprint)
+          : (matches: false, remoteId: null);
+      _checkCancelled(cancelled);
+      if (local.matches) {
+        if (local.remoteId != null) {
+          await _markRemoteAsDuplicate(
+            SyncPendingRecord(
+              fingerprint: fingerprint,
+              primarySourceId: primary.id.value,
+              primaryActivityId: activity.id,
+              updatedAt: DateTime.now(),
+              startDate: activity.start,
+              title: activity.title,
+              supplementSourceIds: supplementIds,
+              distanceMeters: activity.distanceMeters,
+              durationSeconds: activity.durationSeconds,
+              batchAt: batchAt,
+              uploadChannel: uploadChannel,
+            ),
+            local.remoteId!,
+          );
+        }
         return AutoSyncResult(
           workoutId: activity.id,
           fingerprint: fingerprint,
-          remoteId: null,
+          remoteId: local.remoteId,
           isDuplicate: true,
-          message: '本地已有同指纹同步记录，未重复上传',
+          message: '本地已有同步记录，未重复上传',
         );
       }
       var overwriteRemainingAfter = overwriteDuplicate;
-      final remote = await _stableRemoteMatchActivity(activity, fingerprint);
+      final remote = performRemotePreflight
+          ? await _stableRemoteMatchActivity(
+              activity,
+              fingerprint,
+              remoteActivities,
+            )
+          : null;
+      _checkCancelled(cancelled);
       if (remote != null && !overwriteDuplicate) {
         if (skipDuplicate) {
+          await _markRemoteAsDuplicate(
+            SyncPendingRecord(
+              fingerprint: fingerprint,
+              primarySourceId: primary.id.value,
+              primaryActivityId: activity.id,
+              updatedAt: DateTime.now(),
+              startDate: activity.start,
+              title: activity.title,
+              batchAt: batchAt,
+              uploadChannel: uploadChannel,
+              supplementSourceIds: supplementIds,
+              distanceMeters: activity.distanceMeters,
+              durationSeconds: activity.durationSeconds,
+            ),
+            remote.id,
+          );
           return AutoSyncResult(
             workoutId: activity.id,
             fingerprint: fingerprint,
@@ -324,6 +480,7 @@ final class AutoSyncController {
               reason: 'Strava 已有稳定近似活动',
             ) ??
             DuplicateDecision.skip;
+        _checkCancelled(cancelled);
         if (decision == DuplicateDecision.skip ||
             decision == DuplicateDecision.skipAll) {
           await _markRemoteAsDuplicate(
@@ -334,6 +491,8 @@ final class AutoSyncController {
               updatedAt: DateTime.now(),
               startDate: activity.start,
               title: activity.title,
+              batchAt: batchAt,
+              uploadChannel: uploadChannel,
               supplementSourceIds: supplementIds,
               distanceMeters: activity.distanceMeters,
               durationSeconds: activity.durationSeconds,
@@ -354,9 +513,18 @@ final class AutoSyncController {
           overwriteRemainingAfter = true;
         }
       }
+      if (remote != null && deleteRemote == null) {
+        throw const AutoSyncUploadException('覆盖上传需要 Strava 网页登录以删除原活动');
+      }
+      if (remote != null && _persist != null) {
+        throw const AutoSyncUploadException('覆盖需要持久化恢复存储，不能绕过事务');
+      }
+      _checkCancelled(cancelled);
       final primaryFit = await primary.fetchFit(activity);
+      _checkCancelled(cancelled);
       final supplementFits = <Uint8List>[];
       for (final source in supplements) {
+        _checkCancelled(cancelled);
         final candidates = supplementCache[source.id] ?? const [];
         final matchIndex = _matchIndex(
           primary: activity.interval,
@@ -369,12 +537,59 @@ final class AutoSyncController {
           // 单条补源失败不拖垮主活动。
         }
       }
-      final prepared = await _prepareFit(
+      _checkCancelled(cancelled);
+      final prepared = await (_prepareFit ?? _prepareWithCancellation)(
         primary: primaryFit,
         supplements: supplementFits,
         gcjEnabled: gcjEnabled,
         virtualPower: virtualPower,
       );
+      _checkCancelled(cancelled);
+      if (_persist == null) {
+        final recovery = RecoveryUploadData(
+          primarySourceId: primary.id.value,
+          primaryActivityId: activity.id,
+          title: activity.title,
+          startDate: activity.start,
+          supplementSourceIds: supplementIds,
+          distanceMeters: activity.distanceMeters,
+          durationSeconds: activity.durationSeconds,
+          fit: prepared.data,
+          message: null,
+          filename: '$fingerprint.fit',
+          commute: _commute(
+            distanceMeters: activity.distanceMeters,
+            durationSeconds: activity.durationSeconds,
+          ),
+          channel: uploadChannel,
+          hasVirtualPower: prepared.powerSourceVirtual,
+          activityDescription: prepared.activityDescription,
+          batchAt: batchAt,
+        );
+        await _stateStore.prepareRecovery(
+          fingerprint: fingerprint,
+          recoveryJson: recovery.encode(),
+          remoteIdToReplace: remote?.id,
+          externalId: remote == null ? fingerprint : null,
+        );
+        persisted = true;
+        final result = await resumeRecovery(
+          fingerprint,
+          uploadOverride: upload,
+          deleteRemote: deleteRemote,
+          cancelled: cancelled,
+        );
+        if (result.succeeded && overwriteRemainingAfter) {
+          return AutoSyncResult(
+            workoutId: result.workoutId,
+            fingerprint: result.fingerprint,
+            remoteId: result.remoteId,
+            isDuplicate: result.isDuplicate,
+            message: 'overwrite-all',
+          );
+        }
+        return result;
+      }
       final pending = SyncPendingRecord(
         fingerprint: fingerprint,
         primarySourceId: primary.id.value,
@@ -382,26 +597,31 @@ final class AutoSyncController {
         updatedAt: DateTime.now(),
         startDate: activity.start,
         title: activity.title,
+        batchAt: batchAt,
         supplementSourceIds: supplementIds,
         distanceMeters: activity.distanceMeters,
         durationSeconds: activity.durationSeconds,
+        uploadChannel: uploadChannel,
+        hasVirtualPower: prepared.powerSourceVirtual,
       );
-      await (_persist?.call(record: pending, fit: prepared.data) ??
-          _stateStore.savePendingFit(record: pending, fit: prepared.data));
+      await _persist(record: pending, fit: prepared.data);
       persisted = true;
+      _checkCancelled(cancelled);
       final response = await _uploadFit(
         logicalOperationId: 'sync-$fingerprint',
         fit: prepared.data,
-        externalId: overwriteDuplicate || remote != null
-            ? 'ow-$fingerprint'
-            : fingerprint,
-        filename: '${activity.id}.fit',
+        externalId: fingerprint,
+        filename: '$fingerprint.fit',
+        description: prepared.activityDescription,
         commute: _commute(
           distanceMeters: activity.distanceMeters,
           durationSeconds: activity.durationSeconds,
         ),
         upload: upload,
       );
+      if (response.status == rust.StravaUploadFfiStatus.cancelled) {
+        throw const _AutoSyncCancelled();
+      }
       if (response.status != rust.StravaUploadFfiStatus.completed) {
         throw const AutoSyncUploadException('Strava 上传未完成');
       }
@@ -420,7 +640,8 @@ final class AutoSyncController {
             isDuplicate: response.isDuplicate,
             distanceMeters: activity.distanceMeters,
             durationSeconds: activity.durationSeconds,
-            uploadChannel: SyncUploadChannel.api,
+            uploadChannel: uploadChannel,
+            hasVirtualPower: prepared.powerSourceVirtual,
           ));
       return AutoSyncResult(
         workoutId: activity.id,
@@ -429,7 +650,18 @@ final class AutoSyncController {
         isDuplicate: response.isDuplicate,
         message: overwriteRemainingAfter ? 'overwrite-all' : null,
       );
+    } on _AutoSyncCancelled {
+      return AutoSyncResult.cancelled(
+        workoutId: activity.id,
+        fingerprint: fingerprint,
+      );
     } catch (error) {
+      if (cancelled?.call() == true) {
+        return AutoSyncResult.cancelled(
+          workoutId: activity.id,
+          fingerprint: fingerprint,
+        );
+      }
       if (persisted && fingerprint != null) {
         try {
           await (_markFailed?.call(
@@ -440,7 +672,7 @@ final class AutoSyncController {
               _stateStore.markFailed(
                 fingerprint: fingerprint,
                 updatedAt: DateTime.now(),
-                message: error.toString(),
+                message: _safeFailureMessage(error),
               ));
         } catch (_) {}
       }
@@ -455,11 +687,11 @@ final class AutoSyncController {
   Future<rust.StravaRemoteActivityResult?> _stableRemoteMatchActivity(
     WorkoutActivity activity,
     String fingerprint,
+    AutoSyncRemoteActivities? remoteActivities,
   ) async {
     final distance = activity.distanceMeters;
-    if (distance == null || distance <= 0) return null;
     final activities =
-        await (_remoteActivities?.call(
+        await ((remoteActivities ?? _remoteActivities)?.call(
               after: activity.start.subtract(const Duration(days: 1)),
               before: activity.end.add(const Duration(days: 1)),
             ) ??
@@ -468,96 +700,145 @@ final class AutoSyncController {
               after: activity.start.subtract(const Duration(days: 1)),
               before: activity.end.add(const Duration(days: 1)),
             ));
-    for (final remote in activities) {
-      final remoteDistance = remote.distanceMeters;
-      if (remoteDistance != null &&
-          _stableDedupe(
-            startASeconds: activity.start.millisecondsSinceEpoch / 1000,
-            distanceAMeters: distance,
-            startBSeconds: remote.startTimeSeconds,
-            distanceBMeters: remoteDistance,
-            durationASeconds: activity.durationSeconds,
-            durationBSeconds: remote.endTimeSeconds - remote.startTimeSeconds,
-          )) {
-        return remote;
-      }
-    }
-    return null;
+    if (activities.isEmpty) return null;
+    final index = _remoteMatchIndex(
+      startTimeSeconds: activity.start.millisecondsSinceEpoch / 1000,
+      endTimeSeconds: activity.end.millisecondsSinceEpoch / 1000,
+      distanceMeters: distance,
+      candidates: activities,
+    );
+    return index == null ? null : activities[index];
   }
 
   /// 仅恢复已落盘的最终 FIT。需要删除远端活动的恢复包必须交由网页流程处理。
-  Future<AutoSyncResult> resumeRecovery(String fingerprint) async {
+  Future<AutoSyncResult> resumeRecovery(
+    String fingerprint, {
+    AutoSyncUpload? uploadOverride,
+    Future<void> Function(String remoteId)? deleteRemote,
+    bool Function()? cancelled,
+    bool replaceExisting = false,
+  }) async {
     String? workoutId;
     String? remoteId;
     var uploadedRecorded = false;
     try {
       final existing = (await _stateStore.allRecords())[fingerprint];
-      if (existing is Map && existing['status'] == 'uploaded') {
-        await _stateStore.deleteRecovery(fingerprint);
-        return AutoSyncResult(
-          workoutId: existing['primaryActivityId'] as String? ?? fingerprint,
+      try {
+        await _stateStore.readRecovery(fingerprint);
+      } on PlatformException catch (error) {
+        if (error.code != 'sync_file_missing') rethrow;
+        if (existing is! Map ||
+            (existing['status'] != 'pending' &&
+                existing['status'] != 'failed' &&
+                !(replaceExisting && existing['status'] == 'uploaded'))) {
+          throw const AutoSyncRecoveryException('没有可恢复的上传记录');
+        }
+        if (replaceExisting &&
+            !isValidStravaActivityId(existing['remoteId'] as String? ?? '')) {
+          throw const AutoSyncRecoveryException('该记录缺少有效远端 ID，请先补全后覆盖');
+        }
+        final start = existing['startDate'];
+        final duration = existing['durationSeconds'];
+        final sourceId = existing['primarySourceId'];
+        final activityId = existing['primaryActivityId'];
+        if (start is! num ||
+            duration is! num ||
+            sourceId is! String ||
+            activityId is! String) {
+          throw const AutoSyncRecoveryException('旧记录缺少恢复所需的活动信息');
+        }
+        final fit = await _stateStore.readSyncedFit(fingerprint);
+        final payload = Uint8List.fromList(
+          utf8.encode(
+            jsonEncode({
+              'primarySourceId': sourceId,
+              'primaryActivityId': activityId,
+              'title': existing['title'] ?? activityId,
+              'startDate': start,
+              'endDate': start + duration,
+              'supplementSourceIds':
+                  existing['supplementSourceIds'] ?? <String>[],
+              'distanceMeters': existing['distanceMeters'],
+              'durationSeconds': duration,
+              'uploadData': base64Encode(fit),
+              'filename': '$fingerprint.fit',
+              'commute': _commute(
+                distanceMeters: (existing['distanceMeters'] as num?)
+                    ?.toDouble(),
+                durationSeconds: duration.toDouble(),
+              ),
+              'uploadChannel': existing['uploadChannel'] ?? 'api',
+              'hasVirtualPower': existing['hasVirtualPower'] ?? false,
+              'activityDescription': existing['hasVirtualPower'] == true
+                  ? '功率计还在许愿清单里，本场瓦特是风、坡和速度一起算的，看看就好～（出自 HealthWorkoutExport）'
+                  : null,
+            }),
+          ),
+        );
+        await _stateStore.prepareRecovery(
           fingerprint: fingerprint,
-          remoteId: existing['remoteId'] as String?,
-          isDuplicate: true,
-          message: '此前上传已完成，已清理遗留恢复文件',
+          recoveryJson: payload,
+          externalId: replaceExisting ? null : fingerprint,
+          remoteIdToReplace:
+              replaceExisting &&
+                  isValidStravaActivityId(existing['remoteId'] as String? ?? '')
+              ? existing['remoteId'] as String
+              : null,
         );
       }
-      final transaction = await _stateStore.loadRecoveryTransaction(
-        fingerprint,
-      );
-      final upload = _RecoveryUpload.fromJson(
+      final data = RecoveryUploadData.fromJson(
         await _stateStore.readRecovery(fingerprint),
       );
-      workoutId = upload.primaryActivityId;
-      if (transaction.phase == SyncRecoveryPhase.prepared &&
-          transaction.remoteIdToReplace != null) {
-        throw const AutoSyncRecoveryException('该恢复项需要先删除远端活动，当前 API 模式不支持');
+      workoutId = data.primaryActivityId;
+      if (data.channel == SyncUploadChannel.web && uploadOverride == null) {
+        throw const AutoSyncRecoveryException('该记录需要 Strava 网页登录后恢复');
       }
-
-      await _stateStore.savePendingFit(
-        record: upload.pending(fingerprint),
-        fit: upload.fit,
-      );
-      final active = transaction.phase == SyncRecoveryPhase.uploading
-          ? transaction
-          : await _stateStore.markRecoveryUploading(fingerprint);
-      final response = await _uploadFit(
-        logicalOperationId: 'recovery-$fingerprint',
-        fit: upload.fit,
-        externalId: active.externalId,
-        filename: upload.filename,
-        commute: upload.commute,
-      );
-      if (response.status != rust.StravaUploadFfiStatus.completed) {
-        throw const AutoSyncUploadException('Strava 上传未完成');
-      }
-      remoteId = response.remoteId;
-      await _stateStore.markUploaded(
+      final response = await SyncRecoveryRunner(_stateStore).run(
         fingerprint: fingerprint,
-        updatedAt: DateTime.now(),
-        remoteId: remoteId,
-        isDuplicate: response.isDuplicate,
-        distanceMeters: upload.distanceMeters,
-        durationSeconds: upload.durationSeconds,
-        message: upload.message,
-        uploadChannel: SyncUploadChannel.api,
+        cancelled: cancelled,
+        deleteRemote:
+            deleteRemote ??
+            (_) async {
+              throw const AutoSyncRecoveryException('删除原活动需要 Strava 网页登录');
+            },
+        upload: (saved, externalId) => _uploadFit(
+          logicalOperationId: 'recovery-$fingerprint',
+          fit: saved.fit,
+          externalId: externalId,
+          filename: saved.filename,
+          commute: saved.commute,
+          description: saved.activityDescription,
+          upload: saved.channel == SyncUploadChannel.web
+              ? uploadOverride
+              : null,
+        ),
       );
+      remoteId = response.remoteId;
       uploadedRecorded = true;
-      await _stateStore.deleteRecovery(fingerprint);
       return AutoSyncResult(
         workoutId: workoutId,
         fingerprint: fingerprint,
         remoteId: remoteId,
         isDuplicate: response.isDuplicate,
       );
+    } on RecoveryCancelled {
+      return AutoSyncResult.cancelled(
+        workoutId: workoutId ?? fingerprint,
+        fingerprint: fingerprint,
+      );
     } catch (error) {
       if (!uploadedRecorded) {
         try {
-          await _stateStore.markFailed(
-            fingerprint: fingerprint,
-            updatedAt: DateTime.now(),
-            message: _safeRecoveryFailureMessage(error),
-          );
+          final saved = (await _stateStore.allRecords())[fingerprint];
+          if (error is RecoveryCleanupFailed) {
+            uploadedRecorded = true;
+          } else if (saved is Map && saved['status'] != 'uploaded') {
+            await _stateStore.markFailed(
+              fingerprint: fingerprint,
+              updatedAt: DateTime.now(),
+              message: _safeRecoveryFailureMessage(error),
+            );
+          }
         } catch (_) {
           // 缺少本地记录或保护文件不可用时，保留原恢复包以便稍后继续。
         }
@@ -663,7 +944,7 @@ final class AutoSyncController {
               _stateStore.markFailed(
                 fingerprint: fingerprint,
                 updatedAt: DateTime.now(),
-                message: error.toString(),
+                message: _safeFailureMessage(error),
               ));
         } catch (_) {
           // 原始错误优先返回；待处理记录与 FIT 仍在，后续恢复流程可再次处理。
@@ -691,6 +972,80 @@ final class AutoSyncController {
     durationSeconds: summary.durationSeconds,
   );
 
+  Future<({bool matches, String? remoteId})> _localDuplicate(
+    WorkoutActivity activity,
+    String fingerprint,
+  ) async {
+    final override = _isLocallyUploadedOverride;
+    if (override != null) {
+      return (matches: await override(fingerprint), remoteId: null);
+    }
+    final records = await _stateStore.allRecords();
+    final matches = <Map>[];
+    for (final entry in records.entries) {
+      if (entry.value is! Map) continue;
+      final record = entry.value as Map;
+      if (record['status'] != 'uploaded') continue;
+      var matched =
+          entry.key == fingerprint ||
+          (record['primarySourceId'] == activity.sourceId.value &&
+              record['primaryActivityId'] == activity.id);
+      final start = record['startDate'];
+      final distance = record['distanceMeters'];
+      if (!matched &&
+          start is num &&
+          distance is num &&
+          activity.distanceMeters != null) {
+        matched = _stableDedupe(
+          startASeconds: activity.start.millisecondsSinceEpoch / 1000,
+          distanceAMeters: activity.distanceMeters!,
+          startBSeconds: start.toDouble() + 978307200,
+          distanceBMeters: distance.toDouble(),
+          durationASeconds: activity.durationSeconds,
+          durationBSeconds: (record['durationSeconds'] as num?)?.toDouble(),
+        );
+      }
+      if (matched) matches.add(record);
+    }
+    if (matches.isEmpty) return (matches: false, remoteId: null);
+    final remoteIds = {
+      for (final record in matches)
+        if (record['remoteId'] case final String id)
+          if (isValidStravaActivityId(id)) id,
+    };
+    for (final remoteId in remoteIds) {
+      try {
+        final speed =
+            await (_remoteSpeed?.call(remoteId) ?? _loadRemoteSpeed(remoteId));
+        if (speed != null && isAnomalousStravaSpeed(speed)) {
+          return (matches: false, remoteId: null);
+        }
+      } catch (_) {
+        /* 无 API 授权或详情失败时保守保持本地去重。 */
+      }
+    }
+    return (matches: true, remoteId: remoteIds.firstOrNull);
+  }
+
+  Future<rust.StravaActivitySpeedResult?> _loadRemoteSpeed(
+    String remoteId,
+  ) async {
+    final reservation = rust.stravaReserveRemoteRead(
+      operationId: 'speed-$remoteId-${DateTime.now().microsecondsSinceEpoch}',
+    );
+    _activeRemoteHandle = reservation.handle;
+    try {
+      return await rust.stravaFetchRemoteActivitySpeed(
+        operationHandle: reservation.handle,
+        accessToken: await _uploadSession.accessToken(),
+        activityId: remoteId,
+      );
+    } finally {
+      _activeRemoteHandle = null;
+      rust.stravaReleaseRemoteRead(operationHandle: reservation.handle);
+    }
+  }
+
   Future<bool> _isLocallyUploaded(String fingerprint) async {
     final override = _isLocallyUploadedOverride;
     if (override != null) return override(fingerprint);
@@ -704,7 +1059,10 @@ final class AutoSyncController {
   ) async {
     final override = _markRemoteDuplicate;
     if (override != null) return override(record: record, remoteId: remoteId);
-    await _stateStore.markPending(record);
+    final existing = (await _stateStore.allRecords())[record.fingerprint];
+    if (existing is! Map || existing['status'] != 'uploaded') {
+      await _stateStore.markPending(record);
+    }
     await _stateStore.markDeduped(
       fingerprint: record.fingerprint,
       updatedAt: DateTime.now(),
@@ -718,7 +1076,6 @@ final class AutoSyncController {
     String fingerprint,
   ) async {
     final distance = summary.totalDistanceMeters;
-    if (distance == null || distance <= 0) return null;
     final start = DateTime.fromMillisecondsSinceEpoch(summary.startMs);
     final end = DateTime.fromMillisecondsSinceEpoch(summary.endMs);
     final activities =
@@ -731,22 +1088,14 @@ final class AutoSyncController {
               after: start.subtract(const Duration(days: 1)),
               before: end.add(const Duration(days: 1)),
             ));
-    for (final activity in activities) {
-      final remoteDistance = activity.distanceMeters;
-      if (remoteDistance != null &&
-          _stableDedupe(
-            startASeconds: summary.startMs / 1000,
-            distanceAMeters: distance,
-            startBSeconds: activity.startTimeSeconds,
-            distanceBMeters: remoteDistance,
-            durationASeconds: summary.durationSeconds,
-            durationBSeconds:
-                activity.endTimeSeconds - activity.startTimeSeconds,
-          )) {
-        return activity;
-      }
-    }
-    return null;
+    if (activities.isEmpty) return null;
+    final index = _remoteMatchIndex(
+      startTimeSeconds: summary.startMs / 1000,
+      endTimeSeconds: summary.endMs / 1000,
+      distanceMeters: distance,
+      candidates: activities,
+    );
+    return index == null ? null : activities[index];
   }
 
   Future<List<rust.StravaRemoteActivityResult>> _loadRemoteActivities({
@@ -757,6 +1106,7 @@ final class AutoSyncController {
     final reservation = rust.stravaReserveRemoteRead(
       operationId: 'sync-preflight-$fingerprint',
     );
+    _activeRemoteHandle = reservation.handle;
     try {
       return await rust.stravaListRemoteActivities(
         operationHandle: reservation.handle,
@@ -765,6 +1115,7 @@ final class AutoSyncController {
         beforeSeconds: before.millisecondsSinceEpoch ~/ 1000,
       );
     } finally {
+      _activeRemoteHandle = null;
       rust.stravaReleaseRemoteRead(operationHandle: reservation.handle);
     }
   }
@@ -787,23 +1138,34 @@ final class AutoSyncController {
     required String filename,
     required bool commute,
     AutoSyncUpload? upload,
-  }) =>
-      (upload ?? _upload)?.call(
+    String? description,
+  }) async {
+    final uploader = upload ?? _upload;
+    if (uploader != null) {
+      return uploader(
         logicalOperationId: logicalOperationId,
         fit: fit,
         externalId: externalId,
         filename: filename,
         commute: commute,
-      ) ??
-      _uploadSession
-          .start(
-            logicalOperationId: logicalOperationId,
-            fit: fit,
-            externalId: externalId,
-            filename: filename,
-            commute: commute,
-          )
-          .result;
+        description: description,
+      );
+    }
+    final task = _uploadSession.start(
+      logicalOperationId: logicalOperationId,
+      fit: fit,
+      externalId: externalId,
+      filename: filename,
+      commute: commute,
+      description: description,
+    );
+    _activeUploadTask = task;
+    try {
+      return await task.result;
+    } finally {
+      if (identical(_activeUploadTask, task)) _activeUploadTask = null;
+    }
+  }
 }
 
 final class AutoSyncResult {
@@ -813,7 +1175,8 @@ final class AutoSyncResult {
     required this.remoteId,
     required this.isDuplicate,
     this.message,
-  }) : failed = false;
+  }) : failed = false,
+       cancelled = false;
 
   const AutoSyncResult.failed({
     required this.workoutId,
@@ -821,7 +1184,17 @@ final class AutoSyncResult {
     required this.message,
   }) : remoteId = null,
        isDuplicate = false,
-       failed = true;
+       failed = true,
+       cancelled = false;
+
+  const AutoSyncResult.cancelled({
+    required this.workoutId,
+    required this.fingerprint,
+  }) : remoteId = null,
+       isDuplicate = false,
+       message = '已停止',
+       failed = false,
+       cancelled = true;
 
   final String workoutId;
   final String? fingerprint;
@@ -829,7 +1202,12 @@ final class AutoSyncResult {
   final bool isDuplicate;
   final String? message;
   final bool failed;
-  bool get succeeded => !failed;
+  final bool cancelled;
+  bool get succeeded => !failed && !cancelled;
+}
+
+final class _AutoSyncCancelled implements Exception {
+  const _AutoSyncCancelled();
 }
 
 final class AutoSyncUploadException implements Exception {
@@ -849,95 +1227,3 @@ final class AutoSyncRecoveryException implements Exception {
   @override
   String toString() => message;
 }
-
-final class _RecoveryUpload {
-  const _RecoveryUpload({
-    required this.primarySourceId,
-    required this.primaryActivityId,
-    required this.title,
-    required this.startDate,
-    required this.supplementSourceIds,
-    required this.distanceMeters,
-    required this.durationSeconds,
-    required this.fit,
-    required this.message,
-    required this.filename,
-    required this.commute,
-  });
-
-  factory _RecoveryUpload.fromJson(Uint8List bytes) {
-    final value = jsonDecode(utf8.decode(bytes));
-    if (value is! Map<String, dynamic>) {
-      throw const FormatException('恢复上传包不是 JSON 对象');
-    }
-    String text(String key) {
-      final field = value[key];
-      if (field is! String || field.trim().isEmpty) {
-        throw FormatException('恢复上传包缺少 $key');
-      }
-      return field;
-    }
-
-    double number(String key) {
-      final field = value[key];
-      if (field is! num || !field.isFinite) {
-        throw FormatException('恢复上传包的 $key 无效');
-      }
-      return field.toDouble();
-    }
-
-    final supplements = value['supplementSourceIds'];
-    final uploadMessage = value['uploadMessage'];
-    final distance = value['distanceMeters'];
-    final commute = value['commute'];
-    if (supplements is! List ||
-        supplements.any((item) => item is! String) ||
-        (uploadMessage != null && uploadMessage is! String) ||
-        (distance != null && (distance is! num || !distance.isFinite)) ||
-        commute is! bool) {
-      throw const FormatException('恢复上传包字段无效');
-    }
-    return _RecoveryUpload(
-      primarySourceId: text('primarySourceId'),
-      primaryActivityId: text('primaryActivityId'),
-      title: text('title'),
-      startDate: _fromAppleSeconds(number('startDate')),
-      supplementSourceIds: supplements.cast<String>(),
-      distanceMeters: distance?.toDouble(),
-      durationSeconds: number('durationSeconds'),
-      fit: Uint8List.fromList(base64Decode(text('uploadData'))),
-      message: uploadMessage as String?,
-      filename: text('filename'),
-      commute: commute,
-    );
-  }
-
-  final String primarySourceId;
-  final String primaryActivityId;
-  final String title;
-  final DateTime startDate;
-  final List<String> supplementSourceIds;
-  final double? distanceMeters;
-  final double durationSeconds;
-  final Uint8List fit;
-  final String? message;
-  final String filename;
-  final bool commute;
-
-  SyncPendingRecord pending(String fingerprint) => SyncPendingRecord(
-    fingerprint: fingerprint,
-    primarySourceId: primarySourceId,
-    primaryActivityId: primaryActivityId,
-    updatedAt: DateTime.now(),
-    startDate: startDate,
-    title: title,
-    supplementSourceIds: supplementSourceIds,
-    distanceMeters: distanceMeters,
-    durationSeconds: durationSeconds,
-  );
-}
-
-DateTime _fromAppleSeconds(double value) => DateTime.fromMillisecondsSinceEpoch(
-  ((value + 978307200) * Duration.millisecondsPerSecond).round(),
-  isUtc: true,
-);

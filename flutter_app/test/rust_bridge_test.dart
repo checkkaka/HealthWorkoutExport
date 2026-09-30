@@ -163,11 +163,14 @@ void main() {
     final recovery = syncRecoveryReencode(
       recoveryJson: Uint8List.fromList(
         utf8.encode(
-          '''{"primarySourceId":"healthkit","primaryActivityId":"activity-1","title":"恢复","startDate":721692800,"endDate":721696400,"supplementSourceIds":[],"durationSeconds":3600,"uploadData":"AQID","filename":"activity.fit","commute":false}''',
+          '''{"primarySourceId":"healthkit","primaryActivityId":"activity-1","title":"恢复","startDate":721692800,"endDate":721696400,"supplementSourceIds":[],"durationSeconds":3600,"uploadData":"${base64Encode(generatedFit)}","filename":"activity.fit","commute":false}''',
         ),
       ),
     );
-    expect(String.fromCharCodes(recovery), contains('"uploadData":"AQID"'));
+    expect(
+      jsonDecode(utf8.decode(recovery))['uploadData'],
+      base64Encode(generatedFit),
+    );
     final preparedRecovery = syncRecoveryApply(
       recoveryJson: recovery,
       commandJson: Uint8List.fromList(

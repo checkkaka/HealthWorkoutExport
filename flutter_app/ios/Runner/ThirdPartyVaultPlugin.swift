@@ -18,7 +18,7 @@ final class ThirdPartyVaultPlugin: NSObject, FlutterPlugin {
     var accounts: [String] {
       switch self {
       case .xingzhe: ["xingzhe.account", "xingzhe.password", "xingzhe.session"]
-      case .onelap: ["onelap.account", "onelap.password", "onelap.token", "onelap.uid"]
+      case .onelap: ["onelap.account", "onelap.password", "onelap.token", "onelap.uid", "onelap.refresh"]
       }
     }
 
@@ -37,6 +37,7 @@ final class ThirdPartyVaultPlugin: NSObject, FlutterPlugin {
     let password: String
     let token: String
     let uid: String
+    let refreshToken: String?
   }
 
   struct StateEntry: Codable {
@@ -88,7 +89,7 @@ final class ThirdPartyVaultPlugin: NSObject, FlutterPlugin {
         do {
           let authorization = try Self.parseOnelapAuthorization(arguments: call.arguments)
           self.apply(
-            values: [authorization.account, authorization.password, authorization.token, authorization.uid],
+            values: [authorization.account, authorization.password, authorization.token, authorization.uid, authorization.refreshToken],
             for: .onelap,
             result: result
           )
@@ -117,7 +118,8 @@ final class ThirdPartyVaultPlugin: NSObject, FlutterPlugin {
       let token = nonEmpty(arguments["token"] as? String),
       let uid = nonEmpty(arguments["uid"] as? String)
     else { throw AuthorizationError.invalidArguments }
-    return OnelapAuthorization(account: account, password: password, token: token, uid: uid)
+    return OnelapAuthorization(account: account, password: password, token: token, uid: uid,
+      refreshToken: nonEmpty(arguments["refreshToken"] as? String))
   }
 
   static func statusPayload(for vault: Vault, values: [String: String?]) -> [String: Any] {
@@ -154,6 +156,9 @@ final class ThirdPartyVaultPlugin: NSObject, FlutterPlugin {
       {
         payload["token"] = token
         payload["uid"] = uid
+      }
+      if let refreshToken = nonEmpty(values["onelap.refresh"] ?? nil) {
+        payload["refreshToken"] = refreshToken
       }
       return payload
     }
@@ -221,6 +226,7 @@ final class ThirdPartyVaultPlugin: NSObject, FlutterPlugin {
       let data = raw.data(using: .utf8),
       let journal = try? JSONDecoder().decode(VaultJournal.self, from: data),
       journal.previous.map(\.account) == vault.accounts
+        || (vault == .onelap && journal.previous.map(\.account) == Array(vault.accounts.dropLast()))
     else { return purgeUnrecoverableVault(vault) }
     guard restore(journal.previous), remove(account: vault.journalAccount) == nil else {
       return vaultError("\(vault.rawValue)_vault_recovery_failed", "\(vault.displayName)凭据事务恢复失败，请重试")

@@ -11,6 +11,7 @@ final class SyncFilesPlugin: NSObject, FlutterPlugin {
 
   enum FileKind {
     case state
+    case batchSession
     case syncedFIT(String)
     case recovery(String)
   }
@@ -63,6 +64,14 @@ final class SyncFilesPlugin: NSObject, FlutterPlugin {
     do {
       let arguments = call.arguments as? [String: Any]
       switch call.method {
+      case "readBatchSession":
+        result(FlutterStandardTypedData(bytes: try storage.read(.batchSession)))
+      case "writeBatchSession":
+        try storage.write(try Self.data(from: arguments), kind: .batchSession)
+        result(nil)
+      case "deleteBatchSession":
+        try storage.delete(.batchSession)
+        result(nil)
       case "readState":
         result(FlutterStandardTypedData(bytes: try storage.read(.state)))
       case "writeState":
@@ -204,6 +213,8 @@ final class SyncFilesPlugin: NSObject, FlutterPlugin {
     func url(for kind: FileKind) throws -> URL {
       guard let rootURL else { throw StorageError.io("application_support_unavailable") }
       switch kind {
+      case .batchSession:
+        return rootURL.appendingPathComponent("auto-sync-batch.json", isDirectory: false)
       case .state:
         return rootURL.appendingPathComponent("sync_state.json", isDirectory: false)
       case .syncedFIT(let fingerprint):
@@ -287,7 +298,7 @@ final class SyncFilesPlugin: NSObject, FlutterPlugin {
 extension SyncFilesPlugin.FileKind {
   fileprivate var isJSON: Bool {
     switch self {
-    case .state, .recovery: true
+    case .state, .batchSession, .recovery: true
     case .syncedFIT: false
     }
   }
@@ -295,6 +306,7 @@ extension SyncFilesPlugin.FileKind {
   fileprivate var maximumBytes: Int {
     switch self {
     case .state: 16 * 1_024 * 1_024
+    case .batchSession: 4 * 1_024 * 1_024
     case .syncedFIT: 64 * 1_024 * 1_024
     case .recovery: 90 * 1_024 * 1_024
     }
@@ -302,7 +314,7 @@ extension SyncFilesPlugin.FileKind {
 
   fileprivate var usesDedicatedDirectory: Bool {
     switch self {
-    case .state: false
+    case .state, .batchSession: false
     case .syncedFIT, .recovery: true
     }
   }

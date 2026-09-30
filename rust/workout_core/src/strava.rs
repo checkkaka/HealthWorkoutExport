@@ -5,14 +5,14 @@ use reqwest::{
 };
 use serde::Deserialize;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt,
     future::Future,
     sync::{
-        Arc,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::sync::Notify;
@@ -20,6 +20,7 @@ use tokio::sync::Notify;
 const TOKEN_ENDPOINT: &str = "https://www.strava.com/oauth/token";
 const UPLOAD_ENDPOINT: &str = "https://www.strava.com/api/v3/uploads";
 const ACTIVITIES_ENDPOINT: &str = "https://www.strava.com/api/v3/athlete/activities";
+const ATHLETE_ENDPOINT: &str = "https://www.strava.com/api/v3/athlete";
 const ACTIVITY_DETAIL_ENDPOINT: &str = "https://www.strava.com/api/v3/activities/";
 const MAX_INPUT_BYTES: usize = 8 * 1024;
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
@@ -32,6 +33,103 @@ const UPLOAD_POLL_DELAYS_SECONDS: [u64; 7] = [0, 1, 2, 4, 8, 16, 32];
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const POLL_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const ACTIVITY_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StravaRateLimitWindow {
+    pub fifteen_minutes_used: u32,
+    pub fifteen_minutes_limit: u32,
+    pub daily_used: u32,
+    pub daily_limit: u32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct StravaRateLimitUsage {
+    pub overall: StravaRateLimitWindow,
+    pub read: Option<StravaRateLimitWindow>,
+    pub observed_at_unix_seconds: f64,
+    pub rate_limited: bool,
+}
+
+fn parse_rate_limit_headers(
+    headers: &reqwest::header::HeaderMap,
+    status: StatusCode,
+    observed_at_unix_seconds: f64,
+) -> Option<StravaRateLimitUsage> {
+    fn pair(headers: &reqwest::header::HeaderMap, name: &str) -> Option<(u32, u32)> {
+        let mut values = headers.get(name)?.to_str().ok()?.split(',');
+        let first = values.next()?.trim().parse().ok()?;
+        let second = values.next()?.trim().parse().ok()?;
+        values.next().is_none().then_some((first, second))
+    }
+    fn window(limits: (u32, u32), used: (u32, u32)) -> StravaRateLimitWindow {
+        StravaRateLimitWindow {
+            fifteen_minutes_used: used.0,
+            fifteen_minutes_limit: limits.0,
+            daily_used: used.1,
+            daily_limit: limits.1,
+        }
+    }
+    let overall = window(
+        pair(headers, "x-ratelimit-limit")?,
+        pair(headers, "x-ratelimit-usage")?,
+    );
+    let read = pair(headers, "x-readratelimit-limit")
+        .zip(pair(headers, "x-readratelimit-usage"))
+        .map(|(limits, used)| window(limits, used));
+    Some(StravaRateLimitUsage {
+        overall,
+        read,
+        observed_at_unix_seconds,
+        rate_limited: status == StatusCode::TOO_MANY_REQUESTS,
+    })
+}
+
+// Never retain the access token as a cache key, expose one account's quota to another token,
+// or persist account-scoped response metadata into ordinary preferences.
+fn rate_limit_cache() -> &'static Mutex<HashMap<[u8; 32], StravaRateLimitUsage>> {
+    static CACHE: OnceLock<Mutex<HashMap<[u8; 32], StravaRateLimitUsage>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn rate_limit_cache_key(access_token: &str) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(access_token.as_bytes()).into()
+}
+
+pub fn rate_limit_snapshot(access_token: &str) -> Option<StravaRateLimitUsage> {
+    let access_token = valid_upload_input("access_token", access_token).ok()?;
+    rate_limit_cache()
+        .lock()
+        .ok()?
+        .get(&rate_limit_cache_key(access_token))
+        .cloned()
+}
+
+fn record_rate_limits(access_token: &str, response: &Response) -> Option<StravaRateLimitUsage> {
+    let observed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_secs_f64();
+    let usage = parse_rate_limit_headers(response.headers(), response.status(), observed)?;
+    if let Ok(mut cache) = rate_limit_cache().lock() {
+        let key = rate_limit_cache_key(access_token);
+        if cache.len() >= 8
+            && !cache.contains_key(&key)
+            && let Some(oldest) = cache
+                .iter()
+                .min_by(|left, right| {
+                    left.1
+                        .observed_at_unix_seconds
+                        .total_cmp(&right.1.observed_at_unix_seconds)
+                })
+                .map(|(key, _)| *key)
+        {
+            cache.remove(&oldest);
+        }
+        cache.insert(key, usage.clone());
+    }
+    Some(usage)
+}
 
 /// OAuth token endpoint client. It never logs or embeds credential values in errors.
 #[derive(Clone)]
@@ -152,7 +250,7 @@ impl StravaCancellation {
 
     pub fn cancel(&self) {
         if !self.cancelled.swap(true, Ordering::AcqRel) {
-            self.notify.notify_one();
+            self.notify.notify_waiters();
         }
     }
 
@@ -161,12 +259,15 @@ impl StravaCancellation {
     }
 
     async fn cancelled(&self) {
+        let notified = self.notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
         if !self.is_cancelled() {
-            self.notify.notified().await;
+            notified.await;
         }
     }
 
-    async fn run<F: Future>(&self, future: F) -> Result<F::Output, StravaUploadError> {
+    pub(crate) async fn run<F: Future>(&self, future: F) -> Result<F::Output, StravaUploadError> {
         tokio::select! {
             biased;
             _ = self.cancelled() => Err(StravaUploadError::Cancelled),
@@ -240,6 +341,7 @@ pub struct StravaActivityClient {
     client: Client,
     activities_endpoint: Url,
     activity_detail_endpoint: Url,
+    athlete_endpoint: Url,
 }
 
 impl StravaActivityClient {
@@ -254,6 +356,7 @@ impl StravaActivityClient {
             client,
             activities_endpoint: fixed_strava_url(ACTIVITIES_ENDPOINT)?,
             activity_detail_endpoint: fixed_strava_url(ACTIVITY_DETAIL_ENDPOINT)?,
+            athlete_endpoint: fixed_strava_url(ATHLETE_ENDPOINT)?,
         })
     }
 
@@ -286,6 +389,7 @@ impl StravaActivityClient {
                 .await
                 .map_err(|_| StravaActivityError::Cancelled)?
                 .map_err(|_| StravaActivityError::Transport)?;
+            record_rate_limits(access_token, &response);
             activity_status(response.status(), false)?;
             let body = read_activity_body(&mut response, cancellation).await?;
             let entries = serde_json::from_slice::<Vec<serde_json::Value>>(&body)
@@ -309,6 +413,32 @@ impl StravaActivityClient {
         Ok(result)
     }
 
+    /// 与 Swift 设置页一致：GET athlete，仅读取配额响应头，429 也保留有效限额。
+    pub async fn fetch_rate_limit_usage(
+        &self,
+        access_token: &str,
+        cancellation: &StravaCancellation,
+    ) -> Result<StravaRateLimitUsage, StravaActivityError> {
+        let access_token = valid_upload_input("access_token", access_token)
+            .map_err(|_| StravaActivityError::InvalidInput("access_token"))?;
+        let response = cancellation
+            .run(
+                self.client
+                    .get(self.athlete_endpoint.clone())
+                    .bearer_auth(access_token)
+                    .send(),
+            )
+            .await
+            .map_err(|_| StravaActivityError::Cancelled)?
+            .map_err(|_| StravaActivityError::Transport)?;
+        let usage = record_rate_limits(access_token, &response);
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            return usage.ok_or(StravaActivityError::RateLimited);
+        }
+        activity_status(response.status(), false)?;
+        usage.ok_or(StravaActivityError::InvalidResponse)
+    }
+
     /// 拉取单条活动的速度摘要；404 表示活动已删除或当前账号无权查看，返回 `None`。
     pub async fn activity_speed(
         &self,
@@ -325,12 +455,14 @@ impl StravaActivityClient {
         let mut url = self.activity_detail_endpoint.clone();
         url.path_segments_mut()
             .map_err(|_| StravaActivityError::ClientBuild)?
+            .pop_if_empty()
             .push(activity_id);
         let mut response = cancellation
             .run(self.client.get(url).bearer_auth(access_token).send())
             .await
             .map_err(|_| StravaActivityError::Cancelled)?
             .map_err(|_| StravaActivityError::Transport)?;
+        record_rate_limits(access_token, &response);
         if !activity_status(response.status(), true)? {
             return Ok(None);
         }
@@ -345,7 +477,12 @@ impl StravaActivityClient {
 
 fn fixed_strava_url(value: &str) -> Result<Url, StravaActivityError> {
     let url = Url::parse(value).map_err(|_| StravaActivityError::ClientBuild)?;
-    if url.scheme() != "https" || url.host_str() != Some("www.strava.com") || url.port().is_some() {
+    if url.scheme() != "https"
+        || url.host_str() != Some("www.strava.com")
+        || url.port().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
         return Err(StravaActivityError::ClientBuild);
     }
     Ok(url)
@@ -427,6 +564,385 @@ fn parse_remote_activity(value: &serde_json::Value) -> Option<StravaRemoteActivi
         })
 }
 
+/// Swift StravaActivityLookup ranking is distinct from cross-source supplement matching:
+/// remote clocks may differ by 45 minutes, and distance is an optional third fallback.
+pub fn remote_activity_match_score(
+    start_time_seconds: f64,
+    end_time_seconds: f64,
+    distance_meters: Option<f64>,
+    remote: &StravaRemoteActivity,
+) -> Option<f64> {
+    let times = [
+        start_time_seconds,
+        end_time_seconds,
+        remote.start_time_seconds,
+        remote.end_time_seconds,
+    ];
+    if times.iter().any(|value| !value.is_finite())
+        || end_time_seconds < start_time_seconds
+        || remote.end_time_seconds < remote.start_time_seconds
+    {
+        return None;
+    }
+    let local_duration = (end_time_seconds - start_time_seconds).max(1.0);
+    let remote_duration = (remote.end_time_seconds - remote.start_time_seconds).max(1.0);
+    if !local_duration.is_finite() || !remote_duration.is_finite() {
+        return None;
+    }
+    let overlap = end_time_seconds.min(remote.end_time_seconds)
+        - start_time_seconds.max(remote.start_time_seconds);
+    let union = end_time_seconds.max(remote.end_time_seconds)
+        - start_time_seconds.min(remote.start_time_seconds);
+    if overlap > 0.0 && union.is_finite() && union > 0.0 {
+        let ratio = overlap / union;
+        if ratio >= 0.5 {
+            return Some(1.0 + ratio);
+        }
+    }
+    let start_delta = (start_time_seconds - remote.start_time_seconds).abs();
+    const MAX_START_DELTA: f64 = 45.0 * 60.0;
+    if start_delta <= MAX_START_DELTA {
+        let ratio = (local_duration - remote_duration).abs() / local_duration.max(remote_duration);
+        if ratio <= 0.20 {
+            return Some(((1.0 - start_delta / MAX_START_DELTA) * (1.0 - ratio) * 0.99).max(0.01));
+        }
+    }
+    if let (Some(local_distance), Some(remote_distance)) = (distance_meters, remote.distance_meters)
+        && crate::stable_dedupe_matches(
+            start_time_seconds,
+            local_distance,
+            remote.start_time_seconds,
+            remote_distance,
+            Some(local_duration),
+            Some(remote_duration),
+        )
+    {
+        return Some(((1.0 - start_delta / MAX_START_DELTA) * 0.5).max(0.01));
+    }
+    None
+}
+
+/// Preserve source order for equal scores, matching Swift's strict `score > bestScore`.
+pub fn best_remote_activity_match_index(
+    start_time_seconds: f64,
+    end_time_seconds: f64,
+    distance_meters: Option<f64>,
+    candidates: &[StravaRemoteActivity],
+) -> Option<usize> {
+    let mut best = None;
+    let mut best_score = 0.0;
+    for (index, candidate) in candidates.iter().enumerate() {
+        if let Some(score) = remote_activity_match_score(
+            start_time_seconds,
+            end_time_seconds,
+            distance_meters,
+            candidate,
+        ) && score > best_score
+        {
+            best = Some(index);
+            best_score = score;
+        }
+    }
+    best
+}
+
+const MAX_WEB_INPUT_BYTES: usize = 8 * 1024 * 1024;
+const MAX_STREAM_POINTS: usize = 1_000_000;
+
+fn web_list_items(bytes: &[u8]) -> Result<Vec<serde_json::Value>, StravaActivityError> {
+    if bytes.len() > MAX_WEB_INPUT_BYTES {
+        return Err(StravaActivityError::ResponseTooLarge);
+    }
+    let root: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|_| StravaActivityError::InvalidResponse)?;
+    let items = root
+        .as_array()
+        .or_else(|| root.get("models").and_then(serde_json::Value::as_array))
+        .or_else(|| root.get("activities").and_then(serde_json::Value::as_array))
+        .ok_or(StravaActivityError::InvalidResponse)?;
+    if items.len() > 10_000 {
+        return Err(StravaActivityError::ResponseTooLarge);
+    }
+    Ok(items.clone())
+}
+
+/// Decode one training page only. The native/Dart caller owns pagination and date filtering.
+pub fn parse_web_remote_activities(
+    bytes: &[u8],
+) -> Result<Vec<StravaRemoteActivity>, StravaActivityError> {
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    for mut item in web_list_items(bytes)? {
+        if let Some(object) = item.as_object_mut() {
+            if object
+                .get("start_date")
+                .and_then(serde_json::Value::as_str)
+                .is_none()
+                && object
+                    .get("start_date_local")
+                    .and_then(serde_json::Value::as_str)
+                    .is_none()
+                && let Some(start) = object.get("start_time").cloned()
+            {
+                object.insert("start_date".into(), start);
+            }
+            if json_finite_number(object.get("elapsed_time")).is_none()
+                && let Some(elapsed) = object.get("moving_time").cloned()
+            {
+                object.insert("elapsed_time".into(), elapsed);
+            }
+        }
+        if let Some(activity) = parse_remote_activity(&item)
+            && seen.insert(activity.id.clone())
+        {
+            result.push(activity);
+        }
+    }
+    Ok(result)
+}
+
+pub fn parse_web_listed_activity_speeds(
+    bytes: &[u8],
+) -> Result<Vec<StravaActivitySpeedInfo>, StravaActivityError> {
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    for item in web_list_items(bytes)? {
+        let Some(id) = json_numeric_id(item.get("id")) else {
+            continue;
+        };
+        let Some(mut info) = parse_activity_speed(&id, &item) else {
+            continue;
+        };
+        if info.start_time_seconds.is_none() {
+            info.start_time_seconds = parse_strava_time(item.get("start_time"));
+        }
+        if !normalize_web_cycling_sport(&mut info) || !seen.insert(id) {
+            continue;
+        }
+        result.push(info);
+    }
+    Ok(result)
+}
+
+fn is_cycling_sport(sport_type: &str) -> bool {
+    let sport = sport_type.trim().to_lowercase();
+    [
+        "ride",
+        "cycling",
+        "cycle",
+        "bike",
+        "biking",
+        "gravel",
+        "ebike",
+        "e-bike",
+        "virtualride",
+        "handcycle",
+        "velomobile",
+        "骑行",
+        "骑车",
+        "公路",
+        "山地",
+        "砾石",
+    ]
+    .iter()
+    .any(|word| sport.contains(word))
+}
+
+fn normalize_web_cycling_sport(info: &mut StravaActivitySpeedInfo) -> bool {
+    if !info.sport_type.is_empty() {
+        return is_cycling_sport(&info.sport_type);
+    }
+    let name = info.name.to_lowercase();
+    if ["健走", "步行", "跑步", "walk", "run"]
+        .iter()
+        .any(|word| name.contains(word))
+    {
+        return false;
+    }
+    info.sport_type = "Ride".into();
+    true
+}
+
+/// Swift's 99.5th percentile ignores isolated spikes; retain only finite positive samples.
+pub fn velocity_stream_peak(bytes: &[u8]) -> Result<f64, StravaActivityError> {
+    if bytes.len() > MAX_WEB_INPUT_BYTES {
+        return Err(StravaActivityError::ResponseTooLarge);
+    }
+    let root: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|_| StravaActivityError::InvalidResponse)?;
+    let raw = if let Some(items) = root.as_array() {
+        items.iter().find_map(|item| {
+            let kind = item.get("type")?.as_str()?.to_ascii_lowercase();
+            if !kind.contains("velocity") && !kind.contains("speed") {
+                return None;
+            }
+            item.get("data")?.as_array()
+        })
+    } else {
+        ["velocity_smooth", "velocity", "speed"]
+            .iter()
+            .find_map(|key| {
+                let value = root.get(*key)?;
+                value.as_array().or_else(|| value.get("data")?.as_array())
+            })
+    };
+    let Some(raw) = raw else {
+        return Ok(0.0);
+    };
+    if raw.len() > MAX_STREAM_POINTS {
+        return Err(StravaActivityError::ResponseTooLarge);
+    }
+    let mut speeds: Vec<_> = raw
+        .iter()
+        .filter_map(|value| json_positive_number(Some(value)))
+        .collect();
+    if speeds.is_empty() {
+        return Ok(0.0);
+    }
+    let index = (speeds.len() - 1) * 995 / 1000;
+    let (_, peak, _) = speeds.select_nth_unstable_by(index, f64::total_cmp);
+    Ok(*peak)
+}
+
+fn first_json_field(html: &str, name: &str) -> Option<serde_json::Value> {
+    let marker = format!("\"{name}\"");
+    for (_, suffix) in html
+        .match_indices(&marker)
+        .take(16)
+        .map(|(index, _)| (index, &html[index + marker.len()..]))
+    {
+        let Some(value) = suffix.trim_start().strip_prefix(':') else {
+            continue;
+        };
+        if let Some(Ok(value)) = serde_json::Deserializer::from_str(value.trim_start())
+            .into_iter::<serde_json::Value>()
+            .next()
+        {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn balanced_json_object(html: &str, start: usize) -> Option<&str> {
+    let mut depth = 0usize;
+    let mut quoted = false;
+    let mut escaped = false;
+    for (offset, byte) in html.as_bytes()[start..].iter().copied().enumerate() {
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                quoted = false;
+            }
+            continue;
+        }
+        match byte {
+            b'"' => quoted = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(&html[start..=start + offset]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn activity_json_from_html(html: &str) -> Option<serde_json::Value> {
+    for (marker, _) in html.match_indices("\"max_speed\"").take(4) {
+        for (start, _) in html[..marker].rmatch_indices('{').take(8) {
+            let Some(text) = balanced_json_object(html, start) else {
+                continue;
+            };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+                continue;
+            };
+            if value.get("max_speed").is_some() {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+/// No cookies or network access. Native code supplies bounded authenticated page/stream data.
+/// A malformed page fails closed instead of becoming a zero-speed synthetic activity.
+pub fn parse_web_activity_speed(
+    activity_id: &str,
+    html: &str,
+    streams_json: Option<&str>,
+) -> Result<Option<StravaActivitySpeedInfo>, StravaActivityError> {
+    let activity_id = valid_remote_activity_id(activity_id)?;
+    if html.len() > MAX_WEB_INPUT_BYTES
+        || streams_json.is_some_and(|value| value.len() > MAX_WEB_INPUT_BYTES)
+    {
+        return Err(StravaActivityError::ResponseTooLarge);
+    }
+    let value = activity_json_from_html(html).unwrap_or_else(|| {
+        let mut fields = serde_json::Map::new();
+        for name in [
+            "max_speed",
+            "average_speed",
+            "sport_type",
+            "type",
+            "name",
+            "best_efforts",
+            "start_date",
+            "start_date_local",
+        ] {
+            if let Some(value) = first_json_field(html, name) {
+                fields.insert(name.into(), value);
+            }
+        }
+        serde_json::Value::Object(fields)
+    });
+    if !["max_speed", "average_speed", "best_efforts"]
+        .iter()
+        .any(|field| value.get(*field).is_some())
+    {
+        return Err(StravaActivityError::InvalidResponse);
+    }
+    if let Some(id) = json_numeric_id(value.get("id"))
+        && id != activity_id
+    {
+        return Err(StravaActivityError::InvalidResponse);
+    }
+    let mut info =
+        parse_activity_speed(activity_id, &value).ok_or(StravaActivityError::InvalidResponse)?;
+    if !normalize_web_cycling_sport(&mut info) {
+        return Ok(None);
+    }
+    let stream_peak = streams_json
+        .and_then(|value| velocity_stream_peak(value.as_bytes()).ok())
+        .unwrap_or(0.0);
+    info.best_effort_peak_mps = info.best_effort_peak_mps.max(stream_peak);
+    info.max_speed_mps = info.listed_max_speed_mps.max(info.best_effort_peak_mps);
+    Ok(Some(info))
+}
+
+/// Swift StravaSpeedAnomaly rules: only cycling; summary/best effort ≥80km/h,
+/// or a combined peak ≥80km/h together with average ≥40km/h.
+pub fn speed_is_anomalous(
+    sport_type: &str,
+    listed_max_speed_mps: f64,
+    best_effort_peak_mps: f64,
+    max_speed_mps: f64,
+    average_speed_mps: f64,
+) -> bool {
+    let cycling = is_cycling_sport(sport_type);
+    let at_least = |value: f64, threshold: f64| value.is_finite() && value >= threshold;
+    cycling
+        && (at_least(listed_max_speed_mps, 80.0 / 3.6)
+            || at_least(best_effort_peak_mps, 80.0 / 3.6)
+            || (at_least(max_speed_mps, 80.0 / 3.6) && at_least(average_speed_mps, 40.0 / 3.6)))
+}
+
 fn parse_activity_speed(id: &str, value: &serde_json::Value) -> Option<StravaActivitySpeedInfo> {
     let object = value.as_object()?;
     let fallback_name = format!("活动 {id}");
@@ -438,11 +954,16 @@ fn parse_activity_speed(id: &str, value: &serde_json::Value) -> Option<StravaAct
         .map(|efforts| {
             efforts.iter().fold(0.0_f64, |peak, effort| {
                 let distance = json_non_negative_number(effort.get("distance")).unwrap_or(0.0);
-                let elapsed = json_positive_number(effort.get("elapsed_time"))
-                    .or_else(|| json_positive_number(effort.get("moving_time")))
+                let elapsed = json_finite_number(effort.get("elapsed_time"))
+                    .or_else(|| json_finite_number(effort.get("moving_time")))
                     .unwrap_or(0.0);
                 if distance >= 200.0 && elapsed > 0.0 {
-                    peak.max(distance / elapsed)
+                    let speed = distance / elapsed;
+                    if speed.is_finite() {
+                        peak.max(speed)
+                    } else {
+                        peak
+                    }
                 } else {
                     peak
                 }
@@ -484,13 +1005,17 @@ fn parse_strava_time(value: Option<&serde_json::Value>) -> Option<f64> {
     seconds.is_finite().then_some(seconds)
 }
 
-fn json_non_negative_number(value: Option<&serde_json::Value>) -> Option<f64> {
+fn json_finite_number(value: Option<&serde_json::Value>) -> Option<f64> {
     let number = match value? {
         serde_json::Value::Number(number) => number.as_f64(),
         serde_json::Value::String(text) => text.trim().parse::<f64>().ok(),
         _ => None,
     }?;
-    (number.is_finite() && number >= 0.0).then_some(number)
+    number.is_finite().then_some(number)
+}
+
+fn json_non_negative_number(value: Option<&serde_json::Value>) -> Option<f64> {
+    json_finite_number(value).filter(|number| *number >= 0.0)
 }
 
 fn json_positive_number(value: Option<&serde_json::Value>) -> Option<f64> {
@@ -669,6 +1194,7 @@ impl StravaUploadClient {
             .run(request)
             .await?
             .map_err(|_| StravaUploadError::Transport)?;
+        record_rate_limits(access_token, &response);
         match response.status() {
             StatusCode::TOO_MANY_REQUESTS => return Err(StravaUploadError::RateLimited),
             StatusCode::UNAUTHORIZED if auth_retry_used => {
@@ -730,7 +1256,7 @@ impl StravaUploadClient {
         cancellation: &StravaCancellation,
     ) -> Result<StravaUploadResult, StravaUploadError> {
         let access_token = valid_upload_input("access_token", access_token)?;
-        if resume.upload_id.trim().is_empty() || resume.upload_id.len() > MAX_RESPONSE_BYTES {
+        if !valid_upload_id(&resume.upload_id) {
             return Err(StravaUploadError::InvalidInput("upload_id"));
         }
         if resume.attempt_index >= self.poll_delays.len() {
@@ -774,6 +1300,7 @@ impl StravaUploadClient {
                 .send();
             let response = cancellation.run(request).await?;
             let Ok(mut response) = response else { continue };
+            record_rate_limits(access_token, &response);
             match response.status() {
                 StatusCode::TOO_MANY_REQUESTS => return Err(StravaUploadError::RateLimited),
                 StatusCode::UNAUTHORIZED if auth_retry_used => {
@@ -870,7 +1397,8 @@ fn json_numeric_id(value: Option<&serde_json::Value>) -> Option<String> {
         serde_json::Value::Number(value) => value.to_string(),
         _ => return None,
     };
-    (!text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())).then_some(text)
+    (!text.is_empty() && text.len() <= 32 && text.bytes().all(|byte| byte.is_ascii_digit()))
+        .then_some(text)
 }
 
 fn json_upload_id(value: Option<&serde_json::Value>) -> Option<String> {
@@ -879,7 +1407,14 @@ fn json_upload_id(value: Option<&serde_json::Value>) -> Option<String> {
         serde_json::Value::Number(value) if value.is_i64() || value.is_u64() => value.to_string(),
         _ => return None,
     };
-    (!text.is_empty()).then_some(text)
+    valid_upload_id(&text).then_some(text)
+}
+
+fn valid_upload_id(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= 256
+        && !matches!(value.trim(), "." | "..")
+        && !value.chars().any(char::is_control)
 }
 
 fn is_duplicate_upload_response(text: &str) -> bool {
@@ -901,7 +1436,7 @@ pub fn parse_duplicate_activity_id(text: &str) -> Option<String> {
             .chars()
             .take_while(char::is_ascii_digit)
             .collect();
-        if !id.is_empty() {
+        if !id.is_empty() && id.len() <= 32 {
             return Some(id);
         }
     }
@@ -913,7 +1448,7 @@ pub fn parse_duplicate_activity_id(text: &str) -> Option<String> {
         .chars()
         .take_while(char::is_ascii_digit)
         .collect();
-    (!id.is_empty()).then_some(id)
+    (!id.is_empty() && id.len() <= 32).then_some(id)
 }
 
 pub fn cleaned_upload_message(raw: &str) -> String {
@@ -1088,7 +1623,10 @@ impl fmt::Debug for StravaToken {
 }
 
 fn valid_response_value(value: &str) -> Option<&str> {
-    (!value.trim().is_empty() && value.len() <= MAX_INPUT_BYTES).then_some(value)
+    (!value.is_empty()
+        && value.len() <= MAX_INPUT_BYTES
+        && value.bytes().all(|byte| byte.is_ascii_graphic()))
+    .then_some(value)
 }
 
 #[derive(Deserialize)]
@@ -1946,5 +2484,422 @@ mod tests {
         assert!(fixed_strava_url("https://www.strava.com/api/v3/activities/").is_ok());
         assert!(fixed_strava_url("http://www.strava.com/api/v3/activities/").is_err());
         assert!(fixed_strava_url("https://example.com/api/v3/activities/").is_err());
+    }
+    #[tokio::test]
+    async fn activity_speed_uses_exact_api_detail_path() {
+        let (endpoint, server) = mock_upload_server(vec![(200, r#"{"max_speed":12.5}"#)]);
+        let base = endpoint.replace("/uploads", "/activities/");
+        let client = super::StravaActivityClient {
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            activities_endpoint: reqwest::Url::parse(&base).unwrap(),
+            activity_detail_endpoint: reqwest::Url::parse(&base).unwrap(),
+            athlete_endpoint: reqwest::Url::parse(&base).unwrap(),
+        };
+        let activity = client
+            .activity_speed("token", "42", &StravaCancellation::new())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(activity.max_speed_mps, 12.5);
+        let requests = server.join().unwrap();
+        assert!(
+            requests[0]
+                .head
+                .starts_with("GET /api/v3/activities/42 HTTP/1.1\r\n")
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_resume_rejects_dot_segments_controls_and_oversized_ids_without_request() {
+        let (endpoint, server) = mock_upload_server(vec![]);
+        let client = StravaUploadClient::for_test(endpoint, 1024).unwrap();
+        for id in [
+            ".".to_owned(),
+            "..".to_owned(),
+            "private\nvalue".to_owned(),
+            "x".repeat(257),
+        ] {
+            assert_eq!(
+                client
+                    .resume_poll_after_refresh(
+                        "token",
+                        super::StravaPollResume::new(id.clone(), 0),
+                        &StravaCancellation::new(),
+                    )
+                    .await
+                    .unwrap_err(),
+                StravaUploadError::InvalidInput("upload_id")
+            );
+            assert!(super::json_upload_id(Some(&serde_json::json!(id))).is_none());
+        }
+        assert!(server.join().unwrap().is_empty());
+    }
+
+    #[test]
+    fn malformed_token_values_and_overflowing_speed_are_rejected() {
+        for token in ["token\r\nInjected: value", "token value", "token\tvalue"] {
+            assert!(super::valid_response_value(token).is_none());
+        }
+        let info = parse_activity_speed(
+            "42",
+            &serde_json::json!({
+                "best_efforts": [{"distance": 1e300, "elapsed_time": 1e-300}]
+            }),
+        )
+        .unwrap();
+        assert_eq!(info.best_effort_peak_mps, 0.0);
+        assert!(fixed_strava_url("https://user:secret@www.strava.com/api/v3/activities/").is_err());
+    }
+
+    #[tokio::test]
+    async fn cancellation_wakes_all_existing_and_future_waiters() {
+        let cancellation = StravaCancellation::new();
+        let first = cancellation.clone();
+        let second = cancellation.clone();
+        let a = tokio::spawn(async move { first.run(std::future::pending::<()>()).await });
+        let b = tokio::spawn(async move { second.run(std::future::pending::<()>()).await });
+        tokio::task::yield_now().await;
+        cancellation.cancel();
+        for task in [a, b] {
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(1), task)
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                Err(StravaUploadError::Cancelled)
+            );
+        }
+        assert_eq!(
+            cancellation.run(std::future::pending::<()>()).await,
+            Err(StravaUploadError::Cancelled)
+        );
+    }
+    #[test]
+    fn parses_swift_quota_header_fixtures_and_preserves_429_without_read_limits() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        for (name, value) in [
+            ("x-ratelimit-limit", "200,2000"),
+            ("x-ratelimit-usage", "7,81"),
+            ("x-readratelimit-limit", "100,1000"),
+            ("x-readratelimit-usage", "5,60"),
+        ] {
+            headers.insert(name, value.parse().unwrap());
+        }
+        let usage =
+            super::parse_rate_limit_headers(&headers, reqwest::StatusCode::OK, 123.0).unwrap();
+        assert_eq!(
+            usage.overall,
+            super::StravaRateLimitWindow {
+                fifteen_minutes_used: 7,
+                fifteen_minutes_limit: 200,
+                daily_used: 81,
+                daily_limit: 2000
+            }
+        );
+        assert_eq!(usage.read.unwrap().daily_used, 60);
+        headers.remove("x-readratelimit-limit");
+        headers.remove("x-readratelimit-usage");
+        headers.insert("x-ratelimit-usage", "200,801".parse().unwrap());
+        let usage = super::parse_rate_limit_headers(
+            &headers,
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            124.0,
+        )
+        .unwrap();
+        assert!(usage.rate_limited);
+        assert_eq!(
+            usage.overall.fifteen_minutes_used,
+            usage.overall.fifteen_minutes_limit
+        );
+        assert!(usage.read.is_none());
+        for invalid in ["1", "-1,2", "1,2,3", "invalid,2", "4294967296,2"] {
+            headers.insert("x-ratelimit-usage", invalid.parse().unwrap());
+            assert!(
+                super::parse_rate_limit_headers(&headers, reqwest::StatusCode::OK, 0.0).is_none()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn quota_fetch_keeps_429_headers_and_cache_is_token_scoped() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = reqwest::Url::parse(&format!(
+            "http://{}/api/v3/athlete",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let request = read_request(&mut socket);
+            write!(socket, "HTTP/1.1 429 Limited\r\nX-RateLimit-Limit: 200,2000\r\nX-RateLimit-Usage: 200,801\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+            request
+        });
+        let client = super::StravaActivityClient {
+            client: reqwest::Client::new(),
+            activities_endpoint: url.clone(),
+            activity_detail_endpoint: url.clone(),
+            athlete_endpoint: url,
+        };
+        let usage = client
+            .fetch_rate_limit_usage("quota_test_token", &StravaCancellation::new())
+            .await
+            .unwrap();
+        assert!(usage.rate_limited);
+        assert_eq!(usage.overall.daily_used, 801);
+        assert_eq!(super::rate_limit_snapshot("quota_test_token"), Some(usage));
+        assert!(super::rate_limit_snapshot("other_quota_test_token").is_none());
+        assert!(
+            server
+                .join()
+                .unwrap()
+                .head
+                .starts_with("GET /api/v3/athlete HTTP/1.1\r\n")
+        );
+    }
+    #[test]
+    fn cycling_speed_anomaly_matches_swift_thresholds_and_sport_filter() {
+        for sport in ["Ride", "VirtualRide", "GravelRide", "EBikeRide", "骑行"] {
+            assert!(super::speed_is_anomalous(sport, 80.0 / 3.6, 0.0, 0.0, 0.0));
+            assert!(super::speed_is_anomalous(sport, 0.0, 80.0 / 3.6, 0.0, 0.0));
+            assert!(!super::speed_is_anomalous(
+                sport,
+                0.0,
+                0.0,
+                80.0 / 3.6,
+                39.0 / 3.6
+            ));
+            assert!(super::speed_is_anomalous(
+                sport,
+                0.0,
+                0.0,
+                80.0 / 3.6,
+                40.0 / 3.6
+            ));
+        }
+        for sport in ["Run", "Walk", "Swim", "", "Workout"] {
+            assert!(!super::speed_is_anomalous(
+                sport, 100.0, 100.0, 100.0, 100.0
+            ));
+        }
+        assert!(!super::speed_is_anomalous(
+            "Ride",
+            f64::NAN,
+            f64::INFINITY,
+            0.0,
+            0.0
+        ));
+    }
+    fn lookup_candidate(
+        start_offset: f64,
+        minutes: f64,
+        distance: Option<f64>,
+    ) -> super::StravaRemoteActivity {
+        super::StravaRemoteActivity {
+            id: "42".into(),
+            start_time_seconds: 1_700_000_000.0 + start_offset,
+            end_time_seconds: 1_700_000_000.0 + start_offset + minutes * 60.0,
+            distance_meters: distance,
+        }
+    }
+
+    #[test]
+    fn remote_match_ports_swift_iou_clock_skew_and_distance_fallback_fixtures() {
+        let base = 1_700_000_000.0;
+        let matches = |minutes: f64, distance, candidate| {
+            super::best_remote_activity_match_index(
+                base,
+                base + minutes * 60.0,
+                distance,
+                &[candidate],
+            )
+            .is_some()
+        };
+        assert!(matches(90.0, None, lookup_candidate(120.0, 88.0, None)));
+        assert!(!matches(
+            120.0,
+            None,
+            lookup_candidate(-13.0 * 60.0, 12.0, None)
+        ));
+        assert!(matches(
+            50.0,
+            None,
+            lookup_candidate(39.0 * 60.0, 48.0, None)
+        ));
+        assert!(matches(
+            24.0,
+            Some(12040.0),
+            lookup_candidate(2.0 * 60.0, 30.0, Some(11800.0))
+        ));
+        assert!(!matches(
+            90.0,
+            None,
+            lookup_candidate(10.0 * 60.0, 10.0, None)
+        ));
+        assert!(!matches(
+            120.0,
+            None,
+            lookup_candidate(5.0 * 60.0, 12.0, None)
+        ));
+        let candidates = [
+            lookup_candidate(0.0, 60.0, None),
+            lookup_candidate(60.0, 119.0, None),
+        ];
+        assert_eq!(
+            super::best_remote_activity_match_index(base, base + 120.0 * 60.0, None, &candidates),
+            Some(1)
+        );
+        assert_eq!(
+            super::best_remote_activity_match_index(base, base + 3600.0, None, &[]),
+            None
+        );
+    }
+
+    #[test]
+    fn remote_match_prefers_iou_to_distance_and_rejects_invalid_intervals() {
+        let base = 1_700_000_000.0;
+        let candidates = [
+            lookup_candidate(120.0, 10.0, Some(12000.0)),
+            lookup_candidate(0.0, 60.0, None),
+        ];
+        assert_eq!(
+            super::best_remote_activity_match_index(
+                base,
+                base + 3600.0,
+                Some(12000.0),
+                &candidates
+            ),
+            Some(1)
+        );
+        let tied = [
+            lookup_candidate(0.0, 60.0, None),
+            lookup_candidate(0.0, 60.0, None),
+        ];
+        assert_eq!(
+            super::best_remote_activity_match_index(base, base + 3600.0, None, &tied),
+            Some(0)
+        );
+        assert_eq!(
+            super::best_remote_activity_match_index(f64::NAN, base, None, &tied),
+            None
+        );
+        assert_eq!(
+            super::best_remote_activity_match_index(base + 1.0, base, None, &tied),
+            None
+        );
+        let invalid = [super::StravaRemoteActivity {
+            id: "1".into(),
+            start_time_seconds: base,
+            end_time_seconds: f64::INFINITY,
+            distance_meters: None,
+        }];
+        assert_eq!(
+            super::best_remote_activity_match_index(base, base + 3600.0, None, &invalid),
+            None
+        );
+    }
+    #[test]
+    fn web_training_pages_support_legacy_shapes_fallbacks_and_safe_ids() {
+        let page = serde_json::json!({"models":[
+            {"id":1,"start_time":"2024-02-03T04:05:06Z","moving_time":3600,"distance":12000,"type":"Ride","max_speed":12},
+            {"id":1,"start_date":"2024-02-03T04:05:06Z","elapsed_time":3600,"sport_type":"Ride"},
+            {"id":"bad/path","start_date":"2024-02-03T04:05:06Z","elapsed_time":3600},
+            {"id":2,"start_date":"2024-02-03T04:05:06Z","elapsed_time":0,"sport_type":"Walk"},
+            {"id":3,"name":"Morning Run","max_speed":8}
+        ]});
+        let bytes = serde_json::to_vec(&page).unwrap();
+        let remote = super::parse_web_remote_activities(&bytes).unwrap();
+        assert_eq!(remote.len(), 1);
+        assert_eq!(remote[0].id, "1");
+        assert_eq!(
+            remote[0].end_time_seconds - remote[0].start_time_seconds,
+            3600.0
+        );
+        let speed = super::parse_web_listed_activity_speeds(&bytes).unwrap();
+        assert_eq!(speed.len(), 1);
+        assert_eq!(speed[0].sport_type, "Ride");
+        assert!(super::parse_web_remote_activities(br#"{"error":"private-login-value"}"#).is_err());
+        assert!(
+            super::parse_web_remote_activities(br#"{"activities":[]}"#)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn web_velocity_percentile_accepts_all_swift_shapes_and_ignores_one_outlier() {
+        let mut samples = vec![serde_json::json!(10.0); 199];
+        samples.push(serde_json::json!(9000.0));
+        for root in [
+            serde_json::json!([{"type":"velocity_smooth","data":samples}]),
+            serde_json::json!({"velocity_smooth":samples}),
+            serde_json::json!({"velocity":{"data":samples}}),
+            serde_json::json!({"speed":samples}),
+        ] {
+            assert_eq!(
+                super::velocity_stream_peak(&serde_json::to_vec(&root).unwrap()).unwrap(),
+                10.0
+            );
+        }
+        let sustained = serde_json::json!({"velocity_smooth":["NaN","inf",-1,0,"30",40,50]});
+        assert_eq!(
+            super::velocity_stream_peak(&serde_json::to_vec(&sustained).unwrap()).unwrap(),
+            40.0
+        );
+        assert_eq!(
+            super::velocity_stream_peak(br#"{"velocity_smooth":[]}"#).unwrap(),
+            0.0
+        );
+    }
+
+    #[test]
+    fn web_speed_combines_best_efforts_streams_and_escaped_json_without_cookie_access() {
+        let html = r#"<script>var activity={"id":42,"name":"Ride \"with {braces}\"","sport_type":"Ride","max_speed":5,"average_speed":3,"best_efforts":[{"distance":8046.72,"elapsed_time":1}]};</script>"#;
+        let info =
+            super::parse_web_activity_speed("42", html, Some(r#"{"velocity_smooth":[10,11,12]}"#))
+                .unwrap()
+                .unwrap();
+        assert_eq!(info.best_effort_peak_mps, 8046.72);
+        assert!(info.name.contains("with {braces}"));
+        let stream_only = super::parse_web_activity_speed(
+            "42",
+            r#"{"id":42,"sport_type":"Ride","max_speed":5}"#,
+            Some(r#"{"speed":[30,31,32]}"#),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(stream_only.best_effort_peak_mps, 31.0);
+        assert!(super::speed_is_anomalous(
+            &stream_only.sport_type,
+            stream_only.listed_max_speed_mps,
+            stream_only.best_effort_peak_mps,
+            stream_only.max_speed_mps,
+            0.0
+        ));
+        assert!(
+            super::parse_web_activity_speed("42", r#"{"max_speed":90,"sport_type":"Walk"}"#, None)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            super::parse_web_activity_speed("42", r#"{"max_speed":90,"name":"晨间跑步"}"#, None)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            super::parse_web_activity_speed("42", r#"{"id":43,"max_speed":90}"#, None).is_err()
+        );
+        assert!(super::parse_web_activity_speed("42", "<html>Log in</html>", None).is_err());
+    }
+    #[test]
+    fn best_effort_zero_elapsed_does_not_fall_back_to_moving_time_or_false_anomaly() {
+        let info = parse_activity_speed("42",&serde_json::json!({
+            "sport_type":"Ride", "best_efforts":[{"distance":8000,"elapsed_time":0,"moving_time":1}]
+        })).unwrap();
+        assert_eq!(info.best_effort_peak_mps, 0.0);
+        let page=br#"{"activities":[{"id":1,"start_date":null,"start_time":"2024-02-03T04:05:06Z","elapsed_time":null,"moving_time":3600}]}"#;
+        assert_eq!(super::parse_web_remote_activities(page).unwrap().len(), 1);
     }
 }

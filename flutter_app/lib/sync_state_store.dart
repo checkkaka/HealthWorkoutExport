@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show ValueNotifier;
 
 import 'src/rust/api/simple.dart' as rust;
 
@@ -29,6 +30,14 @@ final class SyncFilesChannel {
   final MethodChannel _channel;
 
   Future<Uint8List> readState() => _read('readState');
+
+  Future<Uint8List> readBatchSession() => _read('readBatchSession');
+
+  Future<void> writeBatchSession(Uint8List bytes) =>
+      _write('writeBatchSession', bytes);
+
+  Future<void> deleteBatchSession() =>
+      _channel.invokeMethod<void>('deleteBatchSession');
 
   Future<void> writeState(Uint8List bytes) => _write('writeState', bytes);
 
@@ -81,6 +90,8 @@ final class SyncPendingRecord {
     this.distanceMeters,
     this.durationSeconds,
     this.batchAt,
+    this.uploadChannel,
+    this.hasVirtualPower,
   });
 
   final String fingerprint;
@@ -93,6 +104,8 @@ final class SyncPendingRecord {
   final double? distanceMeters;
   final double? durationSeconds;
   final DateTime? batchAt;
+  final SyncUploadChannel? uploadChannel;
+  final bool? hasVirtualPower;
 
   Map<String, Object?> toJson() => {
     'fingerprint': fingerprint,
@@ -106,11 +119,14 @@ final class SyncPendingRecord {
     if (distanceMeters != null) 'distanceMeters': distanceMeters,
     if (durationSeconds != null) 'durationSeconds': durationSeconds,
     if (batchAt != null) 'batchAt': _appleSeconds(batchAt!),
+    if (uploadChannel != null) 'uploadChannel': uploadChannel!.name,
+    if (hasVirtualPower != null) 'hasVirtualPower': hasVirtualPower,
   };
 }
 
 /// 串行执行原生读取 → Rust 校验/转换 → 原生原子写，防止并发更新互相覆盖。
 final class SyncStateStore {
+  static final ValueNotifier<int> changes = ValueNotifier(0);
   SyncStateStore()
     : _files = const SyncFilesChannel(),
       _applyRust = rust.syncStateApply,
@@ -128,7 +144,8 @@ final class SyncStateStore {
   final SyncStateApply _applyRust;
   final SyncRecoveryCodec _recoveryCodec;
   final SyncRecoveryApply _applyRecoveryRust;
-  Future<void> _tail = Future<void>.value();
+  // 所有实例访问同一设备状态文件，锁必须跨页面/控制器实例共享。
+  static Future<void> _tail = Future<void>.value();
 
   Future<Map<String, Object?>> allRecords() => _serialized(() async {
     final validated = _applyRust(
@@ -218,6 +235,16 @@ final class SyncStateStore {
     'remoteId': remoteId,
   });
 
+  Future<void> setRemoteId({
+    required String fingerprint,
+    required String remoteId,
+  }) => _mutate({
+    'operation': 'setRemoteId',
+    'fingerprint': fingerprint,
+    'remoteId': remoteId,
+    'updatedAt': _appleSeconds(DateTime.now()),
+  });
+
   Future<void> markFailed({
     required String fingerprint,
     required DateTime updatedAt,
@@ -256,7 +283,11 @@ final class SyncStateStore {
       commandJson: _command({'operation': 'clear'}),
     );
     await _files.writeState(cleared);
+    changes.value++;
   });
+
+  Future<Uint8List> readSyncedFit(String fingerprint) =>
+      _serialized(() => _files.readSyncedFit(fingerprint));
 
   Future<Uint8List> readRecovery(String fingerprint) => _serialized(() async {
     final bytes = await _files.readRecovery(fingerprint);
@@ -277,13 +308,14 @@ final class SyncStateStore {
     required String fingerprint,
     required Uint8List recoveryJson,
     String? remoteIdToReplace,
+    String? externalId,
   }) => _serialized(() async {
     final source = await _readRecoveryOrInitial(fingerprint, recoveryJson);
     final updated = _applyRecoveryRust(
       recoveryJson: source,
       commandJson: _command({
         'operation': 'prepare',
-        'externalId': '$fingerprint-resync-${_randomHex(16)}',
+        'externalId': externalId ?? '$fingerprint-resync-${_randomHex(16)}',
         'remoteIdToReplace': remoteIdToReplace,
       }),
     );
@@ -342,6 +374,7 @@ final class SyncStateStore {
       commandJson: _command(command),
     );
     await _files.writeState(updated);
+    changes.value++;
   }
 
   Future<Uint8List> _readStateOrEmpty() async {

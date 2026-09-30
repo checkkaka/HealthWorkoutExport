@@ -1,0 +1,47 @@
+00:00 +0: loading <worktree>/flutter_app/test/date_range_test.dart
+00:00 +0: <worktree>/flutter_app/test/date_range_test.dart: 近7天、30天和今年以当前时刻为半开区间终点
+00:00 +1: <worktree>/flutter_app/test/date_range_test.dart: 全部从本地日历的2000年1月1日开始
+00:00 +2: <worktree>/flutter_app/test/date_range_test.dart: 自定义范围会归一反向日期并包含结束日
+00:00 +3: <worktree>/flutter_app/test/date_range_test.dart: 当天按本地日历半开区间，近90天以当前时刻为终点
+00:00 +4: <worktree>/flutter_app/test/native_channels_test.dart: StravaVaultChannel 只暴露安全状态、按用途租约、typed commit 与 typed clear
+00:00 +5: <worktree>/flutter_app/test/native_channels_test.dart: StravaVaultChannel 秘密参数校验错误与租约字符串不会泄漏秘密
+00:00 +6: <worktree>/flutter_app/test/native_channels_test.dart: ThirdPartyVaultChannel 行者和顽鹿只通过固定 typed 方法读写凭据
+00:00 +7: <worktree>/flutter_app/test/native_channels_test.dart: ThirdPartyVaultChannel typed 凭据校验和字符串表示不泄漏秘密
+00:00 +8: <worktree>/flutter_app/test/native_channels_test.dart: PreferencesChannel 通过原生 UserDefaults 读写并删除旧应用键
+00:00 +9: <worktree>/flutter_app/test/native_channels_test.dart: PreferencesChannel 拒绝空键、未知键和 UserDefaults 不支持的对象
+00:00 +10: <worktree>/flutter_app/test/native_channels_test.dart: StravaSettingsStore 读取并更新旧应用使用的原始设置键
+00:00 +11: <worktree>/flutter_app/test/native_channels_test.dart: StravaSettingsStore 拒绝空凭据和无效过期时间，非法旧模式回退 API
+00:00 +12: <worktree>/flutter_app/test/native_channels_test.dart: HealthKitChannel 检查可用性、请求授权、读取系统时区并打开系统设置
+00:00 +13: <worktree>/flutter_app/test/native_channels_test.dart: HealthKitChannel 用毫秒半开区间查询并解析完整训练摘要
+00:00 +14: <worktree>/flutter_app/test/native_channels_test.dart: HealthKitChannel 保留可选统计空值并拒绝无效范围或畸形摘要
+00:00 +15: <worktree>/flutter_app/test/native_channels_test.dart: HealthKitChannel 按 UUID 批量读取并解析完整训练明细
+00:00 +16: <worktree>/flutter_app/test/native_channels_test.dart: HealthKitChannel 完整训练明细拒绝空 UUID、重复 UUID 和错序响应
+00:00 +17: <worktree>/flutter_app/test/native_channels_test.dart: StravaOAuthChannel 生成与旧应用一致且正确编码的 Strava 授权地址
+00:00 +18: <worktree>/flutter_app/test/native_channels_test.dart: StravaOAuthChannel 仅把固定 Strava HTTPS 授权地址交给原生并返回授权码
+00:00 +19: <worktree>/flutter_app/test/native_channels_test.dart: StravaOAuthChannel 拒绝非 Strava 地址和空授权码
+00:00 +20: <worktree>/flutter_app/test/native_channels_test.dart: StravaWebChannel 登录与持久化状态只返回 readiness，彻底清除使用固定方法
+00:00 +21: <worktree>/flutter_app/test/native_channels_test.dart: StravaWebChannel 登录 readiness 为空时拒绝静默成功
+00:00 +22: <worktree>/flutter_app/test/sync_state_store_test.dart: 损坏状态直接上抛且不调用 Rust、不覆盖原文件
+00:00 +23: <worktree>/flutter_app/test/sync_state_store_test.dart: 明确 missing 才创建空库，且并发转换按读取写入顺序串行
+00:00 +24: <worktree>/flutter_app/test/sync_state_store_test.dart: 不同页面的状态库实例共享事务锁，不丢并发更新
+00:00 +25: <worktree>/flutter_app/test/sync_state_store_test.dart: pending 状态写入失败时删除刚写入的同步 FIT
+00:00 +26: <worktree>/flutter_app/test/sync_state_store_test.dart: 附件删除失败时保留状态清单供下次重试
+00:00 +27: <worktree>/flutter_app/test/sync_state_store_test.dart: 恢复阶段原子落盘并始终复用首次 externalId
+00:00 +28: <worktree>/flutter_app/test/workout_export_test.dart: JSON 导出保留旧字段、所选时区与临时目录清理
+00:00 +29: <worktree>/flutter_app/test/workout_export_test.dart: 多条 FIT 导出流式打包为 ZIP，编码器获得每条结束时区偏移
+00:00 +30: <worktree>/flutter_app/test/export_parity_test.dart: 第三方摘要 JSON 契约包含真实摘要、时区，且无伪造明细
+00:00 +31: <worktree>/flutter_app/test/export_parity_test.dart: 第三方缺失距离省略而非伪造零值
+00:01 +32: <worktree>/flutter_app/test/export_parity_test.dart: 原始 FIT 字节不改写，单文件直接输出
+00:01 +33: <worktree>/flutter_app/test/export_parity_test.dart: 同分钟同名和相同 ID 前缀仍保留所有 ZIP 文件
+00:01 +34: <worktree>/flutter_app/test/export_parity_test.dart: 短 ID、不可信路径和长中文标题产生安全且受限的文件名
+00:01 +35: <worktree>/flutter_app/test/export_parity_test.dart: 健康短 UUID 不发生 substring 越界
+00:01 +36: <worktree>/flutter_app/test/export_parity_test.dart: 批次中途失败清理本次临时目录且不返回残缺结果
+00:01 +37: <worktree>/flutter_app/test/export_controls_test.dart: 缺同步文件禁选同步版，摘要 JSON 仍可选择
+00:01 +38: <worktree>/flutter_app/test/export_controls_test.dart: 缺同步文件禁选同步版，摘要 JSON 仍可选择
+00:01 +39: <worktree>/flutter_app/test/export_controls_test.dart: 缺同步文件禁选同步版，摘要 JSON 仍可选择
+00:01 +40: <worktree>/flutter_app/test/export_controls_test.dart: 缺同步文件禁选同步版，摘要 JSON 仍可选择
+00:02 +41: <worktree>/flutter_app/test/virtual_power_settings_test.dart: 默认关闭并在启用前披露位置日期天气传输
+00:02 +42: <worktree>/flutter_app/test/export_controls_test.dart: 分享结果可重试，失败新导出保留旧结果，删除需确认
+00:02 +43: <worktree>/flutter_app/test/export_controls_test.dart: 分享结果可重试，失败新导出保留旧结果，删除需确认
+00:03 +44: <worktree>/flutter_app/test/export_controls_test.dart: 选择同步版后检查发现文件已丢失则拒绝导出
+00:04 +45: All tests passed!

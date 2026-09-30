@@ -1,0 +1,3 @@
+test_status=0
+analyze_status=1
+source_unchanged_status=0

@@ -95,6 +95,54 @@ void main() {
     expect(maximumActiveApplies, 1);
   });
 
+  test('不同页面的状态库实例共享事务锁，不丢并发更新', () async {
+    var state = Uint8List.fromList(utf8.encode('{}'));
+    messenger.setMockMethodCallHandler(methodChannel, (call) async {
+      if (call.method == 'readState') return state;
+      if (call.method == 'writeState') {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        state = (call.arguments as Map)['bytes'] as Uint8List;
+      }
+      return null;
+    });
+    Uint8List apply({
+      required List<int> stateJson,
+      required List<int> commandJson,
+    }) {
+      final records =
+          jsonDecode(utf8.decode(stateJson)) as Map<String, dynamic>;
+      final command =
+          jsonDecode(utf8.decode(commandJson)) as Map<String, dynamic>;
+      final record = command['record'] as Map<String, dynamic>;
+      records[record['fingerprint'] as String] = record;
+      return Uint8List.fromList(utf8.encode(jsonEncode(records)));
+    }
+
+    final first = SyncStateStore.withDependencies(
+      const SyncFilesChannel.withChannel(methodChannel),
+      apply,
+    );
+    final second = SyncStateStore.withDependencies(
+      const SyncFilesChannel.withChannel(methodChannel),
+      apply,
+    );
+    await Future.wait([
+      for (final pair in [(first, 'a'), (second, 'b')])
+        pair.$1.markPending(
+          SyncPendingRecord(
+            fingerprint: pair.$2 * 64,
+            primarySourceId: 'healthkit',
+            primaryActivityId: pair.$2,
+            updatedAt: DateTime(2026),
+          ),
+        ),
+    ]);
+    expect(
+      (jsonDecode(utf8.decode(state)) as Map).keys,
+      unorderedEquals(['a' * 64, 'b' * 64]),
+    );
+  });
+
   test('pending 状态写入失败时删除刚写入的同步 FIT', () async {
     final calls = <String>[];
     messenger.setMockMethodCallHandler(methodChannel, (call) async {

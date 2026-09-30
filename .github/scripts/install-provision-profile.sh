@@ -21,6 +21,17 @@ uuid=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$plist")
 name=$(/usr/libexec/PlistBuddy -c 'Print Name' "$plist")
 team=$(/usr/libexec/PlistBuddy -c 'Print TeamIdentifier:0' "$plist")
 
+# Profile fields become output values, filesystem paths, and xcconfig content.
+# Reject path/control injection rather than trusting a decoded signing profile.
+if [[ ! $uuid =~ ^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$ ]]; then
+  echo "Invalid provisioning profile UUID" >&2
+  exit 1
+fi
+if [[ ! $team =~ ^[A-Z0-9]{10}$ || -z $name || $name == *$'\n'* || $name == *$'\r'* ]]; then
+  echo "Invalid provisioning profile name or team" >&2
+  exit 1
+fi
+
 legacy="$HOME/Library/MobileDevice/Provisioning Profiles"
 modern="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
 mkdir -p "$legacy" "$modern"

@@ -1,15 +1,18 @@
 name: Setup Flutter and Rust
-description: Checkout 之后安装 stable Rust、cargo 缓存和 stable Flutter。
+description: Checkout 之后安装固定版本的 Rust、cargo 缓存和 Flutter。
 runs:
   using: composite
   steps:
     - uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: 1.98.1
     - uses: Swatinem/rust-cache@v2
       with:
         workspaces: rust/workout_core
     - uses: subosito/flutter-action@v2
       with:
         channel: stable
+        flutter-version: '3.47.5'
         cache: true
     - name: Show tool versions
       shell: bash

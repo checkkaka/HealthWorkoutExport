@@ -7,7 +7,7 @@ use reqwest::{
     header::{CONTENT_TYPE, HeaderValue, ORIGIN, USER_AGENT},
     redirect::Policy,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use std::{
     fmt,
@@ -16,6 +16,7 @@ use std::{
 use time::{PrimitiveDateTime, UtcOffset, format_description};
 
 const LOGIN_URL: &str = "https://www.onelap.cn/api/login";
+const REFRESH_URL: &str = "https://otm.onelap.cn/api/token";
 const ORIGIN_VALUE: &str = "https://www.onelap.cn";
 const USER_AGENT_VALUE: &str = "Mozilla/5.0";
 const SIGNING_SECRET: &str = "fe9f8382418fcdeb136461cac6acae7b";
@@ -39,6 +40,7 @@ pub enum OnelapLoginError {
     Transport,
     RedirectBlocked,
     Unauthorized,
+    SessionExpired,
     HttpStatus(u16),
     ResponseTooLarge,
     InvalidResponse,
@@ -53,6 +55,7 @@ impl fmt::Display for OnelapLoginError {
             Self::UntrustedEndpoint | Self::RedirectBlocked => "顽鹿登录端点不受信任",
             Self::Transport => "顽鹿登录网络请求失败",
             Self::Unauthorized => "顽鹿账号或密码错误",
+            Self::SessionExpired => "顽鹿登录已失效",
             Self::HttpStatus(_) => "顽鹿登录失败",
             Self::ResponseTooLarge => "顽鹿登录响应过大",
             Self::InvalidResponse => "顽鹿登录响应无效",
@@ -102,6 +105,8 @@ impl std::error::Error for OnelapActivityError {}
 #[derive(Clone, Debug, PartialEq)]
 pub struct OnelapRide {
     pub id: String,
+    /// Original validated server wall time, for platform historical timezone resolution.
+    pub start_time_local: String,
     pub start_time_seconds: f64,
     pub end_time_seconds: f64,
     pub duration_seconds: f64,
@@ -193,10 +198,14 @@ impl OnelapActivityClient {
         }
         let mut best = None;
         let mut best_score = 0;
+        let mut last_error = OnelapActivityError::InvalidFit;
         for candidate in candidates {
             let data = match self.fetch_fit_candidate(token, uid, &candidate).await {
                 Ok(data) => data,
-                Err(_) => continue,
+                Err(error) => {
+                    last_error = error;
+                    continue;
+                }
             };
             let Ok(summary) = crate::fit::decode_fit(&data) else {
                 continue;
@@ -210,7 +219,7 @@ impl OnelapActivityClient {
                 break;
             }
         }
-        best.ok_or(OnelapActivityError::InvalidFit)
+        best.ok_or(last_error)
     }
 
     fn fit_candidates(
@@ -237,7 +246,10 @@ impl OnelapActivityClient {
         {
             let encoded =
                 base64::Engine::encode(&base64::engine::general_purpose::STANDARD, file_key);
-            if let Ok(url) = self.ride_url(&format!("analysis/fit_content/{encoded}")) {
+            if let Ok(mut url) = self.ride_url("analysis/fit_content") {
+                if let Ok(mut path) = url.path_segments_mut() {
+                    path.pop_if_empty().push(&encoded);
+                }
                 candidates.push(url);
             }
         }
@@ -362,38 +374,35 @@ impl OnelapActivityClient {
 }
 
 /// 可由 Flutter 安全保存的短期顽鹿会话标识。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct OnelapSession {
     pub token: String,
     pub uid: String,
+    pub refresh_token: Option<String>,
+}
+
+impl fmt::Debug for OnelapSession {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OnelapSession")
+            .field("token", &"<redacted>")
+            .field("uid", &"<redacted>")
+            .field("refresh_token", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Clone)]
 pub struct OnelapLoginClient {
     client: Client,
     endpoint: Url,
+    refresh_endpoint: Url,
 }
 
 #[derive(Serialize)]
 struct LoginPayload<'a> {
     account: &'a str,
     password: String,
-}
-
-#[derive(Deserialize)]
-struct LoginResponse {
-    data: Vec<LoginData>,
-}
-
-#[derive(Deserialize)]
-struct LoginData {
-    token: String,
-    userinfo: LoginUserInfo,
-}
-
-#[derive(Deserialize)]
-struct LoginUserInfo {
-    uid: Value,
 }
 
 struct SignedLoginRequest {
@@ -419,7 +428,13 @@ impl OnelapLoginClient {
             .redirect(Policy::none())
             .build()
             .map_err(|_| OnelapLoginError::ClientBuild)?;
-        Ok(Self { client, endpoint })
+        let refresh_endpoint =
+            Url::parse(REFRESH_URL).map_err(|_| OnelapLoginError::ClientBuild)?;
+        Ok(Self {
+            client,
+            endpoint,
+            refresh_endpoint,
+        })
     }
 
     pub async fn login(
@@ -457,6 +472,46 @@ impl OnelapLoginClient {
         }
         parse_login_response(&read_limited(&mut response).await?)
     }
+
+    /// Swift-compatible refresh. Only the fixed official HTTPS token endpoint receives the
+    /// refresh token; the caller atomically stores the returned rotated session in its vault.
+    pub async fn refresh(
+        &self,
+        refresh_token: &str,
+        uid: &str,
+    ) -> Result<OnelapSession, OnelapLoginError> {
+        if !is_safe_header_value(refresh_token, MAX_TOKEN_BYTES)
+            || !is_safe_cookie_value(uid, MAX_UID_BYTES)
+        {
+            return Err(OnelapLoginError::InvalidInput);
+        }
+        let body = serde_json::to_vec(&serde_json::json!({
+            "token": refresh_token, "from": "web", "to": "web",
+        }))
+        .map_err(|_| OnelapLoginError::InvalidInput)?;
+        let mut response = self
+            .client
+            .post(self.refresh_endpoint.clone())
+            .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+            .header(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE))
+            .body(body)
+            .send()
+            .await
+            .map_err(|_| OnelapLoginError::Transport)?;
+        if response.status().is_redirection() {
+            return Err(OnelapLoginError::RedirectBlocked);
+        }
+        if matches!(
+            response.status(),
+            StatusCode::BAD_REQUEST | StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+        ) {
+            return Err(OnelapLoginError::SessionExpired);
+        }
+        if response.status() != StatusCode::OK {
+            return Err(OnelapLoginError::HttpStatus(response.status().as_u16()));
+        }
+        parse_refreshed_session(&read_limited(&mut response).await?, uid, refresh_token)
+    }
 }
 
 /// 只接受官方根域或其子域的 HTTPS URL；`onelap.cn.example` 不属于可信域。
@@ -474,10 +529,51 @@ pub fn is_trusted_onelap_https_url(url: &Url) -> bool {
 /// CDN 直链不携带任何顽鹿凭证：仅允许无用户信息、默认端口的 HTTPS 绝对 URL。
 fn is_safe_public_fit_url(url: &Url) -> bool {
     url.scheme() == "https"
-        && url.host_str().is_some()
+        && url.host_str().is_some_and(is_public_fit_host)
         && url.port().is_none()
         && url.username().is_empty()
         && url.password().is_none()
+}
+
+/// CDN URLs are server supplied. Reject explicit local addresses and local-only names
+/// before making even an unauthenticated request. Redirects remain disabled.
+fn is_public_fit_host(host: &str) -> bool {
+    use std::net::IpAddr;
+    let host = host.trim_matches(['[', ']']).trim_end_matches('.');
+    if let Ok(address) = host.parse::<IpAddr>() {
+        let public_v4 = |address: std::net::Ipv4Addr| {
+            let [a, b, _, _] = address.octets();
+            !address.is_private()
+                && !address.is_loopback()
+                && !address.is_link_local()
+                && !address.is_broadcast()
+                && !address.is_documentation()
+                && !address.is_multicast()
+                && a != 0
+                && a < 240
+                && !(a == 100 && (64..=127).contains(&b))
+                && !(a == 198 && (18..=19).contains(&b))
+        };
+        return match address {
+            IpAddr::V4(address) => public_v4(address),
+            IpAddr::V6(address) => {
+                if let Some(mapped) = address.to_ipv4() {
+                    return public_v4(mapped);
+                }
+                !address.is_loopback()
+                    && !address.is_unspecified()
+                    && !address.is_unique_local()
+                    && !address.is_unicast_link_local()
+                    && !address.is_multicast()
+            }
+        };
+    }
+    let host = host.to_ascii_lowercase();
+    host.contains('.')
+        && host != "localhost"
+        && !host.ends_with(".localhost")
+        && !host.ends_with(".local")
+        && !host.ends_with(".internal")
 }
 
 fn validate_activity_input(
@@ -491,7 +587,8 @@ fn validate_activity_input(
         && is_safe_cookie_value(uid, MAX_UID_BYTES)
         && from_seconds >= 0
         && to_seconds > from_seconds
-        && (-86_400..=86_400).contains(&timezone_offset_seconds))
+        && (-86_399..=86_399).contains(&timezone_offset_seconds)
+        && UtcOffset::from_whole_seconds(timezone_offset_seconds).is_ok())
     .then_some(())
     .ok_or(OnelapActivityError::InvalidInput)
 }
@@ -504,6 +601,7 @@ fn validate_fit_input(
     (is_safe_header_value(token, MAX_TOKEN_BYTES)
         && is_safe_cookie_value(uid, MAX_UID_BYTES)
         && !activity_id.is_empty()
+        && !matches!(activity_id, "." | "..")
         && activity_id.len() <= 256
         && activity_id
             .bytes()
@@ -530,12 +628,43 @@ fn is_safe_cookie_value(value: &str, max_bytes: usize) -> bool {
 
 fn checked_data(root: &Value) -> Result<&serde_json::Map<String, Value>, OnelapActivityError> {
     let code = root.get("code").and_then(json_i64);
+    let message = root
+        .get("msg")
+        .or_else(|| root.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if is_expired_session(code, message) {
+        return Err(OnelapActivityError::Unauthorized);
+    }
     if code != Some(200) {
         return Err(OnelapActivityError::InvalidResponse);
     }
     root.get("data")
         .and_then(Value::as_object)
         .ok_or(OnelapActivityError::InvalidResponse)
+}
+
+/// 与 Swift OnelapAuth 一致，HTTP 200 也可能承载失效会话。
+fn is_expired_session(code: Option<i64>, message: &str) -> bool {
+    if matches!(code, Some(401 | 403)) {
+        return true;
+    }
+    let message = message.to_ascii_lowercase();
+    [
+        "未登录",
+        "登录过期",
+        "登录失效",
+        "请重新登录",
+        "重新登录",
+        "token过期",
+        "token失效",
+        "token expired",
+        "invalid token",
+        "token invalid",
+        "unauthorized",
+    ]
+    .iter()
+    .any(|hint| message.contains(hint))
 }
 
 fn parse_ride_page(
@@ -562,12 +691,14 @@ fn parse_ride_page(
         else {
             continue;
         };
-        let Some(start) = item
+        let Some(start_time_local) = item
             .get("start_riding_time")
             .or_else(|| item.get("startTime"))
             .and_then(json_string)
-            .and_then(|value| parse_onelap_local_time(value, offset))
         else {
+            continue;
+        };
+        let Some(start) = parse_onelap_local_time(start_time_local, offset) else {
             continue;
         };
         if start < from_seconds {
@@ -591,6 +722,7 @@ fn parse_ride_page(
             .filter(|value| value.is_finite() && *value >= 0.0);
         rides.push(OnelapRide {
             id,
+            start_time_local: start_time_local.to_owned(),
             start_time_seconds: start as f64,
             end_time_seconds: start as f64 + duration_seconds.max(1.0),
             duration_seconds,
@@ -601,6 +733,9 @@ fn parse_ride_page(
 }
 
 fn parse_onelap_local_time(value: &str, offset: UtcOffset) -> Option<i64> {
+    if value.len() != 19 {
+        return None;
+    }
     let format =
         format_description::parse_borrowed::<3>("[year]-[month]-[day] [hour]:[minute]:[second]")
             .ok()?;
@@ -754,31 +889,88 @@ async fn read_limited(response: &mut Response) -> Result<Vec<u8>, OnelapLoginErr
     Ok(body)
 }
 
+fn session_item(root: &Value) -> &Value {
+    match root.get("data") {
+        Some(Value::Array(items)) => items.first().unwrap_or(&Value::Null),
+        Some(Value::Object(_)) => &root["data"],
+        _ => root,
+    }
+}
+
+fn session_tokens(root: &Value) -> Result<(String, Option<String>), OnelapLoginError> {
+    let item = session_item(root);
+    let token = item
+        .get("token")
+        .and_then(json_string)
+        .ok_or(OnelapLoginError::InvalidResponse)?;
+    let token = sanitize_session_value(token.to_owned(), MAX_TOKEN_BYTES)?;
+    let refresh_token = item
+        .get("refresh_token")
+        .and_then(json_string)
+        .map(|value| sanitize_session_value(value.to_owned(), MAX_TOKEN_BYTES))
+        .transpose()?;
+    Ok((token, refresh_token))
+}
+
+fn response_session_expired(root: &Value) -> bool {
+    is_expired_session(
+        root.get("code").and_then(json_i64),
+        root.get("msg")
+            .or_else(|| root.get("message"))
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )
+}
+
 fn parse_login_response(body: &[u8]) -> Result<OnelapSession, OnelapLoginError> {
-    let response: LoginResponse =
+    let root: Value =
         serde_json::from_slice(body).map_err(|_| OnelapLoginError::InvalidResponse)?;
-    let Some(first) = response.data.into_iter().next() else {
+    if response_session_expired(&root) {
         return Err(OnelapLoginError::Unauthorized);
-    };
-    let token = sanitize_session_value(first.token, MAX_TOKEN_BYTES)?;
-    let uid = match first.userinfo.uid {
-        Value::String(value) => value,
-        Value::Number(value) if value.is_i64() || value.is_u64() => value.to_string(),
-        _ => return Err(OnelapLoginError::InvalidResponse),
-    };
+    }
+    if root
+        .get("data")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty)
+    {
+        return Err(OnelapLoginError::Unauthorized);
+    }
+    let (token, refresh_token) = session_tokens(&root)?;
+    let uid = session_item(&root)
+        .get("userinfo")
+        .and_then(|user| user.get("uid"))
+        .and_then(json_id)
+        .ok_or(OnelapLoginError::InvalidResponse)?;
+    if !is_safe_cookie_value(&uid, MAX_UID_BYTES) {
+        return Err(OnelapLoginError::InvalidResponse);
+    }
     Ok(OnelapSession {
         token,
-        uid: sanitize_session_value(uid, MAX_UID_BYTES)?,
+        uid,
+        refresh_token,
+    })
+}
+
+fn parse_refreshed_session(
+    body: &[u8],
+    uid: &str,
+    previous_refresh: &str,
+) -> Result<OnelapSession, OnelapLoginError> {
+    let root: Value =
+        serde_json::from_slice(body).map_err(|_| OnelapLoginError::InvalidResponse)?;
+    if response_session_expired(&root) {
+        return Err(OnelapLoginError::SessionExpired);
+    }
+    let (token, refresh_token) = session_tokens(&root)?;
+    Ok(OnelapSession {
+        token,
+        uid: uid.to_owned(),
+        refresh_token: Some(refresh_token.unwrap_or_else(|| previous_refresh.to_owned())),
     })
 }
 
 fn sanitize_session_value(value: String, max_bytes: usize) -> Result<String, OnelapLoginError> {
-    if value.is_empty()
-        || value.len() > max_bytes
-        || value
-            .bytes()
-            .any(|byte| byte.is_ascii_control() || byte == b' ')
-    {
+    if !is_safe_header_value(&value, max_bytes) {
         return Err(OnelapLoginError::InvalidResponse);
     }
     Ok(value)
@@ -926,5 +1118,176 @@ mod tests {
             validate_fit_input("token", "uid", "../ride"),
             Err(OnelapActivityError::InvalidInput)
         );
+    }
+    #[test]
+    fn expired_business_responses_require_reauthentication_without_echoing_secrets() {
+        for response in [
+            json!({"code": 401, "msg": "private token value"}),
+            json!({"code": "403", "data": {}}),
+            json!({"code": 200, "message": "Token Expired: private token value"}),
+            json!({"code": 200, "msg": "请重新登录"}),
+        ] {
+            let error = super::checked_data(&response).unwrap_err();
+            assert_eq!(error, OnelapActivityError::Unauthorized);
+            assert!(!format!("{error:?} {error}").contains("private token value"));
+        }
+    }
+
+    #[test]
+    fn session_debug_and_cookie_validation_do_not_expose_credentials() {
+        let session = parse_login_response(
+            br#"{"data":[{"token":"private_token","userinfo":{"uid":"private_uid"}}]}"#,
+        )
+        .unwrap();
+        let debug = format!("{session:?}");
+        assert!(!debug.contains("private_token"));
+        assert!(!debug.contains("private_uid"));
+        for uid in ["user;other=cookie", "user,other", "user\\other"] {
+            let value = json!({"data":[{"token":"token","userinfo":{"uid":uid}}]});
+            assert!(parse_login_response(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
+    }
+
+    #[test]
+    fn fit_candidate_keeps_base64_file_key_as_one_segment() {
+        let client = super::OnelapActivityClient::new().unwrap();
+        let record = json!({"fileKey": "???"});
+        let candidates = client.fit_candidates("123", record.as_object().unwrap());
+        assert!(
+            candidates
+                .iter()
+                .any(|url| url.as_str().ends_with("/Pz8%2F"))
+        );
+        assert!(validate_fit_input("token", "42", "..").is_err());
+        assert!(validate_activity_input("token", "42", 0, 1, 86_400).is_err());
+    }
+    #[test]
+    fn fit_candidates_reject_explicit_local_network_destinations() {
+        for raw in [
+            "https://127.0.0.1/track.fit",
+            "https://10.0.0.1/track.fit",
+            "https://192.168.1.1/track.fit",
+            "https://169.254.169.254/track.fit",
+            "https://[::1]/track.fit",
+            "https://[::ffff:127.0.0.1]/track.fit",
+            "https://[fd00::1]/track.fit",
+            "https://localhost/track.fit",
+            "https://router.local/track.fit",
+            "https://metadata.internal/track.fit",
+        ] {
+            assert!(!is_safe_public_fit_url(&Url::parse(raw).unwrap()), "{raw}");
+        }
+        assert!(is_safe_public_fit_url(
+            &Url::parse("https://cdn.example.com/track.fit").unwrap()
+        ));
+    }
+    #[test]
+    fn login_and_refresh_preserve_and_rotate_refresh_tokens_like_swift() {
+        let login = parse_login_response(br#"{"data":[{"token":"access","refresh_token":"private_refresh","userinfo":{"uid":42}}]}"#).unwrap();
+        assert_eq!(login.refresh_token.as_deref(), Some("private_refresh"));
+        assert!(!format!("{login:?}").contains("private_refresh"));
+        for response in [
+            br#"{"data":{"token":"new_access","refresh_token":"rotated"}}"#.as_slice(),
+            br#"{"data":[{"token":"new_access","refresh_token":"rotated"}]}"#.as_slice(),
+            br#"{"token":"new_access","refresh_token":"rotated"}"#.as_slice(),
+        ] {
+            let session = super::parse_refreshed_session(response, "42", "old_refresh").unwrap();
+            assert_eq!(session.token, "new_access");
+            assert_eq!(session.uid, "42");
+            assert_eq!(session.refresh_token.as_deref(), Some("rotated"));
+        }
+        let session = super::parse_refreshed_session(
+            br#"{"data":{"token":"new_access"}}"#,
+            "42",
+            "old_refresh",
+        )
+        .unwrap();
+        assert_eq!(session.refresh_token.as_deref(), Some("old_refresh"));
+        assert_eq!(
+            super::parse_refreshed_session(
+                br#"{"code":401,"msg":"private_refresh"}"#,
+                "42",
+                "old_refresh"
+            ),
+            Err(OnelapLoginError::SessionExpired)
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_uses_swift_json_contract_without_sending_an_authorization_header() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = Url::parse(&format!(
+            "http://{}/api/token",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 4096];
+            loop {
+                let n = socket.read(&mut buffer).unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&buffer[..n]);
+                if let Some(index) = request.windows(4).position(|part| part == b"\r\n\r\n") {
+                    let header = String::from_utf8_lossy(&request[..index]);
+                    let length: usize = header
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length: ")
+                                .map(str::to_owned)
+                        })
+                        .unwrap()
+                        .parse()
+                        .unwrap();
+                    if request.len() >= index + 4 + length {
+                        break;
+                    }
+                }
+            }
+            let body = r#"{"data":{"token":"new_access","refresh_token":"rotated"}}"#;
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            request
+        });
+        let client = super::OnelapLoginClient {
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            endpoint: url.clone(),
+            refresh_endpoint: url,
+        };
+        let session = client.refresh("old_refresh", "42").await.unwrap();
+        assert_eq!(session.refresh_token.as_deref(), Some("rotated"));
+        let bytes = server.join().unwrap();
+        let request = String::from_utf8(bytes).unwrap();
+        assert!(request.starts_with("POST /api/token HTTP/1.1\r\n"));
+        assert!(!request.to_ascii_lowercase().contains("authorization:"));
+        let body: serde_json::Value =
+            serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(body, json!({"token":"old_refresh","from":"web","to":"web"}));
+    }
+    #[test]
+    fn keeps_validated_wall_times_for_historical_dst_resolution_on_platform() {
+        let data = json!({"list":[
+            {"id":1, "start_riding_time":"2024-01-15 12:00:00", "time_seconds":3600},
+            {"id":2, "start_riding_time":"2024-07-15 12:00:00", "time_seconds":3600},
+            {"id":3, "start_riding_time":"2024-07-15 12:00:00Z", "time_seconds":3600},
+            {"id":4, "start_riding_time":"2024-02-31 12:00:00", "time_seconds":3600}
+        ]});
+        let (rides, _, _) = parse_ride_page(data.as_object().unwrap(), 0, i64::MAX, -7 * 3600);
+        assert_eq!(rides.len(), 2);
+        assert_eq!(rides[0].start_time_local, "2024-01-15 12:00:00");
+        assert_eq!(rides[1].start_time_local, "2024-07-15 12:00:00");
     }
 }

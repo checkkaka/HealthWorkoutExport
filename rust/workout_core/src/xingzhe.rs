@@ -32,6 +32,9 @@ const MAX_ACCOUNT_BYTES: usize = 256;
 const MAX_PASSWORD_BYTES: usize = 117; // 1024-bit RSA PKCS#1 v1.5 的明文上限。
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 const MAX_LIST_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+// A long activity contains every track sample, unlike a 24-item summary page.
+const MAX_STREAM_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_UNIX_SECONDS: f64 = 253_402_300_799.0;
 const MAX_SESSION_ID_BYTES: usize = 4 * 1024;
 const LIST_PAGE_SIZE: u32 = 24;
 const MAX_LIST_OFFSET: u32 = 5_000;
@@ -39,6 +42,7 @@ const MAX_LIST_PAGES: u32 = MAX_LIST_OFFSET.div_ceil(LIST_PAGE_SIZE);
 const MAX_REQUEST_ATTEMPTS: u32 = 8;
 const PAGE_INTERVAL: Duration = Duration::from_millis(1_200);
 const RATE_LIMIT_PADDING: Duration = Duration::from_millis(350);
+const MAX_RATE_LIMIT_WAIT: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// 不含敏感字段的登录失败分类。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,7 +133,7 @@ impl XingzheCancellation {
 
     pub fn cancel(&self) {
         if !self.cancelled.swap(true, Ordering::AcqRel) {
-            self.notify.notify_one();
+            self.notify.notify_waiters();
         }
     }
 
@@ -138,8 +142,11 @@ impl XingzheCancellation {
     }
 
     async fn cancelled(&self) {
+        let notified = self.notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
         if !self.is_cancelled() {
-            self.notify.notified().await;
+            notified.await;
         }
     }
 
@@ -211,7 +218,9 @@ impl XingzheActivityClient {
             url.query_pairs_mut()
                 .append_pair("offset", &offset.to_string())
                 .append_pair("limit", &LIST_PAGE_SIZE.to_string());
-            let root = self.get_json(url, session_id, cancellation).await?;
+            let root = self
+                .get_json(url, session_id, cancellation, MAX_LIST_RESPONSE_BYTES)
+                .await?;
             let (mut entries, all_older, entry_count) =
                 parse_workout_page(&root, from_seconds, to_seconds);
             results.append(&mut entries);
@@ -225,6 +234,8 @@ impl XingzheActivityClient {
     }
 
     /// 读取行者 stream 并编码为与健康导出相同的 Activity FIT。
+    /// Keep the stable batch FFI contract; metadata is passed once per activity, not per sample.
+    #[allow(clippy::too_many_arguments)]
     pub async fn download_fit(
         &self,
         session_id: &str,
@@ -238,7 +249,9 @@ impl XingzheActivityClient {
     ) -> Result<Vec<u8>, XingzheActivityError> {
         validate_list_input(session_id, 0, 1)?;
         let url = stream_url(workout_id)?;
-        let root = self.get_json(url, session_id, cancellation).await?;
+        let root = self
+            .get_json(url, session_id, cancellation, MAX_STREAM_RESPONSE_BYTES)
+            .await?;
         let stream = root.get("data").unwrap_or(&root);
         let bundle = stream_to_health_bundle(
             workout_id,
@@ -257,6 +270,7 @@ impl XingzheActivityClient {
         url: Url,
         session_id: &str,
         cancellation: &XingzheCancellation,
+        max_response_bytes: usize,
     ) -> Result<serde_json::Value, XingzheActivityError> {
         for attempt in 0..MAX_REQUEST_ATTEMPTS {
             let cookie = format!("sessionid={session_id}; _XingzheWeb_Token=true");
@@ -287,9 +301,18 @@ impl XingzheActivityClient {
                 }
                 _ => {}
             }
-            let body = read_list_limited(&mut response, cancellation).await?;
+            let body =
+                read_activity_limited(&mut response, cancellation, max_response_bytes).await?;
             let body_text = std::str::from_utf8(&body).unwrap_or_default();
             if let Some(wait) = rate_limit_wait(response.status(), body_text) {
+                let wait = response
+                    .headers()
+                    .get("Retry-After")
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.trim().parse::<u64>().ok())
+                    .map(Duration::from_secs)
+                    .unwrap_or(wait)
+                    .min(MAX_RATE_LIMIT_WAIT);
                 if attempt + 1 == MAX_REQUEST_ATTEMPTS {
                     return Err(XingzheActivityError::RateLimited);
                 }
@@ -301,7 +324,15 @@ impl XingzheActivityClient {
             }
             let root = serde_json::from_slice::<serde_json::Value>(&body)
                 .map_err(|_| XingzheActivityError::InvalidResponse)?;
-            if let Some(code) = root.get("code").and_then(serde_json::Value::as_i64)
+            let code = root.get("code").and_then(|value| {
+                value
+                    .as_i64()
+                    .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+            });
+            if matches!(code, Some(401 | 403)) {
+                return Err(XingzheActivityError::Unauthorized);
+            }
+            if let Some(code) = code
                 && code != 0
                 && code != 200
             {
@@ -311,7 +342,10 @@ impl XingzheActivityClient {
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or(body_text);
                 if let Some(wait) = rate_limit_wait(
-                    StatusCode::from_u16(code as u16).unwrap_or(StatusCode::OK),
+                    u16::try_from(code)
+                        .ok()
+                        .and_then(|code| StatusCode::from_u16(code).ok())
+                        .unwrap_or(StatusCode::OK),
                     message,
                 ) {
                     if attempt + 1 == MAX_REQUEST_ATTEMPTS {
@@ -370,29 +404,39 @@ fn stream_to_health_bundle(
     distance_meters: Option<f64>,
     stream: &serde_json::Value,
 ) -> Result<Vec<u8>, XingzheActivityError> {
-    if !start_time_seconds.is_finite() || start_time_seconds <= 0.0 {
+    if !start_time_seconds.is_finite()
+        || start_time_seconds <= 0.0
+        || start_time_seconds > MAX_UNIX_SECONDS
+        || !duration_seconds.is_finite()
+        || duration_seconds < 0.0
+        || duration_seconds.max(1.0) > MAX_UNIX_SECONDS - start_time_seconds
+        || distance_meters.is_some_and(|value| !value.is_finite() || value < 0.0)
+    {
         return Err(XingzheActivityError::InvalidInput);
     }
     let locations = stream.get("location").and_then(serde_json::Value::as_array);
     let timestamps = stream
         .get("timestamp")
         .and_then(serde_json::Value::as_array)
-        .cloned()
+        .map(Vec::as_slice)
         .unwrap_or_default();
     let altitudes = stream
         .get("altitude")
         .and_then(serde_json::Value::as_array)
-        .cloned()
+        .map(Vec::as_slice)
         .unwrap_or_default();
     let heartrates = stream
         .get("heartrate")
         .and_then(serde_json::Value::as_array)
-        .cloned()
+        .map(Vec::as_slice)
         .unwrap_or_default();
     let location_count = locations.map(Vec::len).unwrap_or(0);
     let count = location_count.max(timestamps.len());
     if count == 0 {
         return Err(XingzheActivityError::EmptyTrack);
+    }
+    if count > 1_000_000 {
+        return Err(XingzheActivityError::ResponseTooLarge);
     }
     let start_ms = (start_time_seconds * 1000.0).round() as i64;
     let duration = duration_seconds.max(1.0);
@@ -400,15 +444,19 @@ fn stream_to_health_bundle(
     let mut route = Vec::new();
     let mut heart_samples = Vec::new();
     for index in 0..count {
-        let timestamp_ms = if let Some(raw) = timestamps
-            .get(index)
-            .and_then(|value| json_number(Some(value)))
-        {
-            if raw > 1_000_000_000_000.0 {
-                raw.round() as i64
+        let timestamp_ms = if let Some(value) = timestamps.get(index) {
+            let raw = json_number(Some(value)).ok_or(XingzheActivityError::InvalidResponse)?;
+            let milliseconds = if raw > 1_000_000_000_000.0 {
+                raw
             } else {
-                (raw * 1000.0).round() as i64
+                raw * 1000.0
+            };
+            if !milliseconds.is_finite()
+                || !(0.0..=MAX_UNIX_SECONDS * 1000.0).contains(&milliseconds)
+            {
+                return Err(XingzheActivityError::InvalidResponse);
             }
+            milliseconds.round() as i64
         } else {
             start_ms + (index as i64) * 1000
         };
@@ -416,24 +464,27 @@ fn stream_to_health_bundle(
             let values = pair.as_array();
             let longitude = values
                 .and_then(|values| json_number(values.first()))
-                .unwrap_or(0.0);
+                .filter(|value| value.is_finite() && (-180.0..=180.0).contains(value));
             let latitude = values
                 .and_then(|values| json_number(values.get(1)))
-                .unwrap_or(0.0);
+                .filter(|value| value.is_finite() && (-90.0..=90.0).contains(value));
             let altitude = altitudes
                 .get(index)
-                .and_then(|value| json_number(Some(value)));
-            route.push(serde_json::json!({
-                "latitude": latitude,
-                "longitude": longitude,
-                "altitudeMeters": altitude,
-                "timestampMs": timestamp_ms,
-            }));
+                .and_then(|value| json_number(Some(value)))
+                .filter(|value| value.is_finite());
+            if let (Some(longitude), Some(latitude)) = (longitude, latitude) {
+                route.push(serde_json::json!({
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "altitudeMeters": altitude,
+                    "timestampMs": timestamp_ms,
+                }));
+            }
         }
         if let Some(heart_rate) = heartrates
             .get(index)
             .and_then(|value| json_number(Some(value)))
-            .filter(|value| *value > 0.0)
+            .filter(|value| value.is_finite() && *value > 0.0)
         {
             heart_samples.push(serde_json::json!({
                 "dateMs": timestamp_ms,
@@ -475,13 +526,14 @@ fn validate_list_input(
         .ok_or(XingzheActivityError::InvalidInput)
 }
 
-async fn read_list_limited(
+async fn read_activity_limited(
     response: &mut Response,
     cancellation: &XingzheCancellation,
+    max_response_bytes: usize,
 ) -> Result<Vec<u8>, XingzheActivityError> {
     if response
         .content_length()
-        .is_some_and(|length| length > MAX_LIST_RESPONSE_BYTES as u64)
+        .is_some_and(|length| length > max_response_bytes as u64)
     {
         return Err(XingzheActivityError::ResponseTooLarge);
     }
@@ -489,7 +541,7 @@ async fn read_list_limited(
         response
             .content_length()
             .unwrap_or_default()
-            .min(MAX_LIST_RESPONSE_BYTES as u64) as usize,
+            .min(max_response_bytes as u64) as usize,
     );
     loop {
         let chunk = cancellation
@@ -498,7 +550,7 @@ async fn read_list_limited(
             .map_err(|_| XingzheActivityError::Cancelled)?
             .map_err(|_| XingzheActivityError::Transport)?;
         let Some(chunk) = chunk else { break };
-        if body.len().saturating_add(chunk.len()) > MAX_LIST_RESPONSE_BYTES {
+        if body.len().saturating_add(chunk.len()) > max_response_bytes {
             return Err(XingzheActivityError::ResponseTooLarge);
         }
         body.extend_from_slice(&chunk);
@@ -508,10 +560,12 @@ async fn read_list_limited(
 
 fn rate_limit_wait(status: StatusCode, body: &str) -> Option<Duration> {
     let lower = body.to_ascii_lowercase();
-    let limited = status == StatusCode::BAD_REQUEST
-        || lower.contains("request limit")
-        || lower.contains("limit exceeded");
-    if !limited || !lower.contains("limit") {
+    let limited = status == StatusCode::TOO_MANY_REQUESTS
+        || ((status == StatusCode::BAD_REQUEST
+            || lower.contains("request limit")
+            || lower.contains("limit exceeded"))
+            && lower.contains("limit"));
+    if !limited {
         return None;
     }
     let seconds = lower
@@ -520,7 +574,7 @@ fn rate_limit_wait(status: StatusCode, body: &str) -> Option<Duration> {
         .and_then(|tail| tail.split_whitespace().next())
         .and_then(|value| value.parse::<f64>().ok())
         .filter(|value| value.is_finite() && *value >= 0.0)
-        .map(|value| value.max(1.0))
+        .map(|value| value.clamp(1.0, MAX_RATE_LIMIT_WAIT.as_secs_f64()))
         .unwrap_or(1.5);
     Duration::try_from_secs_f64(seconds).ok()
 }
@@ -556,7 +610,10 @@ fn parse_workout_page(
             continue;
         };
         let start_time_seconds = start_milliseconds / 1_000.0;
-        if !start_time_seconds.is_finite() || start_time_seconds <= 0.0 {
+        if !start_time_seconds.is_finite()
+            || start_time_seconds <= 0.0
+            || start_time_seconds > MAX_UNIX_SECONDS
+        {
             continue;
         }
         if start_time_seconds >= from_seconds as f64 {
@@ -665,7 +722,7 @@ impl XingzheLoginClient {
         let body = read_limited(&mut response).await?;
         let json: serde_json::Value =
             serde_json::from_slice(&body).map_err(|_| XingzheLoginError::InvalidResponse)?;
-        if json.get("data").is_none() {
+        if json.get("data").is_none_or(serde_json::Value::is_null) {
             return Err(XingzheLoginError::Unauthorized);
         }
         Ok(session_id)
@@ -906,6 +963,13 @@ mod tests {
             rate_limit_wait(StatusCode::INTERNAL_SERVER_ERROR, "error"),
             None
         );
+        assert_eq!(
+            rate_limit_wait(
+                StatusCode::TOO_MANY_REQUESTS,
+                "request limit exceeded, available in 1e300 seconds"
+            ),
+            Some(super::MAX_RATE_LIMIT_WAIT)
+        );
     }
 
     #[tokio::test]
@@ -914,6 +978,75 @@ mod tests {
         cancellation.cancel();
         assert_eq!(
             cancellation.sleep(Duration::from_secs(60)).await,
+            Err(XingzheActivityError::Cancelled)
+        );
+    }
+    #[test]
+    fn rejects_nonfinite_and_overflowing_stream_metadata_without_panicking() {
+        let stream = serde_json::json!({"location": [[116.4, 39.9]]});
+        for (start, duration) in [
+            (f64::MAX, 1.0),
+            (1.0, f64::MAX),
+            (1.0, f64::NAN),
+            (1.0, -1.0),
+        ] {
+            assert_eq!(
+                stream_to_health_bundle("1", "ride", start, duration, None, &stream),
+                Err(XingzheActivityError::InvalidInput)
+            );
+        }
+        for timestamp in ["NaN", "inf", "1e300", "-1"] {
+            let stream = serde_json::json!({"timestamp": [timestamp]});
+            assert_eq!(
+                stream_to_health_bundle("1", "ride", 1.0, 1.0, None, &stream),
+                Err(XingzheActivityError::InvalidResponse)
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_locations_do_not_become_fabricated_zero_coordinates() {
+        let stream = serde_json::json!({
+            "location": [["invalid", 39.9], [116.4], [181, 39.9], [116.4, 39.9]],
+            "heartrate": [140, 141, 142, 143]
+        });
+        let bytes =
+            stream_to_health_bundle("1", "ride", 1_700_000_000.0, 5.0, None, &stream).unwrap();
+        let bundle: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(bundle["route"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            bundle["series"]["HKQuantityTypeIdentifierHeartRate"]
+                .as_array()
+                .unwrap()
+                .len(),
+            4
+        );
+        assert_eq!(
+            rate_limit_wait(StatusCode::TOO_MANY_REQUESTS, ""),
+            Some(Duration::from_millis(1500))
+        );
+    }
+
+    #[tokio::test]
+    async fn cancellation_wakes_all_existing_and_future_waiters() {
+        let cancellation = XingzheCancellation::new();
+        let first = cancellation.clone();
+        let second = cancellation.clone();
+        let a = tokio::spawn(async move { first.run(std::future::pending::<()>()).await });
+        let b = tokio::spawn(async move { second.run(std::future::pending::<()>()).await });
+        tokio::task::yield_now().await;
+        cancellation.cancel();
+        for task in [a, b] {
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(1), task)
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                Err(XingzheActivityError::Cancelled)
+            );
+        }
+        assert_eq!(
+            cancellation.run(std::future::pending::<()>()).await,
             Err(XingzheActivityError::Cancelled)
         );
     }

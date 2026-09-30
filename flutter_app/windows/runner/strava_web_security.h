@@ -1,0 +1,239 @@
+#ifndef RUNNER_STRAVA_WEB_SECURITY_H_
+#define RUNNER_STRAVA_WEB_SECURITY_H_
+
+#include "native_channel_validation.h"
+
+#include <map>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace strava_web {
+inline constexpr size_t kMaxCookieBytes = 16384;
+inline constexpr size_t kMaxResponseBytes = 4 * 1024 * 1024;
+inline constexpr char kOrigin[] = "https://www.strava.com";
+inline std::string Lower(std::string value) {
+  for (char& c : value) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+  return value;
+}
+struct HttpsUrl { std::string host; std::string path; };
+inline bool ParseHttpsUrl(std::string_view url, HttpsUrl* parsed) {
+  if (url.size() > 16384 || url.size() < 8 || Lower(std::string(url.substr(0, 8))) != "https://") return false;
+  for (char c : url) if (static_cast<unsigned char>(c) <= 0x20 || c == '\\' || c == 0x7f) return false;
+  const auto end = url.find_first_of("/?#", 8);
+  std::string authority = Lower(std::string(url.substr(8, end == std::string_view::npos ? end : end - 8)));
+  const auto port = authority.find(':');
+  if (port != std::string::npos) {
+    if (authority.substr(port) != ":443") return false;
+    authority.resize(port);
+  }
+  if (authority.empty() || authority.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789.-") != std::string::npos) return false;
+  parsed->host = authority;
+  parsed->path = end != std::string_view::npos && url[end] == '/' ? std::string(url.substr(end, url.find_first_of("?#", end) - end)) : "/";
+  return true;
+}
+inline bool IsAllowedLoginUrl(std::string_view url) {
+  HttpsUrl parsed;
+  if (!ParseHttpsUrl(url, &parsed)) return false;
+  return parsed.host == "strava.com" || parsed.host == "www.strava.com" ||
+    parsed.host == "accounts.google.com" || parsed.host == "appleid.apple.com" ||
+    parsed.host == "facebook.com" || parsed.host == "www.facebook.com" || parsed.host == "m.facebook.com";
+}
+inline bool IsFixedRequestPath(std::string_view full_path) {
+  const auto path = full_path.substr(0, full_path.find('?'));
+  if (full_path.find_first_of("\r\n#\\") != std::string_view::npos || full_path.size() > 2048) return false;
+  if (path == "/about" || path == "/upload/select" || path == "/upload/files" || path == "/athlete/training_activities") return true;
+  constexpr std::string_view prefix = "/activities/";
+  if (path.substr(0, prefix.size()) != prefix) return false;
+  auto id = path.substr(prefix.size());
+  constexpr std::string_view streams = "/streams";
+  if (id.size() > streams.size() && id.substr(id.size() - streams.size()) == streams) id.remove_suffix(streams.size());
+  return native_channels::IsActivityId(id);
+}
+inline bool IsCookieName(std::string_view value) {
+  if (value.empty()) return false;
+  for (char c : value) {
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) continue;
+    if (std::string_view("!#$%&'*+-.^_`|~").find(c) == std::string_view::npos) return false;
+  }
+  return true;
+}
+inline bool IsCookieValue(std::string_view value) {
+  if (value.empty()) return false;
+  for (unsigned char c : value) {
+    if (!(c == 0x21 || (c >= 0x23 && c <= 0x2b) || (c >= 0x2d && c <= 0x3a) ||
+          (c >= 0x3c && c <= 0x5b) || (c >= 0x5d && c <= 0x7e))) return false;
+  }
+  return true;
+}
+struct Cookie {
+  std::string name, value, domain, path;
+  double expires = 0;
+  bool session = false;
+};
+inline std::string CookieHeader(const std::vector<Cookie>& cookies, std::string_view request_path, double now) {
+  std::map<std::string, Cookie> selected;
+  for (const auto& cookie : cookies) {
+    const auto domain = Lower(cookie.domain);
+    if (domain != "www.strava.com" && domain != ".www.strava.com" && domain != ".strava.com" && domain != "strava.com") continue;
+    const auto path = cookie.path.empty() ? std::string("/") : cookie.path;
+    if (path[0] != '/' || request_path.substr(0, path.size()) != path ||
+        (request_path.size() > path.size() && path.back() != '/' && request_path[path.size()] != '/')) continue;
+    if ((!cookie.session && (!std::isfinite(cookie.expires) || cookie.expires <= now)) ||
+        !IsCookieName(cookie.name) || !IsCookieValue(cookie.value)) continue;
+    auto old = selected.find(cookie.name);
+    if (old == selected.end() || path.size() > old->second.path.size() ||
+        (path.size() == old->second.path.size() && domain.size() > old->second.domain.size())) selected[cookie.name] = cookie;
+  }
+  std::string header;
+  for (const auto& entry : selected) {
+    if (!header.empty()) header += "; ";
+    header += entry.first + "=" + entry.second.value;
+    if (header.size() > kMaxCookieBytes) return {};
+  }
+  return header;
+}
+inline bool IsSafeFilename(std::string_view filename) {
+  if (filename.empty() || filename.size() > 128 || !native_channels::IsUtf8(filename) || filename.find("..") != std::string_view::npos ||
+      filename.size() < 4 || Lower(std::string(filename.substr(filename.size() - 4))) != ".fit") return false;
+  // Preserve UTF-8 names generated by the exporter; reject all ASCII separators,
+  // control characters and multipart/header punctuation outside the safe set.
+  for (unsigned char c : filename) if (c < 0x80 && !((c >= 'a' && c <= 'z') ||
+      (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-')) return false;
+  return true;
+}
+inline std::string PercentEncode(std::string_view value) {
+  constexpr char hex[] = "0123456789ABCDEF";
+  std::string encoded;
+  for (unsigned char c : value) {
+    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+        c == '-' || c == '_' || c == '.' || c == '~') encoded += static_cast<char>(c);
+    else { encoded += '%'; encoded += hex[c >> 4]; encoded += hex[c & 15]; }
+  }
+  return encoded;
+}
+struct Csrf { std::string parameter = "authenticity_token"; std::string token; };
+inline bool Space(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
+inline Csrf ExtractCsrf(std::string_view html) {
+  Csrf result;
+  if (html.size() > kMaxResponseBytes) return {};
+  size_t offset = 0;
+  while ((offset = html.find('<', offset)) != std::string_view::npos) {
+    const auto end = html.find('>', ++offset);
+    if (end == std::string_view::npos) break;
+    if (end - offset > 8192) { offset = end + 1; continue; }
+    auto tag = html.substr(offset, end - offset);
+    size_t cursor = 0;
+    while (cursor < tag.size() && !Space(tag[cursor])) ++cursor;
+    const auto kind = Lower(std::string(tag.substr(0, cursor)));
+    if (kind != "meta" && kind != "input") { offset = end + 1; continue; }
+    std::map<std::string, std::string> attrs;
+    while (cursor < tag.size()) {
+      while (cursor < tag.size() && Space(tag[cursor])) ++cursor;
+      const auto start = cursor;
+      while (cursor < tag.size() && (tag[cursor] == '-' || tag[cursor] == '_' ||
+          (tag[cursor] >= 'a' && tag[cursor] <= 'z') || (tag[cursor] >= 'A' && tag[cursor] <= 'Z'))) ++cursor;
+      if (start == cursor) { ++cursor; continue; }
+      const auto name = Lower(std::string(tag.substr(start, cursor - start)));
+      while (cursor < tag.size() && Space(tag[cursor])) ++cursor;
+      if (cursor == tag.size() || tag[cursor++] != '=') continue;
+      while (cursor < tag.size() && Space(tag[cursor])) ++cursor;
+      if (cursor == tag.size() || (tag[cursor] != '\'' && tag[cursor] != '"')) continue;
+      const char quote = tag[cursor++];
+      const auto value_start = cursor;
+      const auto value_end = tag.find(quote, cursor);
+      if (value_end == std::string_view::npos) break;
+      attrs[name] = std::string(tag.substr(value_start, value_end - value_start));
+      cursor = value_end + 1;
+    }
+    const auto name = Lower(attrs["name"]);
+    if (name == "csrf-param") result.parameter = attrs["content"];
+    const auto token = name == "csrf-token" ? attrs["content"] : name == "authenticity_token" ? attrs["value"] : "";
+    if (result.token.empty() && !token.empty() && token.size() <= 4096 &&
+        std::all_of(token.begin(), token.end(), [](unsigned char c) { return c >= 0x21 && c <= 0x7e; })) result.token = token;
+    offset = end + 1;
+  }
+  if (!IsCookieName(result.parameter) || result.parameter.size() > 128 || result.parameter == "_method") return {};
+  return result;
+}
+inline bool HasActivityArray(std::string_view json) {
+  if (json.size() > kMaxResponseBytes || !native_channels::JsonValidator(json).Object()) return false;
+  unsigned depth = 0;
+  for (size_t i = 0; i < json.size(); ++i) {
+    const char c = json[i];
+    if (c == '{' || c == '[') { ++depth; continue; }
+    if (c == '}' || c == ']') { --depth; continue; }
+    if (c != '"') continue;
+    const auto start = ++i;
+    while (i < json.size() && json[i] != '"') { if (json[i] == '\\') ++i; ++i; }
+    const auto name = json.substr(start, i - start);
+    if (depth != 1 || (name != "models" && name != "activities")) continue;
+    size_t next = i + 1;
+    while (next < json.size() && Space(json[next])) ++next;
+    if (next == json.size() || json[next++] != ':') continue;
+    while (next < json.size() && Space(json[next])) ++next;
+    if (next < json.size() && json[next] == '[') return true;
+  }
+  return false;
+}
+inline std::string DuplicateId(std::string_view body) {
+  const auto text = Lower(std::string(body));
+  if (text.find("duplicate") == std::string::npos) return {};
+  for (const auto prefix : {std::string_view("duplicate of activity "), std::string_view("/activities/")}) {
+    auto start = text.find(prefix);
+    if (start == std::string::npos) continue;
+    start += prefix.size();
+    auto end = start;
+    while (end < text.size() && text[end] >= '0' && text[end] <= '9') ++end;
+    const auto id = text.substr(start, end - start);
+    if (native_channels::IsActivityId(id)) return id;
+  }
+  return {};
+}
+inline bool IsDuplicate(std::string_view body) {
+  if (!DuplicateId(body).empty()) return true;
+  const auto text = Lower(std::string(body));
+  const auto position = text.find("duplicate of");
+  if (position == std::string::npos) return false;
+  auto rest = std::string_view(text).substr(position + 12);
+  while (!rest.empty() && Space(rest.front())) rest.remove_prefix(1);
+  return rest.substr(0, 8) == "activity" || rest.substr(0, 2) == "<a";
+}
+inline std::string DateFilter(int64_t milliseconds) {
+  // Gregorian civil date from an epoch-day count, including dates before 1970;
+  // the Windows CRT gmtime_s rejects those valid inputs.
+  int64_t days = milliseconds / 86400000;
+  if (milliseconds < 0 && milliseconds % 86400000 != 0) --days;
+  const int64_t z = days + 719468;
+  const int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+  const int64_t day_of_era = z - era * 146097;
+  const int64_t year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146096) / 365;
+  int64_t year = year_of_era + era * 400;
+  const int64_t day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+  const int64_t mp = (5 * day_of_year + 2) / 153;
+  const int64_t day = day_of_year - (153 * mp + 2) / 5 + 1;
+  const int64_t month = mp + (mp < 10 ? 3 : -9);
+  year += month <= 2;
+  const auto two = [](int64_t value) { return (value < 10 ? "0" : "") + std::to_string(value); };
+  return two(month) + "%2F" + two(day) + "%2F" + std::to_string(year);
+}
+inline std::string ActivityPagePath(int64_t page, int64_t after_ms, int64_t before_ms) {
+  if (page < 1 || page > 200 || after_ms >= before_ms || after_ms < -2208988800000LL || before_ms > 7258118400000LL) return {};
+  return "/athlete/training_activities?start_date=" + DateFilter(after_ms - 86400000) +
+    "&end_date=" + DateFilter(before_ms + 86400000) + "&page=" + std::to_string(page) + "&new_activity_only=false";
+}
+inline bool DeletionSucceeded(int status, std::string_view location, std::string_view body) {
+  if (body.size() > kMaxResponseBytes) return false;
+  if (status == 404) return true;
+  if (status == 401 || status == 403 || Lower(std::string(body)).find("log in") != std::string::npos) return false;
+  if (status >= 300 && status < 400) {
+    std::string destination(location);
+    if (!destination.empty() && destination.front() == '/' && destination.substr(0, 2) != "//") destination = std::string(kOrigin) + destination;
+    HttpsUrl parsed;
+    return ParseHttpsUrl(destination, &parsed) && parsed.host == "www.strava.com" &&
+      (parsed.path == "/athlete/training" || parsed.path == "/dashboard");
+  }
+  return status == 200 || status == 204;
+}
+}  // namespace strava_web
+#endif  // RUNNER_STRAVA_WEB_SECURITY_H_

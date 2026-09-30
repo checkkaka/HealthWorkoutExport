@@ -144,6 +144,7 @@ impl FitDocument {
         let mut field_count = 0usize;
         let mut memory_bytes = data.len();
         let mut timestamp = 0u32;
+        let mut has_timestamp = false;
         let mut last_time_offset = 0u8;
 
         while cursor < data_end {
@@ -154,7 +155,7 @@ impl FitDocument {
                 let definition = definitions[local_number]
                     .as_ref()
                     .ok_or(FitDecodeError::MissingDefinition(local_number as u8))?;
-                if definition.fields.iter().any(|field| field.number == 253) {
+                if !has_timestamp || definition.fields.iter().any(|field| field.number == 253) {
                     return Err(FitDecodeError::InvalidCompressedTimestamp);
                 }
                 let offset = record_header & 0x1f;
@@ -192,7 +193,7 @@ impl FitDocument {
                     count.checked_mul(3).ok_or(FitDecodeError::Truncated)?,
                 )?;
                 let mut fields = Vec::with_capacity(count);
-                for raw in raw_fields.chunks_exact(3) {
+                for raw in raw_fields.as_chunks::<3>().0 {
                     let size = usize::from(raw[1]);
                     if size == 0 {
                         return Err(FitDecodeError::InvalidDefinition);
@@ -213,7 +214,7 @@ impl FitDocument {
                         count.checked_mul(3).ok_or(FitDecodeError::Truncated)?,
                     )?;
                     let mut fields = Vec::with_capacity(count);
-                    for raw in raw_fields.chunks_exact(3) {
+                    for raw in raw_fields.as_chunks::<3>().0 {
                         let size = usize::from(raw[1]);
                         if size == 0 {
                             return Err(FitDecodeError::InvalidDefinition);
@@ -245,6 +246,7 @@ impl FitDocument {
             let message = parse_message(&mut cursor, data_end, definition)?;
             if let Some(value) = raw_timestamp(&source, &message) {
                 timestamp = value;
+                has_timestamp = true;
                 last_time_offset = (value & 0x1f) as u8;
             }
             field_count = checked_field_total(field_count, &message)?;
@@ -366,6 +368,44 @@ impl FitDocument {
             BASE_TYPE_UINT32Z if value != 0 => Some(value),
             _ => None,
         }
+    }
+
+    /// Sensor merge considers FIT invalid sentinels missing, unlike a mere definition check.
+    pub(crate) fn has_valid_scalar(&self, message_index: usize, field_number: u8) -> bool {
+        let Some(field) = self.field(message_index, field_number) else {
+            return false;
+        };
+        match field.definition.base_type {
+            0x00 | 0x02 | 0x0A | 0x0D => self.read_u8(message_index, field_number).is_some(),
+            0x84 | 0x8B => self.read_u16(message_index, field_number).is_some(),
+            0x86 | 0x8C => self.read_u32(message_index, field_number).is_some(),
+            0x83 => self.read_i16(message_index, field_number).is_some(),
+            0x85 => self.read_i32(message_index, field_number).is_some(),
+            0x01 => self
+                .field_bytes(message_index, field_number)
+                .and_then(|b| b.first())
+                .is_some_and(|v| *v != 0x7F),
+            _ => false,
+        }
+    }
+
+    pub fn read_i16(&self, message_index: usize, field_number: u8) -> Option<i16> {
+        let message = self.messages.get(message_index)?;
+        let field = self.field(message_index, field_number)?;
+        if field.definition.base_type != 0x83 {
+            return None;
+        }
+        let bytes: [u8; 2] = self
+            .field_bytes(message_index, field_number)?
+            .get(..2)?
+            .try_into()
+            .ok()?;
+        let value = if message.big_endian {
+            i16::from_be_bytes(bytes)
+        } else {
+            i16::from_le_bytes(bytes)
+        };
+        (value != i16::MAX).then_some(value)
     }
 
     pub fn read_i32(&self, message_index: usize, field_number: u8) -> Option<i32> {
@@ -612,7 +652,7 @@ impl FitDocument {
         source_message_index: usize,
         field_number: u8,
     ) -> Result<bool, FitDecodeError> {
-        let (source_global_number, definition, value) = {
+        let (source_global_number, source_big_endian, definition, mut value) = {
             let source_message = source
                 .messages
                 .get(source_message_index)
@@ -624,6 +664,7 @@ impl FitDocument {
                 .ok_or(FitDecodeError::FieldNotFound)?;
             (
                 source_message.global_number,
+                source_message.big_endian,
                 source_field.definition.clone(),
                 value_bytes(&source.source, &source_field.value).to_vec(),
             )
@@ -637,6 +678,20 @@ impl FitDocument {
         }
         if target_message.has_field(field_number) {
             return Ok(false);
+        }
+        if target_message.big_endian != source_big_endian && definition.base_type & 0x80 != 0 {
+            let width = match definition.base_type & 0x1f {
+                3 | 4 | 11 => 2,
+                5 | 6 | 8 | 12 => 4,
+                9 | 14 | 15 | 16 => 8,
+                _ => return Err(FitDecodeError::InvalidFieldValue),
+            };
+            if value.len() % width != 0 {
+                return Err(FitDecodeError::InvalidFieldValue);
+            }
+            for element in value.chunks_exact_mut(width) {
+                element.reverse();
+            }
         }
         let next_count = self
             .field_count
@@ -815,6 +870,108 @@ impl FitDocument {
         Ok(target_index)
     }
 
+    /// 写入 Swift-compatible powerSource developer 字段，保留第三方 developer payload。
+    /// 在所有依赖消息索引的处理完成后调用；元数据必须出现在 Record 之前。
+    pub(crate) fn mark_virtual_power(
+        &mut self,
+        records: &[(usize, bool)],
+    ) -> Result<(), FitDecodeError> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        const APP_ID: &[u8] = b"HWEVPWRSVIRTPWR\x01";
+        let existing = self.messages.iter().enumerate().find_map(|(i, m)| {
+            (m.global_number == 207 && self.field_bytes(i, 1) == Some(APP_ID))
+                .then(|| self.read_u8(i, 3))
+                .flatten()
+        });
+        let used = self.developer_data_indexes();
+        let developer_index = existing
+            .or_else(|| (0..u8::MAX).find(|i| !used.contains(i)))
+            .ok_or(FitDecodeError::TooManyFields)?;
+        let has_description = self.messages.iter().enumerate().any(|(i, m)| {
+            m.global_number == 206
+                && self.read_u8(i, 0) == Some(developer_index)
+                && self.read_u8(i, 1) == Some(0)
+                && self
+                    .field_bytes(i, 3)
+                    .is_some_and(|b| b.split(|v| *v == 0).next() == Some(b"powerSource"))
+        });
+        let mut metadata = Vec::new();
+        if existing.is_none() {
+            metadata.push(owned_message(
+                207,
+                vec![
+                    owned_field(1, 0x0D, APP_ID),
+                    owned_field(3, 0x02, &[developer_index]),
+                    owned_field(4, 0x86, &1u32.to_le_bytes()),
+                ],
+            ));
+        }
+        if !has_description {
+            metadata.push(owned_message(
+                206,
+                vec![
+                    owned_field(0, 0x02, &[developer_index]),
+                    owned_field(1, 0x02, &[0]),
+                    owned_field(2, 0x02, &[7]),
+                    owned_field(3, 7, b"powerSource\0"),
+                    owned_field(8, 7, b"enum\0"),
+                    owned_field(14, 0x84, &20u16.to_le_bytes()),
+                ],
+            ));
+        }
+        if self.messages.len().saturating_add(metadata.len()) > MAX_MESSAGES {
+            return Err(FitDecodeError::TooManyMessages);
+        }
+        let added = metadata.iter().map(|m| m.fields.len()).sum::<usize>()
+            + records
+                .iter()
+                .filter(|(i, _)| {
+                    self.messages.get(*i).is_some_and(|m| {
+                        !m.developer_fields.iter().any(|f| {
+                            f.definition.number == 0
+                                && f.definition.developer_data_index == developer_index
+                        })
+                    })
+                })
+                .count();
+        if self.field_count.saturating_add(added) > MAX_FIELDS {
+            return Err(FitDecodeError::TooManyFields);
+        }
+        for &(index, failed) in records {
+            let message = self
+                .messages
+                .get_mut(index)
+                .ok_or(FitDecodeError::FieldNotFound)?;
+            if message.global_number != 20 {
+                return Err(FitDecodeError::InvalidFieldValue);
+            }
+            let bytes: &[u8] = if failed { b"failed\0" } else { b"virtual\0" };
+            let field = FitDeveloperField {
+                definition: DeveloperFieldDefinition {
+                    number: 0,
+                    size: bytes.len(),
+                    developer_data_index: developer_index,
+                },
+                value: FieldValue::Owned(bytes.to_vec()),
+            };
+            if let Some(old) = message.developer_fields.iter_mut().find(|f| {
+                f.definition.number == 0 && f.definition.developer_data_index == developer_index
+            }) {
+                *old = field;
+            } else {
+                message.developer_fields.push(field);
+            }
+        }
+        self.field_count += added;
+        // Keep FileId first, as required for Activity FIT consumers.
+        let insert_at = usize::from(self.messages.first().is_some_and(|m| m.global_number == 0));
+        self.messages.splice(insert_at..insert_at, metadata);
+        self.dirty = true;
+        Ok(())
+    }
+
     /// 合并输出采用 FIT Activity 的常见消息分组，并在 Event/Record/Lap 内按时间排序。
     pub(crate) fn sort_messages_for_merge(&mut self) {
         let mut messages = self
@@ -914,6 +1071,26 @@ impl FitDocument {
         let file_crc = crc16(&output);
         checked_extend(&mut output, &file_crc.to_le_bytes())?;
         Ok(output)
+    }
+}
+
+fn owned_field(number: u8, base_type: u8, bytes: &[u8]) -> FitField {
+    FitField {
+        definition: FieldDefinition {
+            number,
+            size: bytes.len(),
+            base_type,
+        },
+        value: FieldValue::Owned(bytes.to_vec()),
+    }
+}
+
+fn owned_message(global_number: u16, fields: Vec<FitField>) -> FitMessage {
+    FitMessage {
+        global_number,
+        big_endian: false,
+        fields,
+        developer_fields: Vec::new(),
     }
 }
 
@@ -1200,5 +1377,88 @@ mod tests {
             accepted += 1;
         }
         assert!(accepted < MAX_MESSAGES);
+    }
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+    fn document(messages: Vec<FitMessage>) -> FitDocument {
+        let field_count = messages
+            .iter()
+            .map(|m| m.fields.len() + m.developer_fields.len())
+            .sum();
+        FitDocument {
+            source: Arc::from([]),
+            protocol_version: 0x20,
+            profile_version: [0x54, 8],
+            messages,
+            field_count,
+            dirty: true,
+        }
+    }
+    #[test]
+    fn copies_cross_endian_scalar_and_array_values() {
+        let mut source = document(vec![owned_message(
+            20,
+            vec![owned_field(7, 0x84, &[0x01, 0x02, 0x03, 0x04])],
+        )]);
+        source.messages[0].big_endian = true;
+        let mut target = document(vec![owned_message(20, vec![])]);
+        target.copy_missing_field_from(0, &source, 0, 7).unwrap();
+        assert_eq!(
+            target.field_bytes(0, 7),
+            Some(&[0x02, 0x01, 0x04, 0x03][..])
+        );
+        assert_eq!(target.read_u16(0, 7), Some(258));
+        assert!(FitDocument::parse(&target.to_bytes().unwrap()).is_ok());
+    }
+    #[test]
+    fn signed_grade_handles_endian_and_invalid_sentinel() {
+        let mut doc = document(vec![owned_message(
+            20,
+            vec![owned_field(9, 0x83, &(-500i16).to_le_bytes())],
+        )]);
+        assert_eq!(doc.read_i16(0, 9), Some(-500));
+        doc.messages[0].big_endian = true;
+        doc.set_field_bytes(0, 9, &250i16.to_be_bytes()).unwrap();
+        assert_eq!(doc.read_i16(0, 9), Some(250));
+        doc.set_field_bytes(0, 9, &i16::MAX.to_be_bytes()).unwrap();
+        assert_eq!(doc.read_i16(0, 9), None);
+    }
+    #[test]
+    fn power_marks_preserve_other_developers_and_reuse_own_index() {
+        let mut doc = document(vec![owned_message(0, vec![]), owned_message(20, vec![])]);
+        doc.messages[1].developer_fields.push(FitDeveloperField {
+            definition: DeveloperFieldDefinition {
+                number: 0,
+                size: 2,
+                developer_data_index: 0,
+            },
+            value: FieldValue::Owned(vec![42, 43]),
+        });
+        doc.field_count += 1;
+        doc.mark_virtual_power(&[(1, false)]).unwrap();
+        let bytes = doc.to_bytes().unwrap();
+        let mut doc = FitDocument::parse(&bytes).unwrap();
+        assert_eq!(doc.messages[0].global_number(), 0);
+        let record = doc
+            .messages
+            .iter()
+            .position(|m| m.global_number == 20)
+            .unwrap();
+        assert_eq!(doc.developer_field_bytes(record, 0, 0), Some(&[42, 43][..]));
+        assert_eq!(
+            doc.developer_field_bytes(record, 0, 1),
+            Some(&b"virtual\0"[..])
+        );
+        let count = doc.messages.len();
+        doc.mark_virtual_power(&[(record, true)]).unwrap();
+        assert_eq!(doc.messages.len(), count);
+        assert_eq!(
+            doc.developer_field_bytes(record, 0, 1),
+            Some(&b"failed\0"[..])
+        );
+        assert!(FitDocument::parse(&doc.to_bytes().unwrap()).is_ok());
     }
 }

@@ -7,6 +7,9 @@ pub const APPLE_REFERENCE_UNIX_SECONDS: f64 = 978_307_200.0;
 pub const MAX_RECOVERY_FIT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_STATE_JSON_BYTES: usize = 16 * 1024 * 1024;
 const MAX_COMMAND_JSON_BYTES: usize = 1024 * 1024;
+// Base64 FIT plus bounded metadata, checked before parsing unknown fields too.
+const MAX_RECOVERY_JSON_BYTES: usize =
+    MAX_RECOVERY_FIT_BYTES.div_ceil(3) * 4 + MAX_COMMAND_JSON_BYTES;
 
 pub type SyncStateMap = BTreeMap<String, SyncStateRecord>;
 
@@ -172,8 +175,10 @@ impl<'de> Deserialize<'de> for RecoveryPhase {
 
 impl PendingResyncUpload {
     pub fn decode(bytes: &[u8]) -> Result<Self, SyncStateError> {
-        let upload: Self = serde_json::from_slice(bytes)
-            .map_err(|error| SyncStateError::InvalidJson(error.to_string()))?;
+        if bytes.len() > MAX_RECOVERY_JSON_BYTES {
+            return Err(SyncStateError::InvalidJson("恢复上传包过大".into()));
+        }
+        let upload: Self = serde_json::from_slice(bytes).map_err(safe_json_error)?;
         for (field, value) in [
             ("startDate", upload.start_date),
             ("endDate", upload.end_date),
@@ -206,20 +211,40 @@ impl PendingResyncUpload {
             return Err(SyncStateError::InvalidJson("恢复上传包包含无效数值".into()));
         }
         self.validate_transaction()?;
-        serde_json::to_vec(self).map_err(|error| SyncStateError::InvalidJson(error.to_string()))
+        let bytes = serde_json::to_vec(self).map_err(safe_json_error)?;
+        if bytes.len() > MAX_RECOVERY_JSON_BYTES {
+            return Err(SyncStateError::InvalidJson("恢复上传包过大".into()));
+        }
+        Ok(bytes)
     }
 
     fn validate_transaction(&self) -> Result<(), SyncStateError> {
+        if self.phase.is_some() && (self.external_id.is_none() || self.fit_sha256.is_none()) {
+            return Err(SyncStateError::InvalidJson("恢复事务元数据不完整".into()));
+        }
+        if self.filename.trim().is_empty()
+            || self.filename.len() > 255
+            || matches!(self.filename.as_str(), "." | "..")
+            || self.filename.contains(['/', '\\'])
+            || self.filename.chars().any(char::is_control)
+        {
+            return Err(SyncStateError::InvalidJson("恢复文件名无效".into()));
+        }
         if let Some(value) = &self.external_id {
             validate_bounded_text(value, 8 * 1024, "恢复 externalId 无效")?;
         }
         if let Some(value) = &self.remote_id_to_replace {
-            validate_bounded_text(value, 1024, "恢复远端 ID 无效")?;
+            validate_remote_id(value)?;
         }
         if let Some(expected) = &self.fit_sha256
             && (!is_valid_fingerprint(expected) || sha256_hex(&self.upload_data) != *expected)
         {
             return Err(SyncStateError::InvalidJson("恢复 FIT 哈希不匹配".into()));
+        }
+        // A recovery transaction can lead to remote deletion. Reject invalid bytes before
+        // promoting legacy data to a prepared transaction or resuming any active phase.
+        if self.phase.is_some() && !crate::fit::is_valid_fit(&self.upload_data) {
+            return Err(SyncStateError::InvalidJson("恢复 FIT 文件无效".into()));
         }
         Ok(())
     }
@@ -253,15 +278,18 @@ pub fn decode(bytes: &[u8]) -> Result<SyncStateMap, SyncStateError> {
     if bytes.len() > MAX_STATE_JSON_BYTES {
         return Err(SyncStateError::InvalidJson("同步状态超过 16MiB".into()));
     }
-    let records: SyncStateMap = serde_json::from_slice(bytes)
-        .map_err(|error| SyncStateError::InvalidJson(error.to_string()))?;
+    let records: SyncStateMap = serde_json::from_slice(bytes).map_err(safe_json_error)?;
     validate(&records)?;
     Ok(records)
 }
 
 pub fn encode(records: &SyncStateMap) -> Result<Vec<u8>, SyncStateError> {
     validate(records)?;
-    serde_json::to_vec(records).map_err(|error| SyncStateError::InvalidJson(error.to_string()))
+    let bytes = serde_json::to_vec(records).map_err(safe_json_error)?;
+    if bytes.len() > MAX_STATE_JSON_BYTES {
+        return Err(SyncStateError::InvalidJson("同步状态超过 16MiB".into()));
+    }
+    Ok(bytes)
 }
 
 #[derive(Deserialize)]
@@ -288,6 +316,11 @@ enum SyncStateCommand {
         fingerprint: String,
         updated_at: f64,
         message: String,
+    },
+    SetRemoteId {
+        fingerprint: String,
+        remote_id: String,
+        updated_at: f64,
     },
     Remove {
         fingerprint: String,
@@ -317,8 +350,8 @@ pub fn apply(state_json: &[u8], command_json: &[u8]) -> Result<Vec<u8>, SyncStat
         return Err(SyncStateError::InvalidJson("同步命令超过 1MiB".into()));
     }
     let mut records = decode(state_json)?;
-    let command: SyncStateCommand = serde_json::from_slice(command_json)
-        .map_err(|error| SyncStateError::InvalidJson(error.to_string()))?;
+    let command: SyncStateCommand =
+        serde_json::from_slice(command_json).map_err(safe_json_error)?;
     match command {
         SyncStateCommand::Validate => {}
         SyncStateCommand::MarkPending { record } => mark_pending(&mut records, record)?,
@@ -334,6 +367,13 @@ pub fn apply(state_json: &[u8], command_json: &[u8]) -> Result<Vec<u8>, SyncStat
             updated_at,
             message,
         } => mark_failed(&mut records, &fingerprint, updated_at, message)?,
+        SyncStateCommand::SetRemoteId {
+            fingerprint,
+            remote_id,
+            updated_at,
+        } => {
+            set_remote_id(&mut records, &fingerprint, &remote_id, updated_at)?;
+        }
         SyncStateCommand::Remove { fingerprint } => {
             validate_fingerprint(&fingerprint)?;
             records.remove(&fingerprint);
@@ -352,8 +392,7 @@ pub fn apply_recovery(
         return Err(SyncStateError::InvalidJson("恢复命令超过 1MiB".into()));
     }
     let mut recovery = PendingResyncUpload::decode(recovery_json)?;
-    let command: RecoveryCommand = serde_json::from_slice(command_json)
-        .map_err(|error| SyncStateError::InvalidJson(error.to_string()))?;
+    let command: RecoveryCommand = serde_json::from_slice(command_json).map_err(safe_json_error)?;
     match command {
         RecoveryCommand::Validate => {}
         RecoveryCommand::Prepare {
@@ -363,7 +402,7 @@ pub fn apply_recovery(
             None => {
                 validate_bounded_text(&external_id, 8 * 1024, "恢复 externalId 无效")?;
                 if let Some(value) = &remote_id_to_replace {
-                    validate_bounded_text(value, 1024, "恢复远端 ID 无效")?;
+                    validate_remote_id(value)?;
                 }
                 recovery.phase = Some(RecoveryPhase::Prepared);
                 recovery.external_id = Some(external_id);
@@ -440,8 +479,8 @@ pub fn mark_pending(
     record.remote_id = None;
     record.message = None;
     record.is_duplicate = None;
-    record.upload_channel = None;
-    record.has_virtual_power = None;
+    // The caller supplies the newly prepared upload's channel and power provenance.
+    // Preserve them across crashes; only remote outcome fields are reset.
     validate_record(&record.fingerprint, &record)?;
     records.insert(record.fingerprint.clone(), record);
     Ok(())
@@ -530,6 +569,40 @@ pub fn mark_failed(
     Ok(())
 }
 
+/// Backfill one missing ID atomically without changing the upload result or provenance.
+pub fn set_remote_id(
+    records: &mut SyncStateMap,
+    fingerprint: &str,
+    remote_id: &str,
+    updated_at: f64,
+) -> Result<(), SyncStateError> {
+    validate_fingerprint(fingerprint)?;
+    validate_remote_id(remote_id)?;
+    validate_date(fingerprint, "updatedAt", updated_at)?;
+    let target = records
+        .get(fingerprint)
+        .ok_or(SyncStateError::MissingRecord)?;
+    if target
+        .remote_id
+        .as_deref()
+        .is_some_and(|existing| validate_remote_id(existing).is_ok() && existing != remote_id)
+    {
+        return Err(SyncStateError::InvalidJson("记录已有不同远端 ID".into()));
+    }
+    if records
+        .iter()
+        .any(|(key, record)| key != fingerprint && record.remote_id.as_deref() == Some(remote_id))
+    {
+        return Err(SyncStateError::InvalidJson("远端 ID 已用于另一记录".into()));
+    }
+    let target = records
+        .get_mut(fingerprint)
+        .ok_or(SyncStateError::MissingRecord)?;
+    target.remote_id = Some(remote_id.to_owned());
+    target.updated_at = updated_at;
+    Ok(())
+}
+
 fn validate(records: &SyncStateMap) -> Result<(), SyncStateError> {
     for (fingerprint, record) in records {
         validate_record(fingerprint, record)?;
@@ -577,6 +650,22 @@ fn validate_date(
         .is_finite()
         .then_some(())
         .ok_or(SyncStateError::InvalidDate { field })
+}
+
+/// serde data errors may include the rejected value, including private workout metadata.
+fn safe_json_error(error: serde_json::Error) -> SyncStateError {
+    SyncStateError::InvalidJson(format!(
+        "格式错误（行 {}，列 {}）",
+        error.line(),
+        error.column()
+    ))
+}
+
+fn validate_remote_id(value: &str) -> Result<(), SyncStateError> {
+    if value.is_empty() || value.len() > 32 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(SyncStateError::InvalidJson("恢复远端 ID 无效".into()));
+    }
+    Ok(())
 }
 
 fn require_complete_transaction(recovery: &PendingResyncUpload) -> Result<(), SyncStateError> {
@@ -747,8 +836,8 @@ mod tests {
         assert_eq!(records[&key].remote_id, None);
         assert_eq!(records[&key].message, None);
         assert_eq!(records[&key].is_duplicate, None);
-        assert_eq!(records[&key].upload_channel, None);
-        assert_eq!(records[&key].has_virtual_power, None);
+        assert_eq!(records[&key].upload_channel, Some(UploadChannel::Web));
+        assert_eq!(records[&key].has_virtual_power, Some(true));
 
         mark_uploaded(
             &mut records,
@@ -878,8 +967,14 @@ mod tests {
           "durationSeconds":3600,"uploadData":"AQID","filename":"activity.fit","commute":false,
           "futureField":"kept"
         }"#;
+        let mut legacy: Value = serde_json::from_slice(legacy).unwrap();
+        legacy["uploadData"] = Value::String(base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            valid_recovery_fit(),
+        ));
+        let legacy = serde_json::to_vec(&legacy).unwrap();
         let prepare = br#"{"operation":"prepare","externalId":"stable-external-id","remoteIdToReplace":"123"}"#;
-        let prepared = apply_recovery(legacy, prepare).unwrap();
+        let prepared = apply_recovery(&legacy, prepare).unwrap();
         let prepared_again = apply_recovery(&prepared, prepare).unwrap();
         assert_eq!(prepared_again, prepared);
         let value: Value = serde_json::from_slice(&prepared).unwrap();
@@ -907,5 +1002,125 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn state_cannot_encode_a_file_its_decoder_would_reject_as_oversized() {
+        let key = fingerprint('f');
+        let mut item = record(key.clone());
+        item.unknown_fields.insert(
+            "largeMetadata".into(),
+            Value::String("x".repeat(MAX_STATE_JSON_BYTES)),
+        );
+        let records = SyncStateMap::from([(key, item)]);
+        assert!(encode(&records).is_err());
+    }
+
+    #[test]
+    fn invalid_json_diagnostics_never_echo_private_values() {
+        let secret = "private-health-or-token-value";
+        let key = fingerprint('a');
+        let mut value = serde_json::to_value(record(key.clone())).unwrap();
+        value["status"] = Value::String(secret.into());
+        let state = serde_json::to_vec(&json!({key: value})).unwrap();
+        let error = decode(&state).unwrap_err();
+        assert!(!format!("{error:?} {error}").contains(secret));
+        let command = serde_json::to_vec(&json!({"operation":secret})).unwrap();
+        let error = apply(b"{}", &command).unwrap_err();
+        assert!(!format!("{error:?} {error}").contains(secret));
+    }
+
+    #[test]
+    fn recovery_requires_complete_transaction_and_safe_filename_and_remote_id() {
+        let legacy = json!({
+            "primarySourceId":"healthkit","primaryActivityId":"activity-1","title":"recovery",
+            "startDate":721692800,"endDate":721696400,"supplementSourceIds":[],
+            "durationSeconds":3600,"uploadData":"AQID","filename":"activity.fit","commute":false
+        });
+        for phase in ["prepared", "remoteDeleted", "uploading"] {
+            let mut value = legacy.clone();
+            value["phase"] = Value::String(phase.into());
+            assert!(PendingResyncUpload::decode(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
+        for filename in ["../secret.fit", "folder/file.fit", "..", "name\n.fit"] {
+            let mut value = legacy.clone();
+            value["filename"] = Value::String(filename.into());
+            assert!(PendingResyncUpload::decode(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
+        for remote_id in ["../42", "private-token-value", "", "42/streams"] {
+            let command = serde_json::to_vec(&json!({
+                "operation":"prepare", "externalId":"external", "remoteIdToReplace":remote_id
+            }))
+            .unwrap();
+            let error =
+                apply_recovery(&serde_json::to_vec(&legacy).unwrap(), &command).unwrap_err();
+            if !remote_id.is_empty() {
+                assert!(!format!("{error:?} {error}").contains(remote_id));
+            }
+        }
+    }
+    fn valid_recovery_fit() -> Vec<u8> {
+        crate::fit::encode_health_workout_bundle_json(
+            br#"{
+            "uuid":"synthetic-recovery","startMs":1704067200000,"endMs":1704070800000,
+            "durationSeconds":3600,"activityType":13,"events":[],"series":{},"route":[]
+        }"#,
+            0,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn invalid_fit_cannot_be_prepared_or_resume_destructive_recovery() {
+        let legacy = br#"{
+            "primarySourceId":"healthkit","primaryActivityId":"activity-1","title":"recovery",
+            "startDate":721692800,"endDate":721696400,"supplementSourceIds":[],
+            "durationSeconds":3600,"uploadData":"AQID","filename":"activity.fit","commute":false
+        }"#;
+        // Legacy codec remains lossless; entering a transaction must validate the actual FIT.
+        assert!(PendingResyncUpload::decode(legacy).is_ok());
+        let prepare =
+            br#"{"operation":"prepare","externalId":"external","remoteIdToReplace":"123"}"#;
+        assert!(apply_recovery(legacy, prepare).is_err());
+        let mut tampered: Value = serde_json::from_slice(legacy).unwrap();
+        tampered["phase"] = Value::String("remoteDeleted".into());
+        tampered["externalId"] = Value::String("external".into());
+        tampered["fitSha256"] = Value::String(sha256_hex(&[1, 2, 3]));
+        assert!(
+            apply_recovery(
+                &serde_json::to_vec(&tampered).unwrap(),
+                br#"{"operation":"markUploading"}"#
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn remote_id_backfill_is_atomic_unique_and_preserves_all_other_metadata() {
+        let first = fingerprint('a');
+        let second = fingerprint('b');
+        let mut item = record(first.clone());
+        item.status = SyncRecordStatus::Uploaded;
+        item.upload_channel = Some(UploadChannel::Web);
+        item.has_virtual_power = Some(true);
+        item.is_duplicate = Some(true);
+        item.unknown_fields.insert("custom".into(), json!(42));
+        let mut state = SyncStateMap::from([
+            (first.clone(), item.clone()),
+            (second.clone(), record(second.clone())),
+        ]);
+        let command = serde_json::to_vec(
+            &json!({"operation":"setRemoteId","fingerprint":first,"remoteId":"123","updatedAt":10}),
+        )
+        .unwrap();
+        state = decode(&apply(&encode(&state).unwrap(), &command).unwrap()).unwrap();
+        item.remote_id = Some("123".into());
+        item.updated_at = 10.0;
+        assert_eq!(state[&first], item);
+        let before = state.clone();
+        assert!(set_remote_id(&mut state, &second, "123", 11.0).is_err());
+        assert!(set_remote_id(&mut state, &first, "456", 11.0).is_err());
+        assert!(set_remote_id(&mut state, &second, "../123", 11.0).is_err());
+        assert_eq!(state, before);
+        set_remote_id(&mut state, &first, "123", 12.0).unwrap();
+        assert_eq!(state[&first].updated_at, 12.0);
     }
 }

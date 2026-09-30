@@ -229,7 +229,7 @@ final class StravaUploadSession {
       final retry = first.retry;
       if (retry == null) throw const FormatException('Strava 刷新请求缺少续传信息');
       final refreshedAccessToken = await _refreshAccessToken();
-      return switch (retry.stage) {
+      return await switch (retry.stage) {
         raw.StravaUploadRetryStage.upload => api.retryUploadAfterRefresh(
           handle: handle,
           accessToken: refreshedAccessToken,
