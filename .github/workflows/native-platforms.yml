@@ -23,6 +23,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Read pinned Flutter embedding revision without running Flutter
         uses: actions/checkout@v4
         with:
@@ -35,12 +37,23 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
-      - name: Install previously authorized Android SDK components
-        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+          overwrite-settings: false
+      - name: Use hosted SDK and install only required components without accepting terms
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" 'platforms;android-36' 'build-tools;36.0.0' </dev/null
+          test -f "$ANDROID_HOME/platforms/android-36/android.jar"
+          test -x "$ANDROID_HOME/build-tools/36.0.0/aapt2"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.1.0'
+          build-scan-publish: false
+          dependency-graph: disabled
+          develocity-injection-enabled: false
+          add-job-summary-as-pr-comment: never
       - name: Compile actual native adapters and run deterministic tests
         run: gradle --no-daemon -p flutter_app/android/native_validation -PflutterSdk="$GITHUB_WORKSPACE/.native-flutter" testDebugUnitTest assembleDebug
       - uses: actions/upload-artifact@v4
@@ -55,6 +68,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: flutter/flutter
@@ -79,6 +94,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: flutter/flutter
