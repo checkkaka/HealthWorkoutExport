@@ -66,6 +66,17 @@ class AppBuildWorkflowTests(unittest.TestCase):
         self.assertIn('signingConfigs.getByName("release")', gradle)
         self.assertIn('signingConfigs.getByName("debug")', gradle)
 
+    def test_android_release_prepares_filtered_plugins_and_checks_dex(self):
+        job = self.job("android-app")
+        prepare = "flutter --suppress-analytics build apk --release --config-only"
+        self.assertIn(prepare, job)
+        self.assertLess(job.index(prepare), job.index("build apk --release --no-pub"))
+        self.assertIn("GeneratedPluginRegistrant.java", job)
+        self.assertIn("dev.flutter.plugins.integration_test", job)
+        self.assertIn("Ldev/flutter/plugins/integration_test/", job)
+        self.assertIn('name.endswith(".dex")', job)
+        self.assertIn("git diff --exit-code -- pubspec.lock", job)
+
     def test_apple_builds_disable_signing_without_provisioning_changes(self):
         self.assertIn("build ios --release --no-pub --no-codesign", self.job("ios-app"))
         macos = self.job("macos-app")
