@@ -69,7 +69,9 @@ void main() {
     expect(find.text('行者活动'), findsAtLeastNWidgets(1));
   });
 
-  testWidgets('非 Apple 且非 Android 平台明确提示 HealthKit 不可用且不调用原生通道', (tester) async {
+  testWidgets('非 Apple 且非 Android 平台明确提示 HealthKit 不可用且不调用原生通道', (
+    tester,
+  ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     final calls = <MethodCall>[];
     messenger.setMockMethodCallHandler(healthKitChannel, (call) async {
@@ -158,7 +160,7 @@ void main() {
     expect(_workoutTile(tester, 'workout-2').value, isFalse);
   });
 
-  testWidgets('首次同步明确展示范围并在启动前提示不可取消', (tester) async {
+  testWidgets('健康页所选同步进入共享自动同步页，不直接启动 API 首传', (tester) async {
     messenger.setMockMethodCallHandler(healthKitChannel, (call) async {
       return switch (call.method) {
         'isAvailable' => true,
@@ -177,14 +179,13 @@ void main() {
     await tester.drag(find.byType(ListView), const Offset(0, -900));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('HealthKit → Strava API 首传（同指纹/近似预检，无补源/覆盖）'),
-      findsOneWidget,
-    );
-    await tester.tap(find.text('开始首次同步'));
+    expect(find.text('在自动同步页确认主补源、上传方式和重复活动处理后开始'), findsOneWidget);
+    await tester.ensureVisible(find.text('自动同步所选'));
+    await tester.tap(find.text('自动同步所选'));
     await tester.pumpAndSettle();
-    expect(find.text('开始首次同步到 Strava？'), findsOneWidget);
-    expect(find.textContaining('不能取消预检或上传'), findsOneWidget);
+    expect(find.text('将同步已选 1 条活动'), findsOneWidget);
+    expect(find.text('开始同步'), findsOneWidget);
+    expect(find.text('开始首次同步'), findsNothing);
   });
 
   testWidgets('健康训练加载失败后可以重试', (tester) async {

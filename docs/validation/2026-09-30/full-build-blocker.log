@@ -1,0 +1,15 @@
+   Compiling rust_lib_health_workout_export v0.1.0 (<worktree>/rust/workout_core)
+error[E0063]: missing field `refresh_token` in initializer of `OnelapLoginResult`
+    --> src/frb_generated.rs:1638:16
+     |
+1638 |         return crate::api::simple::OnelapLoginResult {
+     |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ missing `refresh_token`
+
+error[E0063]: missing field `start_time_local` in initializer of `OnelapWorkoutResult`
+    --> src/frb_generated.rs:1654:16
+     |
+1654 |         return crate::api::simple::OnelapWorkoutResult {
+     |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ missing `start_time_local`
+
+For more information about this error, try `rustc --explain E0063`.
+error: could not compile `rust_lib_health_workout_export` (lib test) due to 2 previous errors

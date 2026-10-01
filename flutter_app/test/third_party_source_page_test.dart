@@ -120,4 +120,54 @@ void main() {
     expect(find.text('退出登录'), findsOneWidget);
     expect(find.text('自动同步所选'), findsOneWidget);
   });
+  testWidgets('退出登录先确认；清除失败不伪装已退出', (tester) async {
+    var clears = 0;
+    var failClear = true;
+    messenger.setMockMethodCallHandler(vault, (call) async {
+      if (call.method == 'xingzheStatus') {
+        return {'hasAccount': true, 'hasPassword': true, 'hasSessionId': true};
+      }
+      if (call.method == 'clearXingzheAuthorization') {
+        clears++;
+        if (failClear) throw PlatformException(code: 'vault_unavailable');
+      }
+      return null;
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ThirdPartySourcePage(
+            source: ThirdPartySourceType.xingzhe,
+            load: ({
+              required source,
+              required interval,
+              required operationId,
+            }) async => [],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('退出登录'));
+    await tester.pumpAndSettle();
+    expect(clears, 0);
+    expect(find.text('退出行者登录？'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(clears, 0);
+    await tester.tap(find.text('退出登录'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '退出登录'));
+    await tester.pumpAndSettle();
+    expect(clears, 1);
+    expect(find.textContaining('退出失败'), findsOneWidget);
+    expect(find.byKey(const Key('xingzheAccount')), findsNothing);
+    failClear = false;
+    await tester.tap(find.text('退出登录'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '退出登录'));
+    await tester.pumpAndSettle();
+    expect(clears, 2);
+    expect(find.byKey(const Key('xingzheAccount')), findsOneWidget);
+  });
 }

@@ -161,6 +161,7 @@ final class OnelapVaultLease {
     required this.password,
     required this.token,
     required this.uid,
+    this.refreshToken,
   });
 
   factory OnelapVaultLease.fromObject(Object? value) {
@@ -170,6 +171,7 @@ final class OnelapVaultLease {
       password: _requiredText(map, 'password'),
       token: _optionalText(map, 'token'),
       uid: _optionalText(map, 'uid'),
+      refreshToken: _optionalText(map, 'refreshToken'),
     );
   }
 
@@ -177,6 +179,7 @@ final class OnelapVaultLease {
   final String password;
   final String? token;
   final String? uid;
+  final String? refreshToken;
 
   @override
   String toString() => 'OnelapVaultLease(credentials: <redacted>)';
@@ -283,16 +286,19 @@ final class OnelapVaultChannel {
     required String password,
     required String token,
     required String uid,
+    String? refreshToken,
   }) async {
     _requireText(account, 'account');
     _requireSecret(password, 'password');
     _requireSecret(token, 'token');
     _requireSecret(uid, 'uid');
+    if (refreshToken != null) _requireSecret(refreshToken, 'refreshToken');
     await _channel.invokeMethod<Object?>('writeOnelapAuthorization', {
       'account': account,
       'password': password,
       'token': token,
       'uid': uid,
+      'refreshToken': ?refreshToken,
     });
   }
 
@@ -444,6 +450,8 @@ final class StravaSettingsStore {
 }
 
 const _allowedPreferenceKeys = <String>{
+  'sync_preview_policy',
+  'write_to_apple_health',
   'strava.uploadMode',
   'strava.gcjCorrectionEnabled',
   'virtualPower.enabled',
@@ -478,9 +486,14 @@ final class StravaOAuthChannel {
     });
   }
 
+  Future<void> cancel() => _channel.invokeMethod<void>('cancelAuthorization');
+
   Future<String> authorize(Uri authorizationUrl) async {
     if (authorizationUrl.scheme != 'https' ||
         authorizationUrl.host != 'www.strava.com' ||
+        authorizationUrl.userInfo.isNotEmpty ||
+        authorizationUrl.hasPort ||
+        authorizationUrl.hasFragment ||
         authorizationUrl.path != '/oauth/mobile/authorize') {
       throw ArgumentError.value(
         authorizationUrl,
@@ -505,6 +518,64 @@ final class StravaWebChannel {
     : _channel = const MethodChannel('health_workout_export/strava_web');
 
   final MethodChannel _channel;
+
+  Future<void> openActivity(String remoteId) async {
+    if (!isValidStravaActivityId(remoteId)) {
+      throw ArgumentError.value(remoteId, 'remoteId', '必须为 1 至 32 位数字');
+    }
+    await _channel.invokeMethod<void>('openActivity', {'remoteId': remoteId});
+  }
+
+  Future<void> deleteActivity(String remoteId) async {
+    if (!isValidStravaActivityId(remoteId)) {
+      throw ArgumentError.value(remoteId, 'remoteId', '必须为 1 至 32 位数字');
+    }
+    await _channel.invokeMethod<void>('deleteActivity', {'remoteId': remoteId});
+  }
+
+  Future<String> listActivityPage({
+    required int page,
+    required DateTime after,
+    required DateTime before,
+  }) async {
+    if (page < 1 ||
+        page > 200 ||
+        !after.isBefore(before) ||
+        after.year < 1900 ||
+        before.year > 2200) {
+      throw ArgumentError('网页活动列表范围无效');
+    }
+    final value = await _channel.invokeMethod<String>('listActivityPage', {
+      'page': page,
+      'afterMs': after.millisecondsSinceEpoch,
+      'beforeMs': before.millisecondsSinceEpoch,
+    });
+    if (value == null || value.length > 4 * 1024 * 1024) {
+      throw const FormatException('网页活动列表为空或过大');
+    }
+    return value;
+  }
+
+  Future<({String pageHtml, String? streamsJson})?> readActivitySpeedData(
+    String remoteId,
+  ) async {
+    if (!isValidStravaActivityId(remoteId)) {
+      throw ArgumentError.value(remoteId, 'remoteId', '必须为 1 至 32 位数字');
+    }
+    final value = await _channel.invokeMethod<Object?>(
+      'readActivitySpeedData',
+      {'remoteId': remoteId},
+    );
+    if (value == null) return null;
+    final map = _objectMap(value, '网页速度详情');
+    final html = _requiredText(map, 'pageHtml');
+    final streams = _optionalText(map, 'streamsJson');
+    if (html.length > 4 * 1024 * 1024 ||
+        (streams != null && streams.length > 4 * 1024 * 1024)) {
+      throw const FormatException('网页速度详情过大');
+    }
+    return (pageHtml: html, streamsJson: streams);
+  }
 
   Future<bool> login() async {
     final ready = await _channel.invokeMethod<bool>('login');
@@ -573,6 +644,50 @@ final class HealthKitChannel {
 
   final MethodChannel _channel;
 
+  Future<bool> canWriteWorkouts() async {
+    try {
+      return await _channel.invokeMethod<bool>('canWriteWorkouts') ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException catch (error) {
+      if (error.code == 'unsupported_platform') return false;
+      rethrow;
+    }
+  }
+
+  Future<void> requestWriteAuthorization() =>
+      _channel.invokeMethod<void>('requestWriteAuthorization');
+  Future<List<Map<String, Object?>>> findNearbyWorkouts({
+    required int startMs,
+    required int endMs,
+  }) async {
+    if (startMs >= endMs) throw ArgumentError('健康查重时间范围无效');
+    final result = await _channel.invokeMethod<List<Object?>>(
+      'findNearbyWorkouts',
+      {'startMs': startMs, 'endMs': endMs},
+    );
+    if (result == null || result.length > 10000) {
+      throw const FormatException('健康查重响应无效');
+    }
+    return [
+      for (final value in result)
+        Map<String, Object?>.from(_objectMap(value, '健康查重训练')),
+    ];
+  }
+
+  Future<String> writeWorkout({required Uint8List draftJson}) async {
+    if (draftJson.isEmpty || draftJson.length > 64 * 1024 * 1024) {
+      throw ArgumentError('健康草稿大小无效');
+    }
+    final result = await _channel.invokeMethod<String>('writeWorkout', {
+      'draftJson': draftJson,
+    });
+    if (result == null || !_uuidPattern.hasMatch(result)) {
+      throw const FormatException('健康写入未返回有效 UUID');
+    }
+    return result;
+  }
+
   Future<bool> isAvailable() async {
     final available = await _channel.invokeMethod<bool>('isAvailable');
     if (available == null) {
@@ -628,6 +743,16 @@ final class HealthKitChannel {
       if (!_uuidPattern.hasMatch(uuid) || !normalized.add(uuid.toLowerCase())) {
         throw ArgumentError.value(uuids, 'uuids', '必须是无重复的 UUID');
       }
+    }
+    // Health Connect caps a single detail call at 100 sessions. Validate the
+    // entire selection first, then preserve order across bounded native calls.
+    if (uuids.length > 100) {
+      final bundles = <HealthWorkoutBundle>[];
+      for (var start = 0; start < uuids.length; start += 100) {
+        final end = (start + 100).clamp(0, uuids.length);
+        bundles.addAll(await fetchWorkoutBundles(uuids.sublist(start, end)));
+      }
+      return List.unmodifiable(bundles);
     }
     final result = await _channel.invokeMethod<List<Object?>>(
       'fetchWorkoutBundles',
@@ -973,3 +1098,7 @@ double? _optionalFiniteDouble(Map<Object?, Object?> map, String key) {
   }
   return value;
 }
+
+/// 远端 ID 只允许纯数字，绝不把不可信字符串拼成外部 URL。
+bool isValidStravaActivityId(String remoteId) =>
+    RegExp(r'^[0-9]{1,32}$').hasMatch(remoteId);

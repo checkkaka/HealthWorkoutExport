@@ -1,3 +1,4 @@
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 
 use crate::fit_alignment::{FitAlignmentError, FitStaticAlignment, resolve_static_offsets};
@@ -37,6 +38,31 @@ pub struct FitMergeOptions {
     pub alignment: FitStaticAlignment,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FitSensorFilledCounts {
+    pub heart_rate: u32,
+    pub cadence: u32,
+    pub power: u32,
+    pub temperature: u32,
+    pub grade: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FitSupplementReport {
+    pub index: usize,
+    pub offset_seconds: Option<i32>,
+    pub filled_counts: FitSensorFilledCounts,
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FitMergeResult {
+    pub data: Vec<u8>,
+    pub supplement_reports: Vec<FitSupplementReport>,
+}
+
 impl Default for FitMergeOptions {
     fn default() -> Self {
         Self {
@@ -61,34 +87,142 @@ pub fn merge_fit_sensors(primary: &[u8], supplements: &[&[u8]]) -> Result<Vec<u8
     merge_fit(primary, supplements, &FitMergeOptions::default())
 }
 
-/// 同步上传用：先估时钟偏移再只补传感器；对齐失败时退回绝对时间。
+/// 同步上传用：先以速度/距离对齐；失败后按活动起点对齐，仍不可靠则保留主源。
 pub fn merge_fit_for_sync(primary: &[u8], supplements: &[&[u8]]) -> Result<Vec<u8>, FitMergeError> {
-    if supplements.is_empty() {
-        return Ok(primary.to_vec());
-    }
+    merge_fit_for_sync_with_report(primary, supplements).map(|result| result.data)
+}
+
+/// 同步合并的实际补源报告；无法可靠合并时计数为零且偏移为 None。
+pub fn merge_fit_for_sync_with_report(
+    primary: &[u8],
+    supplements: &[&[u8]],
+) -> Result<FitMergeResult, FitMergeError> {
+    validate_inputs(primary, supplements)?;
     let primary_doc = FitDocument::parse(primary)?;
+    let documents = supplements
+        .iter()
+        .map(|data| FitDocument::parse(data))
+        .collect::<Result<Vec<_>, _>>();
+    let Ok(documents) = documents else {
+        return Ok(unchanged_sync_merge(
+            primary,
+            supplements.len(),
+            "补源 FIT 无法解析，本次保留主源",
+        ));
+    };
     let (primary_speeds, primary_distances) = alignment_samples(&primary_doc);
-    let mut offsets = Vec::with_capacity(supplements.len());
-    for data in supplements {
-        let document = FitDocument::parse(data)?;
-        let (speeds, distances) = alignment_samples(&document);
-        let offset = crate::fit_alignment::estimate_fit_offset(
-            &primary_speeds,
-            &speeds,
-            &primary_distances,
-            &distances,
-        )
-        .unwrap_or(0);
-        offsets.push(offset);
+    let automatic = documents
+        .iter()
+        .map(|document| {
+            let (speeds, distances) = alignment_samples(document);
+            crate::fit_alignment::estimate_fit_offset(
+                &primary_speeds,
+                &speeds,
+                &primary_distances,
+                &distances,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>();
+    fn first_timestamp(document: &FitDocument) -> Option<u32> {
+        let session = document
+            .messages()
+            .iter()
+            .position(|message| message.global_number() == 18);
+        session
+            .and_then(|i| document.read_u32(i, 2).filter(|time| *time != u32::MAX))
+            .or_else(|| {
+                document
+                    .messages()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, message)| message.global_number() == 20)
+                    .filter_map(|(i, _)| document.read_u32(i, 253).filter(|time| *time != u32::MAX))
+                    .min()
+            })
     }
-    merge_fit(
+    let used_start_fallback = automatic.is_err();
+    let offsets = automatic.ok().or_else(|| {
+        let start = first_timestamp(&primary_doc)?;
+        documents
+            .iter()
+            .map(|document| {
+                let offset = i64::from(start) - i64::from(first_timestamp(document)?);
+                if offset.abs() > i64::from(crate::fit_alignment::MAX_ALIGNMENT_OFFSET_SECONDS) {
+                    return None;
+                }
+                i32::try_from(offset).ok()
+            })
+            .collect::<Option<Vec<_>>>()
+    });
+    let Some(offsets) = offsets else {
+        return Ok(unchanged_sync_merge(
+            primary,
+            supplements.len(),
+            "无法可靠对齐补源，本次保留主源",
+        ));
+    };
+    match merge_fit_with_report(
         primary,
         supplements,
         &FitMergeOptions {
             supplement_mode: FitSupplementMode::SensorsOnly,
             alignment: FitStaticAlignment::PerFile(offsets),
         },
-    )
+    ) {
+        Ok(mut result) => {
+            if used_start_fallback {
+                for report in &mut result.supplement_reports {
+                    report
+                        .notes
+                        .insert(0, "速度/距离对齐不可用，已按活动起点对齐".to_owned());
+                }
+            }
+            Ok(result)
+        }
+        Err(_) => Ok(unchanged_sync_merge(
+            primary,
+            supplements.len(),
+            "补源合并失败，本次保留主源",
+        )),
+    }
+}
+
+fn unchanged_sync_merge(primary: &[u8], count: usize, note: &str) -> FitMergeResult {
+    FitMergeResult {
+        data: primary.to_vec(),
+        supplement_reports: (0..count)
+            .map(|index| FitSupplementReport {
+                index,
+                offset_seconds: None,
+                filled_counts: FitSensorFilledCounts::default(),
+                notes: vec![note.to_owned()],
+            })
+            .collect(),
+    }
+}
+
+/// 用户合并的逐文件自动对齐；缺少可靠数据时报告错误，不静默假定设备时钟一致。
+pub fn estimate_merge_offsets(
+    primary: &[u8],
+    supplements: &[&[u8]],
+) -> Result<Vec<i32>, FitMergeError> {
+    validate_inputs(primary, supplements)?;
+    let primary_doc = FitDocument::parse(primary)?;
+    let (primary_speeds, primary_distances) = alignment_samples(&primary_doc);
+    supplements
+        .iter()
+        .map(|data| {
+            let document = FitDocument::parse(data)?;
+            let (speeds, distances) = alignment_samples(&document);
+            crate::fit_alignment::estimate_fit_offset(
+                &primary_speeds,
+                &speeds,
+                &primary_distances,
+                &distances,
+            )
+            .map_err(FitMergeError::from)
+        })
+        .collect()
 }
 
 fn alignment_samples(
@@ -109,6 +243,12 @@ fn alignment_samples(
         if let Some(speed) = document
             .read_u16(index, 6)
             .filter(|value| *value != u16::MAX)
+            .map(u32::from)
+            .or_else(|| {
+                document
+                    .read_u32(index, 73)
+                    .filter(|value| *value != u32::MAX)
+            })
         {
             speeds.push(crate::fit_alignment::FitAlignmentSample {
                 timestamp_seconds: timestamp,
@@ -134,8 +274,26 @@ pub fn merge_fit(
     supplements: &[&[u8]],
     options: &FitMergeOptions,
 ) -> Result<Vec<u8>, FitMergeError> {
+    merge_fit_with_report(primary, supplements, options).map(|result| result.data)
+}
+
+fn merge_fit_with_report(
+    primary: &[u8],
+    supplements: &[&[u8]],
+    options: &FitMergeOptions,
+) -> Result<FitMergeResult, FitMergeError> {
     validate_inputs(primary, supplements)?;
     let offsets = resolve_static_offsets(&options.alignment, supplements.len())?;
+    let mut supplement_reports: Vec<_> = offsets
+        .iter()
+        .enumerate()
+        .map(|(index, &offset)| FitSupplementReport {
+            index,
+            offset_seconds: Some(offset),
+            filled_counts: FitSensorFilledCounts::default(),
+            notes: Vec::new(),
+        })
+        .collect();
     let mut primary = FitDocument::parse(primary)?;
     let sources = supplements
         .iter()
@@ -171,7 +329,18 @@ pub fn merge_fit(
                         target_index,
                         source,
                         source_index,
-                        &[3, 4, 7, 13],
+                        &[3, 4, 7, 9, 13],
+                        |field| {
+                            let counts = &mut supplement_reports[source_number].filled_counts;
+                            match field {
+                                3 => counts.heart_rate += 1,
+                                4 => counts.cadence += 1,
+                                7 => counts.power += 1,
+                                13 => counts.temperature += 1,
+                                9 => counts.grade += 1,
+                                _ => {}
+                            }
+                        },
                     )?,
                     FitSupplementMode::FillRecords => {
                         primary.copy_all_missing_native_fields_from(
@@ -245,7 +414,16 @@ pub fn merge_fit(
         primary.sort_messages_for_merge();
         rebase_record_distances(&mut primary)?;
     }
-    primary.to_bytes().map_err(Into::into)
+    let data = primary.to_bytes()?;
+    for report in &mut supplement_reports {
+        if report.filled_counts == FitSensorFilledCounts::default() {
+            report.notes.push("未补入记录传感器字段".to_owned());
+        }
+    }
+    Ok(FitMergeResult {
+        data,
+        supplement_reports,
+    })
 }
 
 fn validate_inputs(primary: &[u8], supplements: &[&[u8]]) -> Result<(), FitMergeError> {
@@ -470,6 +648,7 @@ fn merge_session(
                     source,
                     source_index,
                     &[16, 17, 18, 19, 20, 21],
+                    |_| {},
                 )?,
                 FitSupplementMode::FillRecords => {
                     let missing_start = !primary.messages()[target].has_field(2);
@@ -644,10 +823,16 @@ fn copy_fields(
     source: &FitDocument,
     source_index: usize,
     fields: &[u8],
+    mut on_filled: impl FnMut(u8),
 ) -> Result<(), FitMergeError> {
     for &field in fields {
-        if source.field_bytes(source_index, field).is_some() {
-            target.copy_missing_field_from(target_index, source, source_index, field)?;
+        if source.has_valid_scalar(source_index, field)
+            && !target.has_valid_scalar(target_index, field)
+        {
+            target.remove_field(target_index, field);
+            if target.copy_missing_field_from(target_index, source, source_index, field)? {
+                on_filled(field);
+            }
         }
     }
     Ok(())
@@ -665,6 +850,264 @@ mod tests {
     use crate::fit_alignment::FitStaticAlignment;
 
     #[test]
+    fn sync_report_counts_actual_record_fills_in_source_priority_order() {
+        let primary = fit_file(
+            &[
+                message(
+                    20,
+                    &[(253, 0x86, &1000u32.to_le_bytes()), (3, 0x02, &[140])],
+                ),
+                message(
+                    20,
+                    &[
+                        (253, 0x86, &1001u32.to_le_bytes()),
+                        (7, 0x84, &u16::MAX.to_le_bytes()),
+                    ],
+                ),
+                message(18, &[(2, 0x86, &1000u32.to_le_bytes())]),
+            ]
+            .concat(),
+        );
+        let first = fit_file(
+            &[
+                message(
+                    20,
+                    &[
+                        (253, 0x86, &1100u32.to_le_bytes()),
+                        (3, 0x02, &[150]),
+                        (4, 0x02, &[90]),
+                        (7, 0x84, &200u16.to_le_bytes()),
+                        (13, 0x01, &[20]),
+                        (9, 0x83, &(-200i16).to_le_bytes()),
+                    ],
+                ),
+                message(
+                    20,
+                    &[
+                        (253, 0x86, &1101u32.to_le_bytes()),
+                        (3, 0x02, &[151]),
+                        (7, 0x84, &201u16.to_le_bytes()),
+                    ],
+                ),
+                message(
+                    20,
+                    &[(253, 0x86, &1109u32.to_le_bytes()), (3, 0x02, &[160])],
+                ),
+                message(
+                    18,
+                    &[
+                        (2, 0x86, &1100u32.to_le_bytes()),
+                        (16, 0x02, &[130]),
+                        (20, 0x84, &202u16.to_le_bytes()),
+                    ],
+                ),
+            ]
+            .concat(),
+        );
+        let second = fit_file(
+            &[
+                message(
+                    20,
+                    &[
+                        (253, 0x86, &1200u32.to_le_bytes()),
+                        (4, 0x02, &[99]),
+                        (7, 0x84, &300u16.to_le_bytes()),
+                    ],
+                ),
+                message(
+                    20,
+                    &[
+                        (253, 0x86, &1201u32.to_le_bytes()),
+                        (4, 0x02, &[91]),
+                        (13, 0x01, &[21]),
+                        (9, 0x83, &300i16.to_le_bytes()),
+                    ],
+                ),
+            ]
+            .concat(),
+        );
+        let result = super::merge_fit_for_sync_with_report(&primary, &[&first, &second]).unwrap();
+        assert_eq!(result.supplement_reports.len(), 2);
+        let reports = serde_json::to_value(&result.supplement_reports).unwrap();
+        assert_eq!(reports[0]["index"], 0);
+        assert_eq!(reports[0]["offsetSeconds"], -100);
+        assert_eq!(
+            reports[0]["filledCounts"],
+            serde_json::json!({"heartRate":1,"cadence":1,"power":2,"temperature":1,"grade":1})
+        );
+        assert_eq!(reports[1]["index"], 1);
+        assert_eq!(reports[1]["offsetSeconds"], -200);
+        assert_eq!(
+            reports[1]["filledCounts"],
+            serde_json::json!({"heartRate":0,"cadence":1,"power":0,"temperature":1,"grade":1})
+        );
+        let doc = FitDocument::parse(&result.data).unwrap();
+        assert_eq!(doc.read_u8(0, 3), Some(140));
+        assert_eq!(doc.read_u16(0, 7), Some(200));
+        assert_eq!(doc.read_u16(1, 7), Some(201));
+        assert_eq!(doc.read_u8(1, 4), Some(91));
+        assert_eq!(
+            doc.messages()
+                .iter()
+                .filter(|m| m.global_number() == 20)
+                .count(),
+            2
+        );
+        assert_eq!(
+            result.data,
+            super::merge_fit_for_sync(&primary, &[&first, &second]).unwrap()
+        );
+    }
+
+    #[test]
+    fn sync_report_keeps_no_fill_entry_and_excludes_session_summary_counts() {
+        let primary = fit_file(
+            &[
+                message(
+                    20,
+                    &[(253, 0x86, &1000u32.to_le_bytes()), (3, 0x02, &[140])],
+                ),
+                message(18, &[(2, 0x86, &1000u32.to_le_bytes())]),
+            ]
+            .concat(),
+        );
+        let source = fit_file(
+            &[
+                message(
+                    20,
+                    &[
+                        (253, 0x86, &1000u32.to_le_bytes()),
+                        (3, 0x02, &[150]),
+                        (7, 0x84, &u16::MAX.to_le_bytes()),
+                    ],
+                ),
+                message(18, &[(2, 0x86, &1000u32.to_le_bytes()), (16, 0x02, &[130])]),
+            ]
+            .concat(),
+        );
+        let result = super::merge_fit_for_sync_with_report(&primary, &[&source]).unwrap();
+        assert_eq!(result.supplement_reports.len(), 1);
+        assert_eq!(
+            result.supplement_reports[0].filled_counts,
+            super::FitSensorFilledCounts::default()
+        );
+        assert_eq!(result.supplement_reports[0].offset_seconds, Some(0));
+        assert!(!result.supplement_reports[0].notes.is_empty());
+        assert_eq!(
+            FitDocument::parse(&result.data).unwrap().read_u8(1, 16),
+            Some(130)
+        );
+    }
+
+    #[test]
+    fn sync_report_returns_zero_counts_and_reason_when_empty_or_invalid_source_retains_primary() {
+        let primary = fit_file(&message(20, &[(253, 0x86, &1000u32.to_le_bytes())]));
+        let empty = fit_file(&[]);
+        for source in [empty.as_slice(), b"not fit".as_slice()] {
+            let result = super::merge_fit_for_sync_with_report(&primary, &[source]).unwrap();
+            assert_eq!(result.data, primary);
+            assert_eq!(result.supplement_reports.len(), 1);
+            assert_eq!(result.supplement_reports[0].offset_seconds, None);
+            assert_eq!(
+                result.supplement_reports[0].filled_counts,
+                super::FitSensorFilledCounts::default()
+            );
+            assert!(!result.supplement_reports[0].notes.is_empty());
+        }
+        assert_eq!(
+            super::merge_fit_for_sync_with_report(&primary, &[]),
+            Err(FitMergeError::NeedSupplement)
+        );
+    }
+
+    #[test]
+    fn automatic_alignment_is_per_file_and_preserves_fill_mode() {
+        fn track(offset: u32, gps: bool) -> Vec<u8> {
+            let mut body = Vec::new();
+            for second in 0..120u32 {
+                let time = (1000 + second + offset).to_le_bytes();
+                let speed = (3000 + (second % 19) as u16 * 113).to_le_bytes();
+                let distance = (second * 700).to_le_bytes();
+                let latitude = (100_000i32 + second as i32).to_le_bytes();
+                let mut fields = vec![
+                    (253, 0x86, time.as_slice()),
+                    (6, 0x84, speed.as_slice()),
+                    (5, 0x86, distance.as_slice()),
+                ];
+                if gps {
+                    fields.push((0, 0x85, latitude.as_slice()));
+                }
+                body.extend(message(20, &fields));
+            }
+            fit_file(&body)
+        }
+        let primary = track(0, false);
+        let a = track(20, true);
+        let b = track(35, true);
+        let offsets = super::estimate_merge_offsets(&primary, &[&a, &b]).unwrap();
+        assert_eq!(offsets, vec![-20, -35]);
+        for (mode, expect_gps) in [
+            (FitSupplementMode::FillRecords, true),
+            (FitSupplementMode::SensorsOnly, false),
+        ] {
+            let merged = merge_fit(
+                &primary,
+                &[&a, &b],
+                &FitMergeOptions {
+                    supplement_mode: mode,
+                    alignment: FitStaticAlignment::PerFile(offsets.clone()),
+                },
+            )
+            .unwrap();
+            let doc = FitDocument::parse(&merged).unwrap();
+            assert_eq!(doc.messages()[0].has_field(0), expect_gps);
+        }
+    }
+
+    #[test]
+    fn alignment_uses_enhanced_speed_when_native_speed_missing() {
+        let body = (0..120u32)
+            .flat_map(|i| {
+                message(
+                    20,
+                    &[
+                        (253, 0x86, &(1000 + i).to_le_bytes()),
+                        (73, 0x86, &(3000 + i % 19 * 113).to_le_bytes()),
+                    ],
+                )
+            })
+            .collect::<Vec<_>>();
+        let fit = fit_file(&body);
+        assert_eq!(super::estimate_merge_offsets(&fit, &[&fit]).unwrap(), [0]);
+    }
+
+    #[test]
+    fn sync_alignment_falls_back_to_activity_start_when_speed_is_missing() {
+        let primary = fit_file(&message(20, &[(253, 0x86, &1000u32.to_le_bytes())]));
+        let supplement = fit_file(&message(
+            20,
+            &[
+                (253, 0x86, &1100u32.to_le_bytes()),
+                (7, 0x84, &200u16.to_le_bytes()),
+            ],
+        ));
+        let merged = super::merge_fit_for_sync(&primary, &[&supplement]).unwrap();
+        assert_eq!(
+            FitDocument::parse(&merged).unwrap().read_u16(0, 7),
+            Some(200)
+        );
+    }
+
+    #[test]
+    fn user_automatic_alignment_rejects_unreliable_data() {
+        let data = fit_file(&message(20, &[(253, 0x86, &1000u32.to_le_bytes())]));
+        assert!(matches!(
+            super::estimate_merge_offsets(&data, &[&data]),
+            Err(FitMergeError::Alignment(_))
+        ));
+    }
+
+    #[test]
     fn primary_wins_and_only_missing_sensor_fields_are_filled() {
         let primary = fit_file(
             &[
@@ -677,7 +1120,15 @@ mod tests {
                         (99, 0x0d, &[1, 2]),
                     ],
                 ),
-                message(20, &[(253, 0x86, &1_001u32.to_le_bytes())]),
+                message(
+                    20,
+                    &[
+                        (253, 0x86, &1_001u32.to_le_bytes()),
+                        (3, 0x02, &[255]),
+                        (7, 0x84, &u16::MAX.to_le_bytes()),
+                        (9, 0x83, &i16::MAX.to_le_bytes()),
+                    ],
+                ),
                 message(18, &[(16, 0x02, &[130])]),
             ]
             .concat(),
@@ -702,6 +1153,7 @@ mod tests {
                         (253, 0x86, &1_001u32.to_le_bytes()),
                         (3, 0x02, &[141]),
                         (7, 0x84, &201u16.to_le_bytes()),
+                        (9, 0x83, &(-500i16).to_le_bytes()),
                     ],
                 ),
                 message(
@@ -745,6 +1197,11 @@ mod tests {
         );
         assert_eq!(document.read_u8(second, 3), Some(141));
         assert_eq!(document.read_u16(second, 7), Some(201));
+        assert_eq!(
+            document.read_i16(second, 9),
+            Some(-500),
+            "无效原生坡度也应补齐"
+        );
 
         let session = document
             .messages()

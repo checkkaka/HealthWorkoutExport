@@ -6,6 +6,7 @@ import 'package:health_workout_export/auto_sync_controller.dart';
 import 'package:health_workout_export/src/rust/api/simple.dart' as rust;
 import 'package:health_workout_export/sync_state_store.dart';
 import 'package:health_workout_export/workout_source.dart';
+import 'package:health_workout_export/sync_preview_models.dart';
 
 const _uuid = 'A4B64E8C-0012-4A0B-993E-140FC6B721C0';
 
@@ -36,6 +37,8 @@ void main() {
     List<rust.StravaRemoteActivityResult> remoteActivities = const [],
     Future<void> Function()? markRemoteDuplicate,
   }) => AutoSyncController(
+    inspectFit: ({required data}) async =>
+        '{"summary":{},"issues":[],"track":[],"series":{}}',
     fingerprint:
         ({
           required primarySourceId,
@@ -61,6 +64,8 @@ void main() {
           required externalId,
           required filename,
           required commute,
+          description,
+          name,
         }) async {
           order.add('upload');
           expect(externalId, fingerprint);
@@ -92,6 +97,13 @@ void main() {
       expect(record.fingerprint, fingerprint);
       await markRemoteDuplicate?.call();
     },
+    remoteMatchIndex:
+        ({
+          required startTimeSeconds,
+          required endTimeSeconds,
+          distanceMeters,
+          required candidates,
+        }) => candidates.isEmpty ? null : 0,
     stableDedupe:
         ({
           required startASeconds,
@@ -323,6 +335,8 @@ void main() {
       );
       String? uploadedExternalId;
       final result = await AutoSyncController(
+        inspectFit: ({required data}) async =>
+            '{"summary":{},"issues":[],"track":[],"series":{}}',
         stateStore: store,
         upload:
             ({
@@ -331,6 +345,8 @@ void main() {
               required externalId,
               required filename,
               required commute,
+              description,
+              name,
             }) async {
               uploadedExternalId = externalId;
               expect(logicalOperationId, 'recovery-$fingerprint');
@@ -358,6 +374,269 @@ void main() {
     }
   });
 
+  WorkoutActivity activity(
+    String id, {
+    WorkoutSourceId sourceId = WorkoutSourceId.healthkit,
+  }) => WorkoutActivity(
+    id: id,
+    sourceId: sourceId,
+    title: id,
+    start: DateTime.fromMillisecondsSinceEpoch(1704067200000),
+    end: DateTime.fromMillisecondsSinceEpoch(1704070800000),
+    durationSeconds: 3600,
+    distanceMeters: 1234.5,
+  );
+
+  AutoSyncController batchController({
+    required List<String> order,
+    void Function(String stage)? onStage,
+    List<rust.StravaRemoteActivityResult> remotes = const [],
+  }) => AutoSyncController(
+    inspectFit: ({required data}) async =>
+        '{"summary":{},"issues":[],"track":[],"series":{}}',
+    fingerprint:
+        ({
+          required primarySourceId,
+          required primaryActivityId,
+          required startDateUnixSeconds,
+          required supplementSourceIds,
+          required destination,
+        }) => fingerprint,
+    isLocallyUploaded: (_) async {
+      onStage?.call('local');
+      return false;
+    },
+    remoteActivities: ({required after, required before}) async {
+      order.add('remote');
+      onStage?.call('remote');
+      return remotes;
+    },
+    remoteMatchIndex:
+        ({
+          required startTimeSeconds,
+          required endTimeSeconds,
+          distanceMeters,
+          required candidates,
+        }) => candidates.isEmpty ? null : 0,
+    stableDedupe:
+        ({
+          required startASeconds,
+          required distanceAMeters,
+          required startBSeconds,
+          required distanceBMeters,
+          durationASeconds,
+          durationBSeconds,
+        }) => true,
+    markRemoteDuplicate: ({required record, required remoteId}) async {
+      order.add('duplicate-${record.primaryActivityId}');
+    },
+    prepareFit:
+        ({
+          required primary,
+          required supplements,
+          required gcjEnabled,
+          virtualPower,
+        }) async {
+          order.add('prepare');
+          onStage?.call('prepare');
+          return rust.PreparedFitResult(
+            data: Uint8List.fromList([9]),
+            repairedSpeedCount: 0,
+            rewrittenCoordinateCount: 0,
+            virtualPowerFilledCount: 0,
+            powerSourceVirtual: false,
+            averageCoordinateDisplacementMeters: 0,
+            supplementReportsJson: '[]',
+          );
+        },
+    persist: ({required record, required fit}) async {
+      order.add('persist');
+      onStage?.call('persist');
+    },
+    upload:
+        ({
+          required logicalOperationId,
+          required fit,
+          required externalId,
+          required filename,
+          required commute,
+          description,
+          name,
+        }) async {
+          order.add('upload');
+          onStage?.call('upload');
+          return const rust.StravaUploadFfiResponse(
+            status: rust.StravaUploadFfiStatus.completed,
+            remoteId: '42',
+            isDuplicate: false,
+          );
+        },
+    markUploaded:
+        ({
+          required fingerprint,
+          required updatedAt,
+          required remoteId,
+          required isDuplicate,
+          required distanceMeters,
+          required durationSeconds,
+        }) async {
+          order.add('uploaded');
+        },
+    markFailed:
+        ({required fingerprint, required updatedAt, required message}) async {
+          order.add('failed');
+        },
+    commute: ({distanceMeters, required durationSeconds}) => false,
+  );
+
+  for (final stage in ['local', 'remote', 'prepare', 'persist']) {
+    test('在 $stage 阶段停止后不会启动上传或记作失败', () async {
+      final order = <String>[];
+      var stopped = false;
+      final value = activity('one');
+      final progress = <AutoSyncProgress>[];
+      final results =
+          await batchController(
+            order: order,
+            onStage: (value) {
+              if (value == stage) stopped = true;
+            },
+          ).syncBatch(
+            primary: _FakeSource(WorkoutSourceId.healthkit, [
+              value,
+            ], Uint8List.fromList([1])),
+            supplements: const [],
+            activities: [value],
+            cancelled: () => stopped,
+            onProgress: progress.add,
+          );
+      expect(results, isEmpty);
+      expect(order, isNot(contains('upload')));
+      expect(order, isNot(contains('failed')));
+      expect(progress.last.processed, 0);
+      expect(progress.last.failed, 0);
+      expect(progress.last.message, '已停止');
+    });
+  }
+
+  test('上传返回成功时即使收到停止也保留成功状态', () async {
+    final order = <String>[];
+    var stopped = false;
+    final value = activity('one');
+    final results =
+        await batchController(
+          order: order,
+          onStage: (stage) {
+            if (stage == 'upload') stopped = true;
+          },
+        ).syncBatch(
+          primary: _FakeSource(WorkoutSourceId.healthkit, [
+            value,
+          ], Uint8List.fromList([1])),
+          supplements: const [],
+          activities: [value],
+          cancelled: () => stopped,
+        );
+    expect(results.single.succeeded, isTrue);
+    expect(order.last, 'uploaded');
+  });
+
+  test('主源与选择活动不一致时在任何读取或上传之前拒绝', () async {
+    final order = <String>[];
+    await expectLater(
+      batchController(order: order).syncBatch(
+        primary: _FakeSource(
+          WorkoutSourceId.onelap,
+          [],
+          Uint8List.fromList([1]),
+        ),
+        supplements: const [],
+        activities: [activity('one')],
+      ),
+      throwsA(isA<AutoSyncUploadException>()),
+    );
+    expect(order, isEmpty);
+  });
+
+  test('覆盖决定没有删除与恢复流程时拒绝，绝不伪装为第二次上传', () async {
+    final order = <String>[];
+    final value = activity('one');
+    final results =
+        await batchController(
+          order: order,
+          remotes: const [
+            rust.StravaRemoteActivityResult(
+              id: '42',
+              startTimeSeconds: 1704067200,
+              endTimeSeconds: 1704070800,
+              distanceMeters: 1234.5,
+            ),
+          ],
+        ).syncBatch(
+          primary: _FakeSource(WorkoutSourceId.healthkit, [
+            value,
+          ], Uint8List.fromList([1])),
+          supplements: const [],
+          activities: [value],
+          onDuplicate:
+              ({required title, required remoteId, required reason}) async =>
+                  DuplicateDecision.overwrite,
+        );
+    expect(results.single.failed, isTrue);
+    expect(results.single.message, contains('网页登录'));
+    expect(order, ['remote']);
+  });
+
+  test('整批跳过对每条活动持久化远端关联', () async {
+    final order = <String>[];
+    final values = [activity('one'), activity('two')];
+    var prompts = 0;
+    final results =
+        await batchController(
+          order: order,
+          remotes: const [
+            rust.StravaRemoteActivityResult(
+              id: '42',
+              startTimeSeconds: 1704067200,
+              endTimeSeconds: 1704070800,
+              distanceMeters: 1234.5,
+            ),
+          ],
+        ).syncBatch(
+          primary: _FakeSource(
+            WorkoutSourceId.healthkit,
+            values,
+            Uint8List.fromList([1]),
+          ),
+          supplements: const [],
+          activities: values,
+          onDuplicate:
+              ({required title, required remoteId, required reason}) async {
+                prompts++;
+                return DuplicateDecision.skipAll;
+              },
+        );
+    expect(results, hasLength(2));
+    expect(prompts, 1);
+    expect(order, ['remote', 'duplicate-one', 'remote', 'duplicate-two']);
+  });
+
+  test('网页模式不借用 API 凭证做预检', () async {
+    final order = <String>[];
+    final value = activity('one');
+    final results = await batchController(order: order).syncBatch(
+      primary: _FakeSource(WorkoutSourceId.healthkit, [
+        value,
+      ], Uint8List.fromList([1])),
+      supplements: const [],
+      activities: [value],
+      performRemotePreflight: false,
+      uploadChannel: SyncUploadChannel.web,
+    );
+    expect(results.single.succeeded, isTrue);
+    expect(order, ['prepare', 'persist', 'upload', 'uploaded']);
+  });
+
   test('批次同步会合并补源、允许单条补源失败，并按取消停止后续条目', () async {
     final order = <String>[];
     WorkoutActivity activity(String id) => WorkoutActivity(
@@ -369,87 +648,96 @@ void main() {
       durationSeconds: 3600,
       distanceMeters: 1234.5,
     );
-    final primary = _FakeSource(
-      WorkoutSourceId.healthkit,
-      [activity('one'), activity('two')],
-      Uint8List.fromList(const [1]),
-    );
+    final primary = _FakeSource(WorkoutSourceId.healthkit, [
+      activity('one'),
+      activity('two'),
+    ], Uint8List.fromList(const [1]));
     final supplement = _FakeSource(
       WorkoutSourceId.xingzhe,
       [activity('one')],
       Uint8List.fromList(const [2]),
       failFetchIds: {'one'},
     );
-    final results = await AutoSyncController(
-      fingerprint:
-          ({
-            required primarySourceId,
-            required primaryActivityId,
-            required startDateUnixSeconds,
-            required supplementSourceIds,
-            required destination,
-          }) => fingerprint,
-      persist: ({required record, required fit}) async {
-        order.add('pending-${record.primaryActivityId}');
-        expect(fit, Uint8List.fromList(const [9]));
-      },
-      upload:
-          ({
-            required logicalOperationId,
-            required fit,
-            required externalId,
-            required filename,
-            required commute,
-          }) async {
-            order.add('upload-$filename');
-            return const rust.StravaUploadFfiResponse(
-              status: rust.StravaUploadFfiStatus.completed,
-              remoteId: '7',
-              isDuplicate: false,
-            );
+    final results =
+        await AutoSyncController(
+          inspectFit: ({required data}) async =>
+              '{"summary":{},"issues":[],"track":[],"series":{}}',
+          fingerprint:
+              ({
+                required primarySourceId,
+                required primaryActivityId,
+                required startDateUnixSeconds,
+                required supplementSourceIds,
+                required destination,
+              }) => fingerprint,
+          persist: ({required record, required fit}) async {
+            order.add('pending-${record.primaryActivityId}');
+            expect(fit, Uint8List.fromList(const [9]));
           },
-      markUploaded:
-          ({
-            required fingerprint,
-            required updatedAt,
-            required remoteId,
-            required isDuplicate,
-            required distanceMeters,
-            required durationSeconds,
-          }) async {
-            order.add('uploaded');
-          },
-      isLocallyUploaded: (_) async => false,
-      remoteActivities: ({required after, required before}) async => const [],
-      commute: ({distanceMeters, required durationSeconds}) => false,
-      prepareFit:
-          ({
-            required primary,
-            required supplements,
-            required gcjEnabled,
-            virtualPower,
-          }) async {
-            expect(supplements, isEmpty, reason: '补源失败不得拖垮主活动');
-            return rust.PreparedFitResult(
-              data: Uint8List.fromList(const [9]),
-              repairedSpeedCount: 0,
-              rewrittenCoordinateCount: 0,
-              virtualPowerFilledCount: 0,
-              powerSourceVirtual: false,
-            );
-          },
-      matchIndex: ({required primary, required candidates}) =>
-          candidates.isEmpty ? null : 0,
-    ).syncBatch(
-      primary: primary,
-      supplements: [supplement],
-      activities: [activity('one'), activity('two')],
-      cancelled: () => order.contains('uploaded'),
-    );
+          upload:
+              ({
+                required logicalOperationId,
+                required fit,
+                required externalId,
+                required filename,
+                required commute,
+                description,
+                name,
+              }) async {
+                order.add('upload-$filename');
+                return const rust.StravaUploadFfiResponse(
+                  status: rust.StravaUploadFfiStatus.completed,
+                  remoteId: '7',
+                  isDuplicate: false,
+                );
+              },
+          markUploaded:
+              ({
+                required fingerprint,
+                required updatedAt,
+                required remoteId,
+                required isDuplicate,
+                required distanceMeters,
+                required durationSeconds,
+              }) async {
+                order.add('uploaded');
+              },
+          isLocallyUploaded: (_) async => false,
+          remoteActivities: ({required after, required before}) async =>
+              const [],
+          commute: ({distanceMeters, required durationSeconds}) => false,
+          prepareFit:
+              ({
+                required primary,
+                required supplements,
+                required gcjEnabled,
+                virtualPower,
+              }) async {
+                expect(supplements, isEmpty, reason: '补源失败不得拖垮主活动');
+                return rust.PreparedFitResult(
+                  data: Uint8List.fromList(const [9]),
+                  repairedSpeedCount: 0,
+                  rewrittenCoordinateCount: 0,
+                  virtualPowerFilledCount: 0,
+                  powerSourceVirtual: false,
+                  averageCoordinateDisplacementMeters: 0,
+                  supplementReportsJson: '[]',
+                );
+              },
+          matchIndex: ({required primary, required candidates}) =>
+              candidates.isEmpty ? null : 0,
+        ).syncBatch(
+          primary: primary,
+          supplements: [supplement],
+          activities: [activity('one'), activity('two')],
+          cancelled: () => order.contains('uploaded'),
+          onPreview: (_) async =>
+              const SyncPreviewDecision(SyncPreviewAction.forceUpload),
+        );
 
     expect(results, hasLength(1));
     expect(results.single.succeeded, isTrue);
-    expect(order, ['pending-one', 'upload-one.fit', 'uploaded']);
+    expect(order, ['pending-one', 'upload-$fingerprint.fit', 'uploaded']);
   });
 }
 

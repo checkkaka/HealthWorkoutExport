@@ -30,6 +30,12 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  CI: "true"
+  BOT: "true"
+  DASH__SUPPRESS_ANALYTICS: "true"
+  FLUTTER_SUPPRESS_ANALYTICS: "true"
+
 jobs:
   meta:
     runs-on: ubuntu-latest
@@ -39,19 +45,18 @@ jobs:
       build_number: ${{ steps.meta.outputs.build_number }}
     steps:
       - id: meta
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
-          case "$TAG" in
-            v*.*.*) ;;
-            *)
-              echo "tag 必须是 v1.2.3 这种形式，当前: $TAG" >&2
-              exit 1
-              ;;
-          esac
+          TAG="$RELEASE_TAG"
+          if [[ ! $TAG =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "tag 必须是 v1.2.3 这种形式" >&2
+            exit 1
+          fi
           echo "tag=$TAG" >>"$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >>"$GITHUB_OUTPUT"
-          echo "build_number=${{ github.run_number }}" >>"$GITHUB_OUTPUT"
+          echo "build_number=$GITHUB_RUN_NUMBER" >>"$GITHUB_OUTPUT"
 
   android:
     needs: meta
@@ -59,13 +64,24 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.tag }}
       - uses: ./.github/actions/setup-flutter-rust
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
           cache: gradle
-      - uses: android-actions/setup-android@v3
+      - name: Prepare only required Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          # Release owners must accept applicable terms separately. Never accept all licenses.
+          "$SDKMANAGER" 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358' </dev/null
+          test -f "$ANDROID_HOME/platforms/android-36/android.jar"
+          test -f "$ANDROID_HOME/ndk/28.2.13676358/source.properties"
       - name: Decode Android keystore
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -85,13 +101,15 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          BUILD_VERSION: ${{ needs.meta.outputs.version }}
+          BUILD_NUMBER: ${{ needs.meta.outputs.build_number }}
         run: |
           set -euo pipefail
           flutter pub get
           flutter build apk --release --split-per-abi \
             --target-platform android-arm,android-arm64,android-x64 \
-            --build-name="${{ needs.meta.outputs.version }}" \
-            --build-number="${{ needs.meta.outputs.build_number }}"
+            --build-name="$BUILD_VERSION" \
+            --build-number="$BUILD_NUMBER"
       - uses: actions/upload-artifact@v4
         with:
           name: android-apk
@@ -105,6 +123,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.tag }}
       - uses: ./.github/actions/setup-flutter-rust
       - uses: apple-actions/import-codesign-certs@v3
         with:
@@ -128,20 +148,27 @@ jobs:
       - name: Check Apple team
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          HAS_PROFILE: ${{ steps.profile.outputs.has_profile }}
+          PROFILE_TEAM: ${{ steps.profile.outputs.team }}
         run: |
           set -euo pipefail
           if [[ -z ${APPLE_TEAM_ID:-} ]]; then
             echo "缺少 APPLE_TEAM_ID" >&2
             exit 1
           fi
-          if [[ "${{ steps.profile.outputs.has_profile }}" == true && $APPLE_TEAM_ID != "${{ steps.profile.outputs.team }}" ]]; then
-            echo "APPLE_TEAM_ID ($APPLE_TEAM_ID) 与描述文件 Team (${{ steps.profile.outputs.team }}) 不一致" >&2
+          if [[ ! $APPLE_TEAM_ID =~ ^[A-Z0-9]{10}$ ]]; then
+            echo "APPLE_TEAM_ID 格式无效" >&2
+            exit 1
+          fi
+          if [[ $HAS_PROFILE == true && $APPLE_TEAM_ID != "$PROFILE_TEAM" ]]; then
+            echo "APPLE_TEAM_ID 与描述文件 Team 不一致" >&2
             exit 1
           fi
       - name: Configure macOS manual signing
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           HAS_PROFILE: ${{ steps.profile.outputs.has_profile }}
+          PROFILE_NAME: ${{ steps.profile.outputs.name }}
         run: |
           set -euo pipefail
           {
@@ -151,18 +178,21 @@ jobs:
             echo "CODE_SIGN_IDENTITY = Apple Development"
           } >>flutter_app/macos/Runner/Configs/AppInfo.xcconfig
           if [[ $HAS_PROFILE == true ]]; then
-            echo "PROVISIONING_PROFILE_SPECIFIER = ${{ steps.profile.outputs.name }}" >>flutter_app/macos/Runner/Configs/AppInfo.xcconfig
+            echo "PROVISIONING_PROFILE_SPECIFIER = $PROFILE_NAME" >>flutter_app/macos/Runner/Configs/AppInfo.xcconfig
           else
             /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.healthkit' flutter_app/macos/Runner/Release.entitlements || true
           fi
       - name: Build signed macOS app
         working-directory: flutter_app
+        env:
+          BUILD_VERSION: ${{ needs.meta.outputs.version }}
+          BUILD_NUMBER: ${{ needs.meta.outputs.build_number }}
         run: |
           set -euo pipefail
           flutter pub get
           flutter build macos --release \
-            --build-name="${{ needs.meta.outputs.version }}" \
-            --build-number="${{ needs.meta.outputs.build_number }}"
+            --build-name="$BUILD_VERSION" \
+            --build-number="$BUILD_NUMBER"
           APP="build/macos/Build/Products/Release/health_workout_export.app"
           ditto -c -k --keepParent "$APP" "build/macos/health_workout_export-macos.zip"
       - uses: actions/upload-artifact@v4

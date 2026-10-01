@@ -10,6 +10,8 @@ final class PreferencesPlugin: NSObject, FlutterPlugin {
   private static let channelName = "health_workout_export/preferences"
   private static let allowedKeys: Set<String> = [
     "strava.uploadMode",
+    "sync_preview_policy",
+    "write_to_apple_health",
     "strava.gcjCorrectionEnabled",
     "virtualPower.enabled",
     "virtualPower.includeInertia",

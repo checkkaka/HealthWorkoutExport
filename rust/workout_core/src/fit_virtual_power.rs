@@ -1,4 +1,5 @@
-use super::{FitDecodeError, FitDocument};
+use super::fit_weather::{coordinate, weather_at};
+use super::{FitDecodeError, FitDocument, FitWeatherStation, haversine_meters};
 use crate::{
     COASTING_MAX_CADENCE_RPM, VirtualPowerParams, grade_percent,
     replace_glitch_speeds_with_previous, sanitized_acceleration_mps2, virtual_power_watts,
@@ -50,7 +51,7 @@ pub struct FitVirtualPowerFillResult {
     pub failed_count: usize,
     pub virtual_marked_count: usize,
     pub activity_rejected: bool,
-    /// Rust 同步层可据此写活动描述；FIT developer 标记由 FIT-12 单独接入。
+    /// 与实际写入 FIT 的 powerSource=virtual developer 标记一致。
     pub power_source_virtual: bool,
 }
 
@@ -59,6 +60,32 @@ pub fn fill_fit_virtual_power(
     data: &[u8],
     options: FitVirtualPowerFillOptions,
 ) -> Result<FitVirtualPowerFillResult, FitDecodeError> {
+    fill_fit_virtual_power_with_weather(data, options, &[])
+}
+
+pub fn fill_fit_virtual_power_with_weather(
+    data: &[u8],
+    options: FitVirtualPowerFillOptions,
+    stations: &[FitWeatherStation],
+) -> Result<FitVirtualPowerFillResult, FitDecodeError> {
+    let params = options.params;
+    if ![
+        params.total_mass_kg,
+        params.cda,
+        params.crr,
+        params.drivetrain_loss_percent,
+        params.air_density,
+    ]
+    .iter()
+    .all(|v| v.is_finite())
+        || params.total_mass_kg <= 0.0
+        || params.cda <= 0.0
+        || params.crr < 0.0
+        || params.air_density <= 0.0
+        || !(0.0..100.0).contains(&params.drivetrain_loss_percent)
+    {
+        return Err(FitDecodeError::InvalidFieldValue);
+    }
     let mut document = FitDocument::parse(data)?;
     if !document
         .messages()
@@ -97,6 +124,43 @@ pub fn fill_fit_virtual_power(
     }
 
     let kinematics = kinematics(&document, &records);
+    let distance = document
+        .messages()
+        .iter()
+        .enumerate()
+        .find_map(|(i, m)| {
+            (m.global_number() == SESSION)
+                .then(|| document.read_u32(i, 9).map(|v| f64::from(v) / 100.0))
+                .flatten()
+        })
+        .or_else(|| {
+            records.iter().rev().find_map(|i| {
+                document
+                    .read_u32(*i, DISTANCE)
+                    .map(|v| f64::from(v) / DISTANCE_SCALE)
+            })
+        });
+    let record_duration = records
+        .first()
+        .and_then(|i| document.read_u32(*i, TIMESTAMP))
+        .zip(
+            records
+                .last()
+                .and_then(|i| document.read_u32(*i, TIMESTAMP)),
+        )
+        .map(|(start, end)| f64::from(end.saturating_sub(start)))
+        .unwrap_or(0.0);
+    let duration = document
+        .messages()
+        .iter()
+        .enumerate()
+        .find_map(|(i, m)| {
+            (m.global_number() == SESSION)
+                .then(|| document.read_u32(i, 8).map(|v| f64::from(v) / 1_000.0))
+                .flatten()
+        })
+        .unwrap_or(record_duration);
+    let shelter = crate::commute_wind_shelter_factor(distance, duration);
     let mut draft = vec![None; records.len()];
     let mut failed = vec![false; records.len()];
     for position in 0..records.len() {
@@ -124,12 +188,51 @@ pub fn fill_fit_virtual_power(
         } else {
             0.0
         };
+        let mut params = options.params;
+        let mut headwind = 0.0;
+        if let Some(time) = document.read_u32(index, TIMESTAMP)
+            && let Some(sample) = weather_at(
+                i64::from(time) + 631_065_600,
+                coordinate(&document, index),
+                stations,
+            )
+        {
+            let altitude = document
+                .read_u16(index, ALTITUDE)
+                .map(|v| f64::from(v) / ALTITUDE_SCALE - ALTITUDE_OFFSET)
+                .or_else(|| {
+                    document
+                        .read_u32(index, ENHANCED_ALTITUDE)
+                        .map(|v| f64::from(v) / ALTITUDE_SCALE - ALTITUDE_OFFSET)
+                })
+                .unwrap_or(0.0);
+            let pressure = sample.pressure_msl_hpa
+                * (-(9.8067 * 0.0289644 * altitude)
+                    / (8.3144598 * (sample.temperature_c + 273.15)))
+                    .exp();
+            params.air_density = crate::air_density(
+                sample.temperature_c,
+                pressure,
+                sample.relative_humidity_percent,
+            );
+            if let Some(previous) = position.checked_sub(1)
+                && let Some(a) = coordinate(&document, records[previous])
+                && let Some(b) = coordinate(&document, index)
+                && haversine_meters(a.0, a.1, b.0, b.1) > 1.0
+            {
+                headwind = crate::headwind_mps(
+                    crate::rider_height_wind_mps(sample.wind_speed_mps) * shelter,
+                    sample.wind_from_degrees,
+                    crate::bearing_degrees(a.0, a.1, b.0, b.1),
+                );
+            }
+        }
         let watts = virtual_power_watts(
             speed,
             kinematics[position].grade,
-            0.0,
+            headwind,
             acceleration,
-            options.params,
+            params,
             document.read_u8(index, CADENCE).map(f64::from),
         );
         draft[position] = watts
@@ -168,6 +271,12 @@ pub fn fill_fit_virtual_power(
         }
     }
     update_power_summaries(&mut document, &records)?;
+    let marks = records
+        .iter()
+        .enumerate()
+        .filter_map(|(position, index)| targets[position].then_some((*index, failed[position])))
+        .collect::<Vec<_>>();
+    document.mark_virtual_power(&marks)?;
     let data = document.to_bytes()?;
     Ok(FitVirtualPowerFillResult {
         data,
@@ -181,7 +290,9 @@ pub fn fill_fit_virtual_power(
             })
             .count(),
         activity_rejected: false,
-        power_source_virtual: filled_count > 0,
+        power_source_virtual: records.iter().enumerate().any(|(position, _)| {
+            targets[position] && !failed[position] && draft[position].is_some()
+        }),
     })
 }
 
@@ -243,7 +354,10 @@ fn kinematics(document: &FitDocument, records: &[usize]) -> Vec<Kinematics> {
             let Some(previous) = position.checked_sub(1) else {
                 return Kinematics {
                     speed: smoothed_speeds[position].or(speeds[position]),
-                    grade: 0.0,
+                    grade: document
+                        .read_i16(records[position], 9)
+                        .map(|v| f64::from(v) / 100.0)
+                        .unwrap_or(0.0),
                     acceleration: 0.0,
                 };
             };
@@ -256,12 +370,24 @@ fn kinematics(document: &FitDocument, records: &[usize]) -> Vec<Kinematics> {
                 document.read_u32(records[position], DISTANCE),
             ) {
                 (Some(a), Some(b)) if b > a => f64::from(b - a) / DISTANCE_SCALE,
-                _ => smoothed_speeds[position].unwrap_or(0.0) * dt,
+                _ => coordinate(document, records[previous])
+                    .zip(coordinate(document, records[position]))
+                    .map(|(a, b)| haversine_meters(a.0, a.1, b.0, b.1))
+                    .unwrap_or_else(|| smoothed_speeds[position].unwrap_or(0.0) * dt),
             };
-            let grade = match (altitudes[previous], altitudes[position]) {
-                (Some(a), Some(b)) => grade_percent(b - a, distance),
-                _ => 0.0,
-            };
+            let grade = document
+                .read_i16(records[position], 9)
+                .map(|v| f64::from(v) / 100.0)
+                .unwrap_or_else(|| {
+                    if dt <= 0.0 {
+                        0.0
+                    } else {
+                        match (altitudes[previous], altitudes[position]) {
+                            (Some(a), Some(b)) => grade_percent(b - a, distance),
+                            _ => 0.0,
+                        }
+                    }
+                });
             let acceleration = match (smoothed_speeds[previous], smoothed_speeds[position]) {
                 (Some(a), Some(b)) => sanitized_acceleration_mps2((b - a) / dt.max(0.0), dt),
                 _ => 0.0,
@@ -431,11 +557,29 @@ mod tests {
         assert!(output.power_source_virtual);
         assert!(is_valid_fit(&output.data));
         let document = FitDocument::parse(&output.data).unwrap();
-        assert_eq!(document.field_bytes(0, 99), Some(&[0xDE, 0xAD, 0xBE][..]));
-        assert_eq!(document.read_u16(0, 7), Some(0)); // cadence 0 仍按滑行写 0 W。
-        assert!(document.read_u16(1, 7).is_some());
-        assert_eq!(document.read_u16(3, 20), document.read_u16(4, 19));
-        assert_eq!(document.read_u16(3, 21), document.read_u16(4, 20));
+        let record = document
+            .messages()
+            .iter()
+            .position(|m| m.global_number() == 20)
+            .unwrap();
+        assert_eq!(
+            document.developer_field_bytes(record, 0, 0),
+            Some(&b"virtual\0"[..])
+        );
+        assert_eq!(
+            document.field_bytes(record, 99),
+            Some(&[0xDE, 0xAD, 0xBE][..])
+        );
+        assert_eq!(document.read_u16(record, 7), Some(0)); // cadence 0 仍按滑行写 0 W。
+        assert!(document.read_u16(record + 1, 7).is_some());
+        assert_eq!(
+            document.read_u16(record + 3, 20),
+            document.read_u16(record + 4, 19)
+        );
+        assert_eq!(
+            document.read_u16(record + 3, 21),
+            document.read_u16(record + 4, 20)
+        );
     }
 
     #[test]
@@ -447,7 +591,82 @@ mod tests {
         assert_eq!(output.data, input);
     }
 
+    #[test]
+    fn native_grade_overrides_flat_altitude_and_marks_survive_repeated_fill() {
+        let input = cycling_fit_with_grade(&[5_000; 3], 1_000);
+        let climb = fill_fit_virtual_power(&input, options()).unwrap();
+        let flat =
+            fill_fit_virtual_power(&cycling_fit_with_grade(&[5_000; 3], 0), options()).unwrap();
+        let climb_doc = FitDocument::parse(&climb.data).unwrap();
+        let flat_doc = FitDocument::parse(&flat.data).unwrap();
+        let record = climb_doc
+            .messages()
+            .iter()
+            .position(|m| m.global_number() == 20)
+            .unwrap();
+        assert!(
+            climb_doc.read_u16(record + 1, 7).unwrap()
+                > flat_doc.read_u16(record + 1, 7).unwrap() + 300
+        );
+        let again = fill_fit_virtual_power(&climb.data, options()).unwrap();
+        let again_doc = FitDocument::parse(&again.data).unwrap();
+        assert_eq!(climb_doc.messages().len(), again_doc.messages().len());
+        assert_eq!(again.virtual_marked_count, 3);
+    }
+
+    #[test]
+    fn non_finite_parameters_do_not_silently_write_zero_power() {
+        let mut params = options();
+        params.params.total_mass_kg = f64::INFINITY;
+        assert!(fill_fit_virtual_power(&cycling_fit(&[5_000; 3]), params).is_err());
+    }
+
+    #[test]
+    fn hourly_wind_reaches_power_and_uses_garmin_epoch() {
+        let input = cycling_fit(&[5_000; 3]);
+        let station = super::FitWeatherStation {
+            latitude: 0.0,
+            longitude: 0.0,
+            samples: vec![
+                crate::weather::WeatherSample {
+                    time_seconds: 631_066_600,
+                    temperature_c: 20.0,
+                    relative_humidity_percent: 50.0,
+                    pressure_msl_hpa: 1013.25,
+                    wind_speed_mps: 0.0,
+                    wind_from_degrees: 90.0,
+                },
+                crate::weather::WeatherSample {
+                    time_seconds: 631_066_602,
+                    temperature_c: 20.0,
+                    relative_humidity_percent: 50.0,
+                    pressure_msl_hpa: 1013.25,
+                    wind_speed_mps: 10.0,
+                    wind_from_degrees: 90.0,
+                },
+            ],
+        };
+        let windy =
+            super::fill_fit_virtual_power_with_weather(&input, options(), &[station]).unwrap();
+        let calm = fill_fit_virtual_power(&input, options()).unwrap();
+        let windy_doc = FitDocument::parse(&windy.data).unwrap();
+        let calm_doc = FitDocument::parse(&calm.data).unwrap();
+        let record = windy_doc
+            .messages()
+            .iter()
+            .position(|m| m.global_number() == 20)
+            .unwrap();
+        assert!(
+            windy_doc.read_u16(record + 2, 7).unwrap()
+                > calm_doc.read_u16(record + 2, 7).unwrap() + 50
+        );
+    }
+
     fn cycling_fit(speeds: &[u16]) -> Vec<u8> {
+        cycling_fit_with_grade(speeds, i16::MAX)
+    }
+
+    fn cycling_fit_with_grade(speeds: &[u16], grade: i16) -> Vec<u8> {
         let mut data = Vec::new();
         definition(
             &mut data,
@@ -455,20 +674,26 @@ mod tests {
             20,
             &[
                 (253, 4, 0x86),
+                (0, 4, 0x85),
+                (1, 4, 0x85),
                 (2, 2, 0x84),
                 (4, 1, 0x02),
                 (6, 2, 0x84),
                 (7, 2, 0x84),
+                (9, 2, 0x83),
                 (99, 3, 0x0D),
             ],
         );
         for (index, speed) in speeds.iter().enumerate() {
             data.push(0);
             data.extend_from_slice(&(1_000 + index as u32).to_le_bytes());
+            data.extend_from_slice(&0i32.to_le_bytes());
+            data.extend_from_slice(&(index as i32 * 1_000).to_le_bytes());
             data.extend_from_slice(&2_500u16.to_le_bytes());
             data.push((index != 0) as u8 * 80);
             data.extend_from_slice(&speed.to_le_bytes());
             data.extend_from_slice(&123u16.to_le_bytes());
+            data.extend_from_slice(&grade.to_le_bytes());
             data.extend_from_slice(&[0xDE, 0xAD, 0xBE]);
         }
         definition(

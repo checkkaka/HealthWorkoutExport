@@ -1,14 +1,15 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:archive/archive_io.dart';
+import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:timezone/data/latest.dart' as timezone_data;
 import 'package:timezone/timezone.dart' as timezone;
 
 import 'native_channels.dart';
 import 'src/rust/api/simple.dart' as rust;
+import 'sync_state_store.dart';
 
 enum WorkoutExportFormat {
   json('JSON', 'json'),
@@ -18,6 +19,114 @@ enum WorkoutExportFormat {
 
   final String title;
   final String extension;
+}
+
+enum WorkoutFitExportSource {
+  original('原始文件'),
+  synced('Strava 同步版');
+
+  const WorkoutFitExportSource(this.title);
+  final String title;
+}
+
+/// 导出摘要不携带会话或密码，第三方源不伪造健康明细。
+final class WorkoutExportActivity {
+  const WorkoutExportActivity({
+    required this.id,
+    required this.sourceId,
+    required this.title,
+    required this.start,
+    required this.end,
+    required this.durationSeconds,
+    this.distanceMeters,
+    this.metadata = const {},
+  });
+
+  factory WorkoutExportActivity.health(HealthWorkoutSummary summary) =>
+      WorkoutExportActivity(
+        id: summary.uuid,
+        sourceId: 'healthkit',
+        title: summary.activityName,
+        start: DateTime.fromMillisecondsSinceEpoch(summary.startMs),
+        end: DateTime.fromMillisecondsSinceEpoch(summary.endMs),
+        durationSeconds: summary.durationSeconds,
+        distanceMeters: summary.totalDistanceMeters,
+      );
+
+  final String id;
+  final String sourceId;
+  final String title;
+  final DateTime start;
+  final DateTime end;
+  final double durationSeconds;
+  final double? distanceMeters;
+  final Map<String, Object?> metadata;
+  String get key => jsonEncode([sourceId, id]);
+}
+
+/// 只使用已上传、且文件仍存在的最近记录；缺文件时绝不回退到原始 FIT。
+final class SyncedFitExportStore {
+  SyncedFitExportStore({
+    Future<Map<String, Object?>> Function()? loadRecords,
+    Future<Uint8List> Function(String fingerprint)? readFit,
+  }) : _loadRecords = loadRecords ?? SyncStateStore().allRecords,
+       _readFit = readFit ?? const SyncFilesChannel().readSyncedFit;
+
+  final Future<Map<String, Object?>> Function() _loadRecords;
+  final Future<Uint8List> Function(String fingerprint) _readFit;
+
+  Future<Map<String, String>> available(
+    List<WorkoutExportActivity> activities,
+  ) async {
+    if (activities.isEmpty) return const {};
+    final requested = activities.map((activity) => activity.key).toSet();
+    final records =
+        (await _loadRecords()).entries.where((entry) {
+          final value = entry.value;
+          return RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(entry.key) &&
+              value is Map &&
+              value['status'] == 'uploaded';
+        }).toList()..sort((a, b) {
+          double timestamp(Object? value) =>
+              value is Map && value['updatedAt'] is num
+              ? (value['updatedAt'] as num).toDouble()
+              : 0;
+          return timestamp(b.value).compareTo(timestamp(a.value));
+        });
+    final result = <String, String>{};
+    for (final entry in records) {
+      final record = entry.value as Map;
+      final key = jsonEncode([
+        record['primarySourceId'],
+        record['primaryActivityId'],
+      ]);
+      if (!requested.contains(key) || result.containsKey(key)) continue;
+      try {
+        final bytes = await _readFit(entry.key);
+        if (bytes.isNotEmpty) result[key] = entry.key;
+      } on PlatformException catch (error) {
+        if (error.code != 'sync_file_missing') rethrow;
+      }
+    }
+    return result;
+  }
+
+  Future<Uint8List> read(
+    WorkoutExportActivity activity,
+    Map<String, String> fingerprints,
+  ) async {
+    final fingerprint = fingerprints[activity.key];
+    if (fingerprint == null) {
+      throw StateError('“${activity.title}”没有保存 Strava 同步版 FIT，请重新同步后导出');
+    }
+    try {
+      final bytes = await _readFit(fingerprint);
+      if (bytes.isNotEmpty) return bytes;
+    } on PlatformException catch (error) {
+      if (error.code != 'sync_file_missing') rethrow;
+    }
+    throw StateError('“${activity.title}”的 Strava 同步版 FIT 已被删除，请刷新后重试');
+  }
 }
 
 /// 与原应用一致的导出时区候选；偏移按每条训练结束时刻计算，能正确覆盖夏令时。
@@ -110,11 +219,74 @@ final class WorkoutExportService {
     onProgress: onProgress,
   );
 
+  /// 原始 FIT 字节直接来自源；同步版字节直接来自受保护的同步存储。
+  Future<WorkoutExportResult> exportActivities({
+    required List<WorkoutExportActivity> activities,
+    required WorkoutExportFormat format,
+    required WorkoutExportTimeZone timeZone,
+    Future<Uint8List> Function(WorkoutExportActivity activity)? loadFit,
+    Future<HealthWorkoutBundle> Function(String id)? loadHealthBundle,
+    void Function(WorkoutExportProgress progress)? onProgress,
+  }) => _writeBatch(
+    total: activities.length,
+    onProgress: onProgress,
+    load: (index) async {
+      final activity = activities[index];
+      final start = _dateInZone(
+        activity.start.millisecondsSinceEpoch,
+        timeZone,
+      );
+      final name =
+          '${_safeFileBaseName(activity.id, activity.title, start)}.${format.extension}';
+      final bytes = switch (format) {
+        WorkoutExportFormat.fit =>
+          loadFit == null
+              ? throw StateError('没有可用的 FIT 来源')
+              : await loadFit(activity),
+        WorkoutExportFormat.json => utf8.encode(
+          const JsonEncoder.withIndent('  ').convert(
+            loadHealthBundle == null
+                ? _sourceJsonExport(activity, timeZone)
+                : _jsonExport(await loadHealthBundle(activity.id), timeZone),
+          ),
+        ),
+      };
+      return (name, bytes);
+    },
+  );
+
   Future<WorkoutExportResult> _export({
     required int total,
     required Future<HealthWorkoutBundle> Function(int index) loadBundle,
     required WorkoutExportFormat format,
     required WorkoutExportTimeZone timeZone,
+    required void Function(WorkoutExportProgress progress)? onProgress,
+  }) => _writeBatch(
+    total: total,
+    onProgress: onProgress,
+    load: (index) async {
+      final bundle = await loadBundle(index);
+      final end = _dateInZone(bundle.summary.endMs, timeZone);
+      final start = _dateInZone(bundle.summary.startMs, timeZone);
+      final name = '${_fileBaseName(bundle, start)}.${format.extension}';
+      final bytes = switch (format) {
+        WorkoutExportFormat.json => utf8.encode(
+          const JsonEncoder.withIndent(
+            '  ',
+          ).convert(_jsonExport(bundle, timeZone)),
+        ),
+        WorkoutExportFormat.fit => await _fitEncoder(
+          bundleJson: utf8.encode(jsonEncode(healthWorkoutFitInput(bundle))),
+          timezoneOffsetSeconds: end.timeZoneOffset.inSeconds,
+        ),
+      };
+      return (name, bytes);
+    },
+  );
+
+  Future<WorkoutExportResult> _writeBatch({
+    required int total,
+    required Future<(String, List<int>)> Function(int index) load,
     required void Function(WorkoutExportProgress progress)? onProgress,
   }) async {
     if (total == 0) throw ArgumentError('至少选择一条训练');
@@ -123,24 +295,13 @@ final class WorkoutExportService {
     final directory = await Directory.systemTemp.createTemp(_temporaryPrefix);
     try {
       final files = <File>[];
+      final usedNames = <String>{};
       onProgress?.call(WorkoutExportProgress(completed: 0, total: total));
+      // 一条一条读取，限制驻留内存，并避免源服务限流；失败不会分享残缺结果。
       for (var index = 0; index < total; index++) {
-        final bundle = await loadBundle(index);
-        final end = _dateInZone(bundle.summary.endMs, timeZone);
-        final start = _dateInZone(bundle.summary.startMs, timeZone);
-        final name = '${_fileBaseName(bundle, start)}.${format.extension}';
+        final (baseName, bytes) = await load(index);
+        final name = _uniqueFileName(baseName, usedNames);
         final output = File('${directory.path}${Platform.pathSeparator}$name');
-        final bytes = switch (format) {
-          WorkoutExportFormat.json => utf8.encode(
-            const JsonEncoder.withIndent(
-              '  ',
-            ).convert(_jsonExport(bundle, timeZone)),
-          ),
-          WorkoutExportFormat.fit => await _fitEncoder(
-            bundleJson: utf8.encode(jsonEncode(healthWorkoutFitInput(bundle))),
-            timezoneOffsetSeconds: end.timeZoneOffset.inSeconds,
-          ),
-        };
         await output.writeAsBytes(bytes, flush: true);
         files.add(output);
         onProgress?.call(
@@ -168,8 +329,16 @@ final class WorkoutExportService {
     }
   }
 
-  Future<ShareResult> share(WorkoutExportResult result) => SharePlus.instance
-      .share(ShareParams(files: [XFile(result.file.path)], subject: '健康训练导出'));
+  Future<ShareResult> share(
+    WorkoutExportResult result, {
+    Rect? sharePositionOrigin,
+  }) => SharePlus.instance.share(
+    ShareParams(
+      files: [XFile(result.file.path)],
+      subject: '健康训练导出',
+      sharePositionOrigin: sharePositionOrigin,
+    ),
+  );
 
   static void _initializeTimeZones() {
     if (_timeZonesInitialized) return;
@@ -182,7 +351,10 @@ final class WorkoutExportService {
   static Future<void> _cleanupOldExports() async {
     await for (final entity in Directory.systemTemp.list()) {
       if (entity is! Directory ||
-          !entity.uri.pathSegments.last.startsWith(_temporaryPrefix)) {
+          !entity.uri.pathSegments
+              .where((part) => part.isNotEmpty)
+              .last
+              .startsWith(_temporaryPrefix)) {
         continue;
       }
       try {
@@ -205,19 +377,68 @@ DateTime _dateInZone(int milliseconds, WorkoutExportTimeZone zone) {
   };
 }
 
-String _fileBaseName(HealthWorkoutBundle bundle, DateTime start) {
+String _fileBaseName(HealthWorkoutBundle bundle, DateTime start) =>
+    _safeFileBaseName(bundle.summary.uuid, bundle.summary.activityName, start);
+
+String _safeFileBaseName(String id, String title, DateTime start) {
   final stamp =
       '${start.year.toString().padLeft(4, '0')}'
       '${start.month.toString().padLeft(2, '0')}'
       '${start.day.toString().padLeft(2, '0')}_'
       '${start.hour.toString().padLeft(2, '0')}'
       '${start.minute.toString().padLeft(2, '0')}';
-  final type = bundle.summary.activityName
-      .replaceAll(RegExp(r'[\\/:*?"<>|\x00-\x1F]'), '_')
-      .replaceAll(RegExp(r'\s+'), '_')
-      .replaceAll(RegExp('_+'), '_');
-  return '${stamp}_${type.isEmpty ? 'workout' : type}_${bundle.summary.uuid.substring(0, 8)}';
+  String safe(String value, int limit, String fallback) {
+    final cleaned = value
+        .replaceAll(RegExp(r'[\\/:*?"<>|\x00-\x1F\x7F]'), '_')
+        .replaceAll(RegExp(r'\s+'), '_')
+        .replaceAll(RegExp('_+'), '_')
+        .replaceAll(RegExp(r'^[. ]+|[. ]+$'), '');
+    if (cleaned.isEmpty) return fallback;
+    // 按 UTF-8 字节限制长度，避免中文标题超过平台单文件名上限。
+    final runes = <int>[];
+    var bytes = 0;
+    for (final rune in cleaned.runes) {
+      bytes += utf8.encode(String.fromCharCode(rune)).length;
+      if (bytes > limit) break;
+      runes.add(rune);
+    }
+    return String.fromCharCodes(runes);
+  }
+
+  final prefix = String.fromCharCodes(id.runes.take(8));
+  return '${stamp}_${safe(title, 120, 'workout')}_${safe(prefix, 32, 'activity')}';
 }
+
+String _uniqueFileName(String name, Set<String> used) {
+  var result = name;
+  var suffix = 2;
+  final dot = name.lastIndexOf('.');
+  while (!used.add(result.toLowerCase())) {
+    result = '${name.substring(0, dot)}_${suffix++}${name.substring(dot)}';
+  }
+  return result;
+}
+
+Map<String, Object?> _sourceJsonExport(
+  WorkoutExportActivity activity,
+  WorkoutExportTimeZone zone,
+) => {
+  'id': activity.id,
+  'sourceId': activity.sourceId,
+  'title': activity.title,
+  'startDate': _iso8601WithOffset(
+    _dateInZone(activity.start.millisecondsSinceEpoch, zone),
+  ),
+  'endDate': _iso8601WithOffset(
+    _dateInZone(activity.end.millisecondsSinceEpoch, zone),
+  ),
+  'durationSeconds': activity.durationSeconds,
+  if (activity.distanceMeters != null)
+    'totalDistanceMeters': activity.distanceMeters,
+  'metadata': activity.metadata,
+  'timeZone': zone.id ?? DateTime.now().timeZoneName,
+  'note': '第三方源 JSON 仅为活动摘要；完整轨迹请导出 FIT。',
+};
 
 /// HealthKit 到 Rust FIT 编码器的唯一输入映射，导出与自动同步共用。
 Map<String, Object?> healthWorkoutFitInput(HealthWorkoutBundle bundle) => {

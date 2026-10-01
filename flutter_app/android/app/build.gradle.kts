@@ -22,6 +22,8 @@ android {
         versionName = flutter.versionName
     }
 
+    // Build-only CI opt-in: do not create even a debug signature for validation.
+    val unsignedBuild = System.getenv("HWE_UNSIGNED_BUILD") == "true"
     val uploadKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
     if (!uploadKeystorePath.isNullOrBlank()) {
         signingConfigs.create("release") {
@@ -39,7 +41,9 @@ android {
         release {
             // CI 注入 keystore；本地未配置时仍用 debug 签名，方便 flutter run --release。
             signingConfig =
-                if (!uploadKeystorePath.isNullOrBlank()) {
+                if (unsignedBuild) {
+                    null
+                } else if (!uploadKeystorePath.isNullOrBlank()) {
                     signingConfigs.getByName("release")
                 } else {
                     signingConfigs.getByName("debug")
@@ -60,5 +64,7 @@ flutter {
 
 dependencies {
     implementation("androidx.browser:browser:1.8.0")
+    implementation("androidx.health.connect:connect-client:1.1.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     testImplementation("junit:junit:4.13.2")
 }

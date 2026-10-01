@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:collection/collection.dart';
 import 'package:path/path.dart' as path;
 
+import 'toolchain.dart';
 import 'util.dart';
 
 class _Toolchain {
@@ -77,13 +78,11 @@ class Rustup {
 
     final res = runCommand("rustup", ['toolchain', 'list']);
 
-    // To list all non-custom toolchains, we need to filter out lines that
-    // don't start with "stable", "beta", or "nightly".
-    Pattern nonCustom = RegExp(r"^(stable|beta|nightly)");
+    // Include official versioned toolchains so a CI pin reuses its installation.
     final lines = res.stdout
         .toString()
         .split('\n')
-        .where((e) => e.isNotEmpty && e.startsWith(nonCustom))
+        .where(isStandardRustToolchain)
         .map(extractToolchainName)
         .toList(growable: true);
 

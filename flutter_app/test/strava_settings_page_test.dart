@@ -274,6 +274,8 @@ void main() {
 
     await tester.tap(find.byKey(const Key('stravaWebClear')));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('清除登录'));
+    await tester.pumpAndSettle();
     expect(webCalls, [
       'hasCookie',
       'login',

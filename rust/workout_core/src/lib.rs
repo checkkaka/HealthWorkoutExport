@@ -5,6 +5,7 @@ pub mod fit;
 pub mod fit_alignment;
 #[allow(unsafe_code)]
 mod frb_generated;
+pub mod health_draft;
 pub mod onelap;
 pub mod strava;
 pub mod sync_state;
@@ -330,14 +331,14 @@ pub fn stable_dedupe_matches(
     }
 
     let start_delta = (start_a_seconds - start_b_seconds).abs();
-    if !(start_delta <= MAX_START_DELTA_SECONDS) {
+    if !start_delta.is_finite() || start_delta > MAX_START_DELTA_SECONDS {
         return false;
     }
 
     let distance_difference = (distance_a_meters - distance_b_meters).abs();
     let distance_limit =
         MAX_DISTANCE_ABS_METERS.max(distance_a_meters.max(distance_b_meters) * MAX_DISTANCE_RATIO);
-    if !(distance_difference <= distance_limit) {
+    if !distance_difference.is_finite() || distance_difference > distance_limit {
         return false;
     }
     if start_delta <= TIGHT_START_DELTA_SECONDS {

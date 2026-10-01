@@ -1,20 +1,28 @@
+#[path = "fit_preview.rs"]
+mod fit_preview;
+pub use fit_preview::{average_coordinate_displacement, inspect_fit_preview_json};
 #[path = "fit_document.rs"]
 mod fit_document;
 #[path = "fit_merge.rs"]
 mod fit_merge;
 #[path = "fit_virtual_power.rs"]
 mod fit_virtual_power;
+#[path = "fit_weather.rs"]
+mod fit_weather;
+pub use fit_weather::{FitWeatherStation, fit_weather_anchors};
+
 #[path = "health_fit.rs"]
 mod health_fit;
 
 pub use fit_document::{FitDocument, FitMessage, MAX_FIT_BYTES};
 pub use fit_merge::{
-    FitMergeError, FitMergeOptions, FitSupplementMode, MAX_MERGE_INPUT_BYTES,
-    MAX_MERGE_SUPPLEMENTS, merge_fit, merge_fit_for_sync, merge_fit_sensors,
+    FitMergeError, FitMergeOptions, FitMergeResult, FitSensorFilledCounts, FitSupplementMode,
+    FitSupplementReport, MAX_MERGE_INPUT_BYTES, MAX_MERGE_SUPPLEMENTS, estimate_merge_offsets,
+    merge_fit, merge_fit_for_sync, merge_fit_for_sync_with_report, merge_fit_sensors,
 };
 pub use fit_virtual_power::{
     FitVirtualPowerFillMode, FitVirtualPowerFillOptions, FitVirtualPowerFillResult,
-    fill_fit_virtual_power,
+    fill_fit_virtual_power, fill_fit_virtual_power_with_weather,
 };
 pub use health_fit::{HealthFitError, encode_health_workout_bundle_json};
 
@@ -846,7 +854,7 @@ mod tests {
     }
 
     #[test]
-    fn compressed_timestamp_can_start_from_zero_without_a_full_timestamp() {
+    fn compressed_timestamp_requires_a_full_timestamp_reference() {
         let input = fit_file(&[
             0x40,
             0,
@@ -860,14 +868,11 @@ mod tests {
             0x80 | 17,
             141,
         ]);
-        let mut document = FitDocument::parse(&input).unwrap();
-        assert_eq!(document.read_u32(0, 253), Some(17));
-        assert_eq!(document.read_u8(0, 3), Some(141));
-
-        document.set_u8(0, 3, 150).unwrap();
-        let reparsed = FitDocument::parse(&document.to_bytes().unwrap()).unwrap();
-        assert_eq!(reparsed.read_u32(0, 253), Some(17));
-        assert_eq!(reparsed.read_u8(0, 3), Some(150));
+        // Garmin FIT protocol requires a previously recorded full timestamp.
+        assert!(matches!(
+            FitDocument::parse(&input),
+            Err(FitDecodeError::InvalidCompressedTimestamp)
+        ));
     }
 
     #[test]

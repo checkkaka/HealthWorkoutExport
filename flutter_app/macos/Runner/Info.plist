@@ -28,8 +28,10 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>仅在你确认后，将导入的训练、运动样本和路线写入健康；不会自动覆盖或删除已有健康数据。</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>用于按时间范围读取并导出你的体能训练、心率与路线数据，仅在本机生成文件。</string>
+	<string>用于读取训练、心率与路线数据，供导出和你选择的同步。启用天气增强功能时，会按说明请求第三方天气数据。</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

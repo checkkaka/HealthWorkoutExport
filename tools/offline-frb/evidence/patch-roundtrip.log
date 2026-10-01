@@ -1,0 +1,17 @@
+patching file Cargo.lock
+patching file Cargo.toml
+patching file src/library/build_web/mod.rs
+patching file src/library/codegen/config/internal_config_parser/generator_parser.rs
+patching file src/library/codegen/config/internal_config_parser/mod.rs
+patching file src/library/codegen/mod.rs
+patching file src/library/commands/cargo_expand/mod.rs
+patching file src/library/commands/cargo_expand/real.rs
+patching file src/library/commands/cargo_metadata.rs
+patching file src/library/commands/command_runner.rs
+patching file src/library/commands/ensure_tools_available.rs
+patching file src/library/mod.rs
+patching file src/library/offline.rs
+patching file src/library/offline_policy.rs
+patching file src/library/utils/dart_repository/dart_repo.rs
+patching file src/library/utils/dart_repository/dart_toolchain.rs
+patching file src/main.rs

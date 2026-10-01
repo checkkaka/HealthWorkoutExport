@@ -7,6 +7,30 @@ void main() {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
+  test(
+    'health detail reads over100 workouts in ordered bounded native batches',
+    () async {
+      const channel = MethodChannel('health_workout_export/healthkit');
+      final sizes = <int>[];
+      final ids = [
+        for (var i = 0; i < 101; i++)
+          '00000000-0000-4000-8000-${i.toString().padLeft(12, '0')}',
+      ];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        final batch = (call.arguments as Map)['uuids'] as List;
+        sizes.add(batch.length);
+        if (batch.length > 100) {
+          throw PlatformException(code: 'invalid_arguments');
+        }
+        return [for (final id in batch) _bundlePayload(id as String)];
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final results = await const HealthKitChannel().fetchWorkoutBundles(ids);
+      expect(sizes, [100, 1]);
+      expect(results.map((item) => item.summary.uuid), ids);
+    },
+  );
+
   group('StravaVaultChannel', () {
     const channel = MethodChannel('health_workout_export/keychain');
 

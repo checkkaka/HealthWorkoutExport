@@ -4,3 +4,8 @@ analyzer:
   # Cargokit 是独立构建工具包，由平台构建脚本在隔离目录解析依赖。
   exclude:
     - rust_builder/**
+    - build/**
+    - android/**
+    - ios/**
+    - windows/**
+    - macos/**

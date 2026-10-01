@@ -1,0 +1,12 @@
+{
+  "source_commit": "1cdaa8e51d4449447d9013dc045c689109385440",
+  "generator_sha256": "f5f44ebbdc541c514b8a0f0108a3fdffbb714804270c6915bd88d9265678cc24",
+  "formatted_after_generation": true,
+  "outputs_sha256": {
+    "flutter_app/lib/src/rust/api/simple.dart": "efc0672a756273ef540fa4d0cb42d2142c75ce683d921f447e9fb5d8ab39075d",
+    "flutter_app/lib/src/rust/frb_generated.dart": "579dae117866c28081b7a0097ff43e0ba46f3f4a235a840726d92b5e5efc0a9f",
+    "flutter_app/lib/src/rust/frb_generated.io.dart": "f8c3bf5389bc77878ffce61db1c5942905b6f752102e45c4af885a112fbecdca",
+    "flutter_app/lib/src/rust/frb_generated.web.dart": "bd6bea3e2b57f82974e2f52ac23571dce5ee91192f408bdf86c80ba7da6bdd9b",
+    "rust/workout_core/src/frb_generated.rs": "de4bece46464c19e71577dd3a5766d171120930aab2757f91065a55976c4dd5c"
+  }
+}

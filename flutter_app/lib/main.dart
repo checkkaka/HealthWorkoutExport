@@ -3,10 +3,11 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import 'auto_sync_controller.dart';
 import 'auto_sync_page.dart';
+import 'activity_sync_status.dart';
 import 'auto_sync_session.dart';
 import 'date_range.dart';
+import 'export_controls.dart';
 import 'fit_merge_page.dart';
 import 'native_channels.dart';
 import 'src/rust/frb_generated.dart';
@@ -59,7 +60,8 @@ class HealthWorkoutExportApp extends StatelessWidget {
             stravaSettingsEnabled ??
             (defaultTargetPlatform == TargetPlatform.iOS ||
                 defaultTargetPlatform == TargetPlatform.macOS ||
-                defaultTargetPlatform == TargetPlatform.android),
+                defaultTargetPlatform == TargetPlatform.android ||
+                defaultTargetPlatform == TargetPlatform.windows),
       ),
     );
   }
@@ -101,100 +103,110 @@ class _RootTabsPageState extends State<_RootTabsPage> {
       builder: (context, _) {
         final session = AutoSyncSession.instance;
         return Scaffold(
-      appBar: AppBar(
-        title: Text(titles[_selectedIndex]),
-        actions: [
-          IconButton(
-            tooltip: '合并 FIT',
-            icon: const Icon(Icons.merge_type),
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(builder: (_) => const FitMergePage()),
-              );
-            },
-          ),
-          IconButton(
-            tooltip: '同步记录',
-            icon: const Icon(Icons.history),
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(builder: (_) => const SyncHistoryPage()),
-              );
-            },
-          ),
-          if (widget.stravaSettingsEnabled)
-            IconButton(
-              tooltip: 'Strava 设置',
-              icon: const Icon(Icons.settings),
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => const StravaSettingsPage(),
-                  ),
-                );
-              },
-            ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          IndexedStack(
-            index: _selectedIndex,
-            children: [
-              for (var index = 0; index < pages.length; index++)
-                TickerMode(enabled: index == _selectedIndex, child: pages[index]),
+          appBar: AppBar(
+            title: Text(titles[_selectedIndex]),
+            actions: [
+              IconButton(
+                tooltip: '合并 FIT',
+                icon: const Icon(Icons.merge_type),
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const FitMergePage(),
+                    ),
+                  );
+                },
+              ),
+              IconButton(
+                tooltip: '同步记录',
+                icon: const Icon(Icons.history),
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const SyncHistoryPage(),
+                    ),
+                  );
+                },
+              ),
+              if (widget.stravaSettingsEnabled)
+                IconButton(
+                  tooltip: 'Strava 设置',
+                  icon: const Icon(Icons.settings),
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const StravaSettingsPage(),
+                      ),
+                    );
+                  },
+                ),
             ],
           ),
-          if (session.isRunning)
-            Align(
-              alignment: Alignment.topCenter,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Material(
-                  elevation: 2,
-                  borderRadius: BorderRadius.circular(24),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
+          body: Stack(
+            children: [
+              IndexedStack(
+                index: _selectedIndex,
+                children: [
+                  for (var index = 0; index < pages.length; index++)
+                    TickerMode(
+                      enabled: index == _selectedIndex,
+                      child: pages[index],
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                ],
+              ),
+              if (session.isRunning)
+                Align(
+                  alignment: Alignment.topCenter,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Material(
+                      elevation: 2,
+                      borderRadius: BorderRadius.circular(24),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          session.progress.message.isEmpty
-                              ? '同步进行中…'
-                              : session.progress.message,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              session.progress.message.isEmpty
+                                  ? '同步进行中…'
+                                  : session.progress.message,
+                            ),
+                            TextButton(
+                              onPressed: session.cancel,
+                              child: const Text('停止'),
+                            ),
+                          ],
                         ),
-                        TextButton(
-                          onPressed: session.cancel,
-                          child: const Text('停止'),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
+            ],
+          ),
+          bottomNavigationBar: NavigationBar(
+            selectedIndex: _selectedIndex,
+            onDestinationSelected: (index) {
+              setState(() => _selectedIndex = index);
+            },
+            destinations: const [
+              NavigationDestination(icon: Icon(Icons.favorite), label: '健康'),
+              NavigationDestination(
+                icon: Icon(Icons.directions_bike),
+                label: '行者',
               ),
-            ),
-        ],
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) {
-          setState(() => _selectedIndex = index);
-        },
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.favorite), label: '健康'),
-          NavigationDestination(icon: Icon(Icons.directions_bike), label: '行者'),
-          NavigationDestination(icon: Icon(Icons.flag), label: '顽鹿'),
-        ],
-      ),
+              NavigationDestination(icon: Icon(Icons.flag), label: '顽鹿'),
+            ],
+          ),
         );
       },
     );
@@ -228,17 +240,7 @@ class _SourcePageState extends State<_SourcePage> {
   String? _error;
   var _requestId = 0;
   Future<bool>? _authorization;
-  final _exportService = WorkoutExportService();
-  var _exportFormat = WorkoutExportFormat.fit;
-  var _exportTimeZone = WorkoutExportTimeZone.candidates.first;
-  WorkoutExportProgress? _exportProgress;
-  WorkoutExportResult? _exportResult;
   var _exporting = false;
-  var _syncing = false;
-  var _syncCompleted = 0;
-  var _syncTotal = 0;
-  var _syncResults = const <AutoSyncResult>[];
-  String? _syncError;
 
   @override
   void initState() {
@@ -272,22 +274,26 @@ class _SourcePageState extends State<_SourcePage> {
               ChoiceChip(
                 label: Text(preset.title),
                 selected: _preset == preset,
-                onSelected: (_) {
-                  setState(() => _preset = preset);
-                  if (widget.healthKit != null) unawaited(_loadWorkouts());
-                },
+                onSelected: _exporting
+                    ? null
+                    : (_) {
+                        setState(() => _preset = preset);
+                        if (widget.healthKit != null) {
+                          unawaited(_loadWorkouts());
+                        }
+                      },
               ),
           ],
         ),
         if (_preset == ActivityDatePreset.custom) ...[
           const SizedBox(height: 16),
           OutlinedButton(
-            onPressed: () => _selectDate(isStart: true),
+            onPressed: _exporting ? null : () => _selectDate(isStart: true),
             child: Text('开始：${_dateText(_customStart)}'),
           ),
           const SizedBox(height: 8),
           OutlinedButton(
-            onPressed: () => _selectDate(isStart: false),
+            onPressed: _exporting ? null : () => _selectDate(isStart: false),
             child: Text('结束：${_dateText(_customEnd)}'),
           ),
         ],
@@ -317,6 +323,23 @@ class _SourcePageState extends State<_SourcePage> {
           )
         else
           ..._healthContent(),
+        if (widget.healthKit != null) ...[
+          const SizedBox(height: 16),
+          WorkoutExportControls(
+            key: const ValueKey('healthExport'),
+            disabled: _loading || _error != null,
+            activities: [
+              for (final workout in _workouts)
+                if (_selectedWorkoutIds.contains(workout.uuid))
+                  WorkoutExportActivity.health(workout),
+            ],
+            loadHealthBundle: (id) async =>
+                (await widget.healthKit!.fetchWorkoutBundles([id])).single,
+            currentTimeZoneIdentifier:
+                widget.healthKit!.currentTimeZoneIdentifier,
+            onBusyChanged: (busy) => setState(() => _exporting = busy),
+          ),
+        ],
       ],
     );
   }
@@ -386,160 +409,63 @@ class _SourcePageState extends State<_SourcePage> {
             value: _selectedWorkoutIds.contains(workout.uuid),
             onChanged: (_) => _toggleWorkout(workout.uuid),
             title: Text(workout.activityName),
-            subtitle: Text(
-              '${_dateTimeText(DateTime.fromMillisecondsSinceEpoch(workout.startMs))}'
-              '${workout.sourceName == null ? '' : ' · ${workout.sourceName}'}',
+            secondary: IconButton(
+              tooltip: '活动详情',
+              icon: const Icon(Icons.info_outline),
+              onPressed: () => showWorkoutActivityDetails(
+                context,
+                sourceId: 'healthkit',
+                sourceTitle: '健康',
+                activityId: workout.uuid,
+                title: workout.activityName,
+                start: DateTime.fromMillisecondsSinceEpoch(workout.startMs),
+                end: DateTime.fromMillisecondsSinceEpoch(workout.endMs),
+                durationSeconds: workout.durationSeconds,
+                distanceMeters: workout.totalDistanceMeters,
+              ),
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${_dateTimeText(DateTime.fromMillisecondsSinceEpoch(workout.startMs))}'
+                  '${workout.sourceName == null ? '' : ' · ${workout.sourceName}'}',
+                ),
+                ActivitySyncBadges(
+                  sourceId: 'healthkit',
+                  activityId: workout.uuid,
+                ),
+              ],
             ),
           ),
         ),
       const SizedBox(height: 16),
-      DropdownButtonFormField<WorkoutExportFormat>(
-        initialValue: _exportFormat,
-        decoration: const InputDecoration(labelText: '导出格式'),
-        items: [
-          for (final format in WorkoutExportFormat.values)
-            DropdownMenuItem(value: format, child: Text(format.title)),
-        ],
-        onChanged: _exporting
-            ? null
-            : (format) {
-                if (format != null) setState(() => _exportFormat = format);
-              },
-      ),
-      const SizedBox(height: 12),
-      DropdownButtonFormField<WorkoutExportTimeZone>(
-        initialValue: _exportTimeZone,
-        decoration: const InputDecoration(labelText: '导出时区'),
-        items: [
-          for (final zone in WorkoutExportTimeZone.candidates)
-            DropdownMenuItem(value: zone, child: Text(zone.title)),
-        ],
-        onChanged: _exporting
-            ? null
-            : (zone) {
-                if (zone != null) setState(() => _exportTimeZone = zone);
-              },
-      ),
-      const SizedBox(height: 12),
-      FilledButton.icon(
-        onPressed: _selectedWorkoutIds.isEmpty || _exporting || _syncing
-            ? null
-            : () => unawaited(_exportSelected()),
-        icon: const Icon(Icons.ios_share),
-        label: Text(_exporting ? '正在导出…' : '导出并分享'),
-      ),
-      if (_exportProgress case final progress?) ...[
-        const SizedBox(height: 8),
-        LinearProgressIndicator(value: progress.fraction),
-        const SizedBox(height: 4),
-        Text('已处理 ${progress.completed}/${progress.total} 条训练'),
-      ],
-      if (_exportResult case final result?) ...[
-        const SizedBox(height: 8),
-        Text('导出文件：${result.file.uri.pathSegments.last}'),
-        Row(
-          children: [
-            OutlinedButton(
-              onPressed: _exporting
-                  ? null
-                  : () => unawaited(_shareExport(result)),
-              child: const Text('再次分享'),
-            ),
-            const SizedBox(width: 8),
-            TextButton(
-              onPressed: _exporting
-                  ? null
-                  : () => unawaited(_deleteExport(result)),
-              child: const Text('删除本次导出'),
-            ),
-          ],
-        ),
-      ],
       const SizedBox(height: 24),
       const Divider(),
       const SizedBox(height: 16),
       Text('同步到 Strava', style: Theme.of(context).textTheme.titleMedium),
       const SizedBox(height: 4),
-      const Text('HealthKit → Strava API 首传（同指纹/近似预检，无补源/覆盖）'),
+      const Text('在自动同步页确认主补源、上传方式和重复活动处理后开始'),
       const SizedBox(height: 12),
       FilledButton.icon(
-        onPressed: _selectedWorkoutIds.isEmpty || _syncing || _exporting
+        onPressed: _selectedWorkoutIds.isEmpty || _exporting
             ? null
-            : () => unawaited(_confirmAndSync()),
+            : _openAutoSync,
         icon: const Icon(Icons.sync),
-        label: Text(_syncing ? '正在首次同步…' : '开始首次同步'),
+        label: const Text('自动同步所选'),
       ),
       const SizedBox(height: 8),
       OutlinedButton.icon(
-        onPressed: _exporting || _syncing
-            ? null
-            : () {
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => AutoSyncPage(
-                      entrySource: WorkoutSourceId.healthkit,
-                      selected: [
-                        for (final workout in _workouts)
-                          if (_selectedWorkoutIds.contains(workout.uuid))
-                            WorkoutActivity(
-                              id: workout.uuid,
-                              sourceId: WorkoutSourceId.healthkit,
-                              title: workout.activityName,
-                              start: DateTime.fromMillisecondsSinceEpoch(
-                                workout.startMs,
-                              ),
-                              end: DateTime.fromMillisecondsSinceEpoch(
-                                workout.endMs,
-                              ),
-                              durationSeconds: workout.durationSeconds,
-                              distanceMeters: workout.totalDistanceMeters,
-                            ),
-                      ],
-                    ),
-                  ),
-                );
-              },
+        onPressed: _exporting ? null : _openAutoSync,
         icon: const Icon(Icons.sync_alt),
         label: const Text('完整自动同步'),
       ),
-      if (_syncing || _syncTotal > 0) ...[
-        const SizedBox(height: 8),
-        LinearProgressIndicator(
-          value: _syncTotal == 0 ? null : _syncCompleted / _syncTotal,
-        ),
-        const SizedBox(height: 4),
-        Text('已处理 $_syncCompleted/$_syncTotal 条训练'),
-      ],
-      if (_syncError case final error?) ...[
-        const SizedBox(height: 8),
-        Text('同步异常：$error'),
-      ],
-      for (final result in _syncResults) ...[
-        const SizedBox(height: 8),
-        Card(
-          child: ListTile(
-            leading: Icon(
-              result.succeeded
-                  ? Icons.check_circle_outline
-                  : Icons.error_outline,
-            ),
-            title: Text(_syncResultTitle(result.workoutId)),
-            subtitle: Text(
-              result.succeeded
-                  ? result.isDuplicate
-                        ? 'Strava 已接收（重复）'
-                        : 'Strava 已上传'
-                  : '失败：${result.message}',
-            ),
-          ),
-        ),
-      ],
     ];
   }
 
   Future<void> _loadWorkouts({bool authorize = false}) async {
     final healthKit = widget.healthKit;
-    if (healthKit == null) return;
+    if (healthKit == null || _exporting) return;
     if (authorize) _authorization = _requestAuthorization(healthKit);
     final authorization = _authorization;
     final requestId = ++_requestId;
@@ -610,133 +536,27 @@ class _SourcePageState extends State<_SourcePage> {
 
   void _clearSelection() => setState(_selectedWorkoutIds.clear);
 
-  Future<void> _exportSelected() async {
-    final healthKit = widget.healthKit;
-    if (healthKit == null || _selectedWorkoutIds.isEmpty || _exporting) return;
-    final selected = _workouts
-        .where((workout) => _selectedWorkoutIds.contains(workout.uuid))
-        .toList(growable: false);
-    if (selected.isEmpty) return;
-    setState(() {
-      _exporting = true;
-      _error = null;
-      _exportProgress = WorkoutExportProgress(
-        completed: 0,
-        total: selected.length,
-      );
-    });
-    try {
-      final timeZone = _exportTimeZone.id == null
-          ? WorkoutExportTimeZone.resolvedCurrent(
-              await healthKit.currentTimeZoneIdentifier(),
-            )
-          : _exportTimeZone;
-      final previous = _exportResult;
-      if (previous != null) {
-        await previous.dispose();
-        if (mounted) setState(() => _exportResult = null);
-      }
-      final result = await _exportService.exportFromLoader(
-        workoutIds: selected
-            .map((workout) => workout.uuid)
-            .toList(growable: false),
-        loadBundle: (uuid) async =>
-            (await healthKit.fetchWorkoutBundles([uuid])).single,
-        format: _exportFormat,
-        timeZone: timeZone,
-        onProgress: (progress) {
-          if (mounted) setState(() => _exportProgress = progress);
-        },
-      );
-      if (mounted) setState(() => _exportResult = result);
-      await _shareExport(result);
-    } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
-    } finally {
-      if (mounted) {
-        setState(() {
-          _exporting = false;
-          _exportProgress = null;
-        });
-      }
-    }
-  }
-
-  Future<void> _shareExport(WorkoutExportResult result) async {
-    try {
-      await _exportService.share(result);
-    } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
-    }
-  }
-
-  Future<void> _deleteExport(WorkoutExportResult result) async {
-    await result.dispose();
-    if (mounted && identical(_exportResult, result)) {
-      setState(() => _exportResult = null);
-    }
-  }
-
-  Future<void> _confirmAndSync() async {
-    final accepted = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('开始首次同步到 Strava？'),
-        content: const Text(
-          '会先跳过本地已同步和 Strava 稳定近似活动，再执行 HealthKit → Strava API 首传；不会补源、覆盖或删除远端活动。开始后当前页面不能取消预检或上传。',
+  void _openAutoSync() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AutoSyncPage(
+          entrySource: WorkoutSourceId.healthkit,
+          selected: [
+            for (final workout in _workouts)
+              if (_selectedWorkoutIds.contains(workout.uuid))
+                WorkoutActivity(
+                  id: workout.uuid,
+                  sourceId: WorkoutSourceId.healthkit,
+                  title: workout.activityName,
+                  start: DateTime.fromMillisecondsSinceEpoch(workout.startMs),
+                  end: DateTime.fromMillisecondsSinceEpoch(workout.endMs),
+                  durationSeconds: workout.durationSeconds,
+                  distanceMeters: workout.totalDistanceMeters,
+                ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('返回'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('开始同步'),
-          ),
-        ],
       ),
     );
-    if (accepted == true && mounted) unawaited(_syncSelected());
-  }
-
-  Future<void> _syncSelected() async {
-    final healthKit = widget.healthKit;
-    if (healthKit == null || _selectedWorkoutIds.isEmpty || _syncing) return;
-    final selected = _workouts
-        .where((workout) => _selectedWorkoutIds.contains(workout.uuid))
-        .map((workout) => workout.uuid)
-        .toList(growable: false);
-    if (selected.isEmpty) return;
-    setState(() {
-      _syncing = true;
-      _syncCompleted = 0;
-      _syncTotal = selected.length;
-      _syncResults = const [];
-      _syncError = null;
-    });
-    final controller = AutoSyncController(healthKit: healthKit);
-    try {
-      for (final workoutId in selected) {
-        final result = (await controller.sync([workoutId])).single;
-        if (!mounted) return;
-        setState(() {
-          _syncCompleted += 1;
-          _syncResults = [..._syncResults, result];
-        });
-      }
-    } catch (error) {
-      if (mounted) setState(() => _syncError = error.toString());
-    } finally {
-      if (mounted) setState(() => _syncing = false);
-    }
-  }
-
-  String _syncResultTitle(String workoutId) {
-    for (final workout in _workouts) {
-      if (workout.uuid == workoutId) return workout.activityName;
-    }
-    return workoutId;
   }
 
   Future<void> _selectDate({required bool isStart}) async {

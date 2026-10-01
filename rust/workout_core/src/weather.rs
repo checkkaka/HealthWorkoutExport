@@ -5,7 +5,7 @@ use std::{
     fmt,
     future::Future,
     sync::{
-        Arc,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
@@ -95,8 +95,11 @@ impl WeatherCancellation {
     }
 
     async fn cancelled(&self) {
+        let notified = self.notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
         if !self.is_cancelled() {
-            self.notify.notified().await;
+            notified.await;
         }
     }
 
@@ -191,6 +194,23 @@ impl OpenMeteoWeatherClient {
         now_seconds: i64,
         cancellation: &WeatherCancellation,
     ) -> Result<Vec<WeatherSample>, WeatherError> {
+        if cancellation.is_cancelled() {
+            return Err(WeatherError::Cancelled);
+        }
+        let key = format!(
+            "{}|{}",
+            source_name(source),
+            cache_key(latitude, longitude, start_seconds, end_seconds, now_seconds)?
+        );
+        if let Ok(mut cache) = response_cache().lock() {
+            if let Some(entry) = cache.get(&key)
+                && entry.source == source
+                && entry.stored_at.elapsed() < cache_ttl(source)
+            {
+                return Ok(entry.samples.clone());
+            }
+            cache.remove(&key);
+        }
         let url = self.make_url(
             source,
             latitude,
@@ -210,7 +230,23 @@ impl OpenMeteoWeatherClient {
             return Err(WeatherError::HttpStatus(response.status().as_u16()));
         }
         let body = read_body_limited(&mut response, cancellation).await?;
-        decode_hourly(&body)
+        let samples = decode_hourly(&body)?;
+        if !samples.is_empty()
+            && let Ok(mut cache) = response_cache().lock()
+        {
+            if cache.len() >= MAX_CACHE_ENTRIES && !cache.contains_key(&key) {
+                cache.clear();
+            }
+            cache.insert(
+                key,
+                CacheEntry {
+                    samples: samples.clone(),
+                    stored_at: Instant::now(),
+                    source,
+                },
+            );
+        }
+        Ok(samples)
     }
 
     pub fn make_url(
@@ -262,6 +298,11 @@ impl OpenMeteoWeatherClient {
 #[derive(Default)]
 pub struct OpenMeteoWeatherCache {
     entries: HashMap<String, CacheEntry>,
+}
+
+fn response_cache() -> &'static Mutex<HashMap<String, CacheEntry>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, CacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 struct CacheEntry {
@@ -446,6 +487,8 @@ fn decode_hourly(body: &[u8]) -> Result<Vec<WeatherSample>, WeatherError> {
             wind_from_degrees: at(&hourly.wind_direction_10m, index).unwrap_or(0.0),
         });
     }
+    samples.sort_by_key(|sample| sample.time_seconds);
+    samples.dedup_by_key(|sample| sample.time_seconds);
     Ok(samples)
 }
 

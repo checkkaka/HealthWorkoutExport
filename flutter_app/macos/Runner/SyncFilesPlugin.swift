@@ -1,4 +1,7 @@
 import Foundation
+#if os(macOS)
+  import Darwin
+#endif
 #if os(iOS)
   import Flutter
 #else
@@ -11,7 +14,9 @@ final class SyncFilesPlugin: NSObject, FlutterPlugin {
 
   enum FileKind {
     case state
+    case batchSession
     case syncedFIT(String)
+    case healthPreparedFIT(String)
     case recovery(String)
   }
 
@@ -38,6 +43,9 @@ final class SyncFilesPlugin: NSObject, FlutterPlugin {
   }
 
   private let storage: Storage
+  #if os(macOS)
+    private let storageQueue = DispatchQueue(label: "com.checkkaka.HealthWorkoutExport.sync-files")
+  #endif
 
   init(storage: Storage = Storage()) {
     self.storage = storage
@@ -46,23 +54,54 @@ final class SyncFilesPlugin: NSObject, FlutterPlugin {
   static func register(with registrar: FlutterPluginRegistrar) {
     #if os(iOS)
       let messenger = registrar.messenger()
+      let channel = FlutterMethodChannel(
+        name: channelName,
+        binaryMessenger: messenger,
+        codec: FlutterStandardMethodCodec.sharedInstance(),
+        taskQueue: messenger.makeBackgroundTaskQueue?()
+      )
+      let instance = SyncFilesPlugin()
+      channel.setMethodCallHandler(instance.handle)
     #else
-      let messenger = registrar.messenger
+      _ = registerMacOSChannel(messenger: registrar.messenger)
     #endif
-    let channel = FlutterMethodChannel(
-      name: channelName,
-      binaryMessenger: messenger,
-      codec: FlutterStandardMethodCodec.sharedInstance(),
-      taskQueue: messenger.makeBackgroundTaskQueue?()
-    )
-    let instance = SyncFilesPlugin()
-    channel.setMethodCallHandler(instance.handle)
   }
+
+  #if os(macOS)
+    // Flutter 3.47's messenger relay advertises the optional background queue
+    // selector, but its macOS engine does not implement it. Do not call that
+    // selector. Serialize file I/O ourselves and return platform replies on main.
+    static func registerMacOSChannel(
+      messenger: FlutterBinaryMessenger, storage: Storage = Storage()
+    ) -> FlutterMethodChannel {
+      let channel = FlutterMethodChannel(
+        name: channelName, binaryMessenger: messenger,
+        codec: FlutterStandardMethodCodec.sharedInstance()
+      )
+      let instance = SyncFilesPlugin(storage: storage)
+      channel.setMethodCallHandler { call, result in
+        instance.storageQueue.async {
+          instance.handle(call) { response in
+            DispatchQueue.main.async { result(response) }
+          }
+        }
+      }
+      return channel
+    }
+  #endif
 
   func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     do {
       let arguments = call.arguments as? [String: Any]
       switch call.method {
+      case "readBatchSession":
+        result(FlutterStandardTypedData(bytes: try storage.read(.batchSession)))
+      case "writeBatchSession":
+        try storage.write(try Self.data(from: arguments), kind: .batchSession)
+        result(nil)
+      case "deleteBatchSession":
+        try storage.delete(.batchSession)
+        result(nil)
       case "readState":
         result(FlutterStandardTypedData(bytes: try storage.read(.state)))
       case "writeState":
@@ -70,6 +109,14 @@ final class SyncFilesPlugin: NSObject, FlutterPlugin {
         result(nil)
       case "deleteState":
         try storage.delete(.state)
+        result(nil)
+      case "readHealthPreparedFit":
+        result(FlutterStandardTypedData(bytes: try storage.read(.healthPreparedFIT(try Self.fingerprint(from: arguments)))))
+      case "writeHealthPreparedFit":
+        try storage.write(try Self.data(from: arguments), kind: .healthPreparedFIT(try Self.fingerprint(from: arguments)))
+        result(nil)
+      case "deleteHealthPreparedFit":
+        try storage.delete(.healthPreparedFIT(try Self.fingerprint(from: arguments)))
         result(nil)
       case "readSyncedFit":
         result(
@@ -183,7 +230,7 @@ final class SyncFilesPlugin: NSObject, FlutterPlugin {
           try fileManager.setAttributes(
             [.protectionKey: FileProtectionType.complete], ofItemAtPath: url.path)
         #else
-          try data.write(to: url, options: [.atomic])
+          try writePrivateAtomically(data, to: url)
         #endif
         try excludeFromBackup(url)
       } catch {
@@ -204,8 +251,14 @@ final class SyncFilesPlugin: NSObject, FlutterPlugin {
     func url(for kind: FileKind) throws -> URL {
       guard let rootURL else { throw StorageError.io("application_support_unavailable") }
       switch kind {
+      case .batchSession:
+        return rootURL.appendingPathComponent("auto-sync-batch.json", isDirectory: false)
       case .state:
         return rootURL.appendingPathComponent("sync_state.json", isDirectory: false)
+      case .healthPreparedFIT(let fingerprint):
+        guard SyncFilesPlugin.isValidFingerprint(fingerprint) else { throw StorageError.invalidArguments }
+        return rootURL.appendingPathComponent("health_prepared", isDirectory: true)
+          .appendingPathComponent("\(fingerprint).fit", isDirectory: false)
       case .syncedFIT(let fingerprint):
         guard SyncFilesPlugin.isValidFingerprint(fingerprint) else {
           throw StorageError.invalidArguments
@@ -221,12 +274,31 @@ final class SyncFilesPlugin: NSObject, FlutterPlugin {
       }
     }
 
+    #if os(macOS)
+    private func writePrivateAtomically(_ data: Data, to url: URL) throws {
+      let temporary = url.deletingLastPathComponent().appendingPathComponent(".sync-\(UUID().uuidString).tmp")
+      guard fileManager.createFile(atPath: temporary.path, contents: nil,
+        attributes: [.posixPermissions: 0o600]) else { throw StorageError.io("private_temp_unavailable") }
+      defer { try? fileManager.removeItem(at: temporary) }
+      let handle = try FileHandle(forWritingTo: temporary)
+      defer { try? handle.close() }
+      try handle.write(contentsOf: data)
+      try handle.synchronize()
+      try handle.close()
+      // Same-directory POSIX rename atomically replaces without opening the old
+      // destination or preserving a broader old permission mask.
+      guard Darwin.rename(temporary.path, url.path) == 0 else { throw StorageError.io("atomic_replace_failed") }
+    }
+    #endif
+
     private func prepareDirectory(_ url: URL, protected: Bool) throws {
       try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
       if protected {
         #if os(iOS)
           try fileManager.setAttributes(
             [.protectionKey: FileProtectionType.complete], ofItemAtPath: url.path)
+        #else
+          try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
         #endif
       }
       // 先排除父目录，确保原子写临时文件也不会进入设备备份。
@@ -287,23 +359,24 @@ final class SyncFilesPlugin: NSObject, FlutterPlugin {
 extension SyncFilesPlugin.FileKind {
   fileprivate var isJSON: Bool {
     switch self {
-    case .state, .recovery: true
-    case .syncedFIT: false
+    case .state, .batchSession, .recovery: true
+    case .syncedFIT, .healthPreparedFIT: false
     }
   }
 
   fileprivate var maximumBytes: Int {
     switch self {
     case .state: 16 * 1_024 * 1_024
-    case .syncedFIT: 64 * 1_024 * 1_024
+    case .batchSession: 4 * 1_024 * 1_024
+    case .syncedFIT, .healthPreparedFIT: 64 * 1_024 * 1_024
     case .recovery: 90 * 1_024 * 1_024
     }
   }
 
   fileprivate var usesDedicatedDirectory: Bool {
     switch self {
-    case .state: false
-    case .syncedFIT, .recovery: true
+    case .state, .batchSession: false
+    case .syncedFIT, .healthPreparedFIT, .recovery: true
     }
   }
 }

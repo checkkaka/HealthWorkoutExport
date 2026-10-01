@@ -1,0 +1,3 @@
+CORE-ONLY verification. API wrappers, FFI bindings, and all api module tests are excluded.
+Only module declarations are removed from copied lib.rs. Main repository is not modified.
+Cargo.toml and Cargo.lock are unchanged. No code generation or network dependency access.

@@ -124,6 +124,12 @@ pub fn encode_health_workout_fit(
         .map_err(|error| error.to_string())
 }
 
+/// 解码 FIT 为有界 Apple Health 写入草稿 JSON；本函数不访问健康资料库。
+pub fn decode_fit_health_draft(data: Vec<u8>, fingerprint: String) -> Result<Vec<u8>, String> {
+    crate::health_draft::decode_fit_health_draft_json(&data, &fingerprint)
+        .map_err(|error| error.to_string())
+}
+
 /// 使用行者网页登录契约换取短期 sessionid；凭据只用于本次请求，调用方负责安全保存返回值。
 pub async fn xingzhe_login(account: String, password: String) -> Result<String, String> {
     let client = crate::xingzhe::XingzheLoginClient::new().map_err(|error| error.to_string())?;
@@ -143,6 +149,7 @@ pub async fn onelap_login(account: String, password: String) -> Result<OnelapLog
     Ok(OnelapLoginResult {
         token: session.token,
         uid: session.uid,
+        refresh_token: session.refresh_token,
     })
 }
 
@@ -150,6 +157,50 @@ pub async fn onelap_login(account: String, password: String) -> Result<OnelapLog
 pub struct OnelapLoginResult {
     pub token: String,
     pub uid: String,
+    pub refresh_token: Option<String>,
+}
+
+/// 换取并返回轮换后的会话；调用方必须把 token/uid/refreshToken 一起安全保存。
+pub async fn onelap_refresh_session(
+    refresh_token: String,
+    uid: String,
+) -> Result<OnelapLoginResult, String> {
+    let client = crate::onelap::OnelapLoginClient::new().map_err(|error| error.to_string())?;
+    let session = client
+        .refresh(&refresh_token, &uid)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(OnelapLoginResult {
+        token: session.token,
+        uid: session.uid,
+        refresh_token: session.refresh_token,
+    })
+}
+
+/// 预留顽鹿请求的取消句柄；与 Strava 请求共用有界、代际隔离的注册表。
+#[flutter_rust_bridge::frb(sync)]
+pub fn onelap_reserve_operation(operation_id: String) -> Result<StravaUploadReservation, String> {
+    UploadOperation::reserve(operation_id)
+        .map(|handle| StravaUploadReservation { handle })
+        .map_err(onelap_operation_error)
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn onelap_cancel_operation(operation_handle: String) -> bool {
+    strava_cancel_upload(operation_handle)
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn onelap_release_operation(operation_handle: String) -> bool {
+    strava_release_upload(operation_handle)
+}
+
+fn onelap_operation_error(error: UploadOperationError) -> String {
+    match error {
+        UploadOperationError::Invalid => "顽鹿操作无效或已结束".to_owned(),
+        UploadOperationError::InUse => "顽鹿操作已在运行".to_owned(),
+        UploadOperationError::Exhausted => "顽鹿操作已达上限".to_owned(),
+    }
 }
 
 /// Flutter 侧展示顽鹿活动列表所需字段；列表时间按调用方传入的 UTC 偏移解析。
@@ -157,6 +208,7 @@ pub struct OnelapLoginResult {
 pub struct OnelapWorkoutResult {
     pub id: String,
     pub title: String,
+    pub start_time_local: String,
     pub start_time_seconds: f64,
     pub end_time_seconds: f64,
     pub duration_seconds: f64,
@@ -187,6 +239,7 @@ pub async fn onelap_list_workouts(
                 .map(|ride| OnelapWorkoutResult {
                     id: ride.id,
                     title: "顽鹿骑行".to_owned(),
+                    start_time_local: ride.start_time_local,
                     start_time_seconds: ride.start_time_seconds,
                     end_time_seconds: ride.end_time_seconds,
                     duration_seconds: ride.duration_seconds,
@@ -210,7 +263,91 @@ pub async fn onelap_download_fit(
         .map_err(|error| error.to_string())
 }
 
+/// 可取消的顽鹿分页读取，返回含日期边界余量的候选列表。
+/// Flutter 必须按 start_time_local 的历史本地时区解析后执行精确半开区间过滤。
+pub async fn onelap_list_workouts_cancellable(
+    operation_handle: String,
+    token: String,
+    uid: String,
+    from_seconds: i64,
+    to_seconds: i64,
+    timezone_offset_seconds: i32,
+) -> Result<Vec<OnelapWorkoutResult>, String> {
+    let operation = UploadOperation::begin(operation_handle).map_err(onelap_operation_error)?;
+    if from_seconds < 0 || to_seconds <= from_seconds {
+        return Err("顽鹿活动请求参数无效".to_owned());
+    }
+    // Server timestamps have no offset. A bounded edge allowance prevents a fixed current
+    // offset from prematurely ending pagination across DST. Flutter must resolve the returned
+    // start_time_local using the historical local timezone and apply the exact original window.
+    let request_from = from_seconds.saturating_sub(2 * 86_400).max(0);
+    let request_to = to_seconds.saturating_add(2 * 86_400);
+    operation
+        .cancellation
+        .run(onelap_list_workouts(
+            token,
+            uid,
+            request_from,
+            request_to,
+            timezone_offset_seconds,
+        ))
+        .await
+        .map_err(|_| "顽鹿活动请求已取消".to_owned())?
+}
+
+/// 可取消的顽鹿 FIT 下载；取消后不尝试下一个候选 URL。
+pub async fn onelap_download_fit_cancellable(
+    operation_handle: String,
+    token: String,
+    uid: String,
+    activity_id: String,
+) -> Result<Vec<u8>, String> {
+    let operation = UploadOperation::begin(operation_handle).map_err(onelap_operation_error)?;
+    operation
+        .cancellation
+        .run(onelap_download_fit(token, uid, activity_id))
+        .await
+        .map_err(|_| "顽鹿活动请求已取消".to_owned())?
+}
+
+#[cfg(test)]
+mod onelap_ffi_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cancelled_onelap_reads_do_not_start_network_and_release_the_handle() {
+        let reservation = onelap_reserve_operation("onelap-list-cancel-test".to_owned()).unwrap();
+        assert!(onelap_cancel_operation(reservation.handle.clone()));
+        let result = onelap_list_workouts_cancellable(
+            reservation.handle.clone(),
+            "token".into(),
+            "42".into(),
+            0,
+            1,
+            0,
+        )
+        .await;
+        assert_eq!(result.unwrap_err(), "顽鹿活动请求已取消");
+        assert!(!onelap_cancel_operation(reservation.handle));
+        let download = onelap_reserve_operation("onelap-fit-cancel-test".to_owned()).unwrap();
+        assert!(onelap_cancel_operation(download.handle.clone()));
+        assert_eq!(
+            onelap_download_fit_cancellable(
+                download.handle.clone(),
+                "token".into(),
+                "42".into(),
+                "1".into()
+            )
+            .await
+            .unwrap_err(),
+            "顽鹿活动请求已取消"
+        );
+        assert!(!onelap_cancel_operation(download.handle));
+    }
+}
+
 /// 读取行者 stream 并编码为标准 Activity FIT。必须先预留列表句柄以便取消。
+#[allow(clippy::too_many_arguments)] // Fixed public FFI contract; grouped changes require regenerated bindings.
 pub async fn xingzhe_download_fit(
     operation_handle: String,
     session_id: String,
@@ -253,8 +390,11 @@ pub struct VirtualPowerFillInput {
 #[derive(Clone, Debug)]
 pub struct PreparedFitResult {
     pub data: Vec<u8>,
+    /// 按输入补源 FIT 顺序的实际字段计数、偏移与说明；无补源为 []。
+    pub supplement_reports_json: String,
     pub repaired_speed_count: u32,
     pub rewritten_coordinate_count: u32,
+    pub average_coordinate_displacement_meters: f64,
     pub virtual_power_filled_count: u32,
     pub power_source_virtual: bool,
     pub activity_description: Option<String>,
@@ -270,17 +410,13 @@ pub fn merge_fit_files(
     manual_offset_seconds: i32,
 ) -> Result<Vec<u8>, String> {
     let refs: Vec<&[u8]> = supplements.iter().map(Vec::as_slice).collect();
-    if alignment == "auto" && sensors_only {
-        return crate::fit::merge_fit_for_sync(&primary, &refs)
-            .map_err(|error| format!("{error:?}"));
-    }
     let alignment = match alignment.as_str() {
         "absolute" => crate::fit_alignment::FitStaticAlignment::Absolute,
         "manual" => crate::fit_alignment::FitStaticAlignment::Manual(manual_offset_seconds),
-        "auto" => {
-            return crate::fit::merge_fit_for_sync(&primary, &refs)
-                .map_err(|error| format!("{error:?}"));
-        }
+        "auto" => crate::fit_alignment::FitStaticAlignment::PerFile(
+            crate::fit::estimate_merge_offsets(&primary, &refs)
+                .map_err(|error| format!("{error:?}"))?,
+        ),
         _ => return Err("未知 FIT 对齐模式".to_owned()),
     };
     crate::fit::merge_fit(
@@ -296,6 +432,47 @@ pub fn merge_fit_files(
         },
     )
     .map_err(|error| format!("{error:?}"))
+}
+
+/// 合并界面使用异步工作线程，避免在 UI 线程执行大型 FIT 解码。
+#[derive(Clone, Debug)]
+pub struct MergedFitResult {
+    pub data: Vec<u8>,
+    pub offsets_seconds: Vec<i32>,
+}
+
+pub fn merge_fit_files_detailed(
+    primary: Vec<u8>,
+    supplements: Vec<Vec<u8>>,
+    sensors_only: bool,
+    alignment: String,
+    manual_offset_seconds: i32,
+) -> Result<MergedFitResult, String> {
+    let refs: Vec<&[u8]> = supplements.iter().map(Vec::as_slice).collect();
+    let offsets = match alignment.as_str() {
+        "auto" => crate::fit::estimate_merge_offsets(&primary, &refs)
+            .map_err(|error| format!("{error:?}"))?,
+        "absolute" => vec![0; supplements.len()],
+        "manual" => vec![manual_offset_seconds; supplements.len()],
+        _ => return Err("未知 FIT 对齐模式".to_owned()),
+    };
+    let data = crate::fit::merge_fit(
+        &primary,
+        &refs,
+        &crate::fit::FitMergeOptions {
+            supplement_mode: if sensors_only {
+                crate::fit::FitSupplementMode::SensorsOnly
+            } else {
+                crate::fit::FitSupplementMode::FillRecords
+            },
+            alignment: crate::fit_alignment::FitStaticAlignment::PerFile(offsets.clone()),
+        },
+    )
+    .map_err(|error| format!("{error:?}"))?;
+    Ok(MergedFitResult {
+        data,
+        offsets_seconds: offsets,
+    })
 }
 
 /// 修复已证明的 GPS 速度尖峰。
@@ -314,6 +491,28 @@ pub fn rewrite_fit_gcj_coordinates(data: Vec<u8>) -> Result<Vec<u8>, String> {
         .map_err(|error| format!("{error:?}"))
 }
 
+/// 可取消的生产准备入口；复用有界、代际隔离的远端 operation handle。
+/// 取消会丢弃天气网络 Future，退出时释放 handle。旧同步入口保留给兼容调用方。
+pub async fn prepare_fit_for_upload_cancellable(
+    operation_handle: String,
+    primary: Vec<u8>,
+    supplements: Vec<Vec<u8>>,
+    gcj_enabled: bool,
+    virtual_power: Option<VirtualPowerFillInput>,
+) -> Result<PreparedFitResult, String> {
+    let operation = UploadOperation::begin(operation_handle).map_err(remote_operation_error)?;
+    operation
+        .cancellation
+        .run(prepare_fit_for_upload(
+            primary,
+            supplements,
+            gcj_enabled,
+            virtual_power,
+        ))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 /// 上传前固定顺序：补源合并 → 尖峰 → GCJ → 虚拟功率。
 pub async fn prepare_fit_for_upload(
     primary: Vec<u8>,
@@ -321,11 +520,16 @@ pub async fn prepare_fit_for_upload(
     gcj_enabled: bool,
     virtual_power: Option<VirtualPowerFillInput>,
 ) -> Result<PreparedFitResult, String> {
+    let original_coordinates = gcj_enabled.then(|| primary.clone());
     let refs: Vec<&[u8]> = supplements.iter().map(Vec::as_slice).collect();
-    let merged = if refs.is_empty() {
-        primary
+    let (merged, supplement_reports_json) = if refs.is_empty() {
+        (primary, "[]".to_owned())
     } else {
-        crate::fit::merge_fit_for_sync(&primary, &refs).map_err(|error| format!("{error:?}"))?
+        let result = crate::fit::merge_fit_for_sync_with_report(&primary, &refs)
+            .map_err(|error| format!("{error:?}"))?;
+        let reports_json = serde_json::to_string(&result.supplement_reports)
+            .map_err(|_| "无法编码补源报告".to_owned())?;
+        (result.data, reports_json)
     };
     let spike = crate::fit::fix_fit_speed_spikes(&merged).map_err(|error| format!("{error:?}"))?;
     let repaired_speed_count = u32::try_from(spike.fixed_count).unwrap_or(u32::MAX);
@@ -340,54 +544,63 @@ pub async fn prepare_fit_for_upload(
     let mut virtual_power_filled_count = 0;
     let mut power_source_virtual = false;
     let mut activity_description = None;
-    if let Some(input) = virtual_power {
-        if input.rider_mass_kg > 0.0 && input.bike_mass_kg > 0.0 && input.cda > 0.0 {
-            let air_density = weather_air_density(&data).await.unwrap_or(1.225);
-            let filled = crate::fit::fill_fit_virtual_power(
-                &data,
-                crate::fit::FitVirtualPowerFillOptions {
-                    params: crate::VirtualPowerParams {
-                        total_mass_kg: input.rider_mass_kg + input.bike_mass_kg,
-                        cda: input.cda,
-                        crr: 0.005,
-                        drivetrain_loss_percent: 2.0,
-                        air_density,
-                    },
-                    include_inertia: input.include_inertia,
-                    mode: crate::fit::FitVirtualPowerFillMode::Overwrite,
+    if let Some(input) = virtual_power
+        && input.rider_mass_kg > 0.0
+        && input.bike_mass_kg > 0.0
+        && input.cda > 0.0
+    {
+        let stations = weather_stations(&data).await.unwrap_or_default();
+        let filled = crate::fit::fill_fit_virtual_power_with_weather(
+            &data,
+            crate::fit::FitVirtualPowerFillOptions {
+                params: crate::VirtualPowerParams {
+                    total_mass_kg: input.rider_mass_kg + input.bike_mass_kg,
+                    cda: input.cda,
+                    crr: 0.005,
+                    drivetrain_loss_percent: 2.0,
+                    air_density: 1.225,
                 },
-            )
-            .map_err(|error| format!("{error:?}"))?;
-            virtual_power_filled_count = u32::try_from(filled.filled_count).unwrap_or(u32::MAX);
-            power_source_virtual = filled.power_source_virtual && !filled.activity_rejected;
-            if power_source_virtual {
-                activity_description = Some(VIRTUAL_POWER_DESCRIPTION.to_owned());
-            }
-            if !filled.activity_rejected {
-                data = filled.data;
-            }
+                include_inertia: input.include_inertia,
+                mode: crate::fit::FitVirtualPowerFillMode::Overwrite,
+            },
+            &stations,
+        )
+        .map_err(|error| format!("{error:?}"))?;
+        virtual_power_filled_count = u32::try_from(filled.filled_count).unwrap_or(u32::MAX);
+        power_source_virtual = filled.power_source_virtual && !filled.activity_rejected;
+        if power_source_virtual {
+            activity_description = Some(VIRTUAL_POWER_DESCRIPTION.to_owned());
+        }
+        if !filled.activity_rejected {
+            data = filled.data;
         }
     }
+    let average_coordinate_displacement_meters = match original_coordinates {
+        Some(original) => crate::fit::average_coordinate_displacement(&original, &data)
+            .map_err(|error| format!("{error:?}"))?,
+        None => 0.0,
+    };
     Ok(PreparedFitResult {
         data,
+        supplement_reports_json,
         repaired_speed_count,
         rewritten_coordinate_count,
+        average_coordinate_displacement_meters,
         virtual_power_filled_count,
         power_source_virtual,
         activity_description,
     })
 }
 
-async fn weather_air_density(data: &[u8]) -> Result<f64, String> {
-    let Some((latitude, longitude)) =
-        crate::fit::first_fit_coordinate(data).map_err(|error| format!("{error:?}"))?
-    else {
-        return Ok(1.225);
-    };
+async fn weather_stations(data: &[u8]) -> Result<Vec<crate::fit::FitWeatherStation>, String> {
+    let anchors = crate::fit::fit_weather_anchors(data).map_err(|error| format!("{error:?}"))?;
+    if anchors.is_empty() {
+        return Ok(Vec::new());
+    }
     let Some((start, end)) =
         crate::fit::fit_time_range_unix_seconds(data).map_err(|error| format!("{error:?}"))?
     else {
-        return Ok(1.225);
+        return Ok(Vec::new());
     };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -395,25 +608,30 @@ async fn weather_air_density(data: &[u8]) -> Result<f64, String> {
         .unwrap_or(end);
     let client =
         crate::weather::OpenMeteoWeatherClient::new().map_err(|error| error.to_string())?;
-    let samples = client
-        .fetch_hourly(
-            latitude,
-            longitude,
-            start,
-            end.max(start + 1),
-            now,
-            &crate::weather::WeatherCancellation::new(),
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-    let Some(sample) = samples.first() else {
-        return Ok(1.225);
-    };
-    Ok(crate::air_density(
-        sample.temperature_c,
-        sample.pressure_msl_hpa,
-        sample.relative_humidity_percent,
-    ))
+    let cancellation = crate::weather::WeatherCancellation::new();
+    let mut stations = Vec::new();
+    for (latitude, longitude) in anchors {
+        match client
+            .fetch_hourly(
+                latitude,
+                longitude,
+                start,
+                end.max(start + 1),
+                now,
+                &cancellation,
+            )
+            .await
+        {
+            Ok(samples) if !samples.is_empty() => stations.push(crate::fit::FitWeatherStation {
+                latitude,
+                longitude,
+                samples,
+            }),
+            Err(crate::weather::WeatherError::Cancelled) => return Err("天气请求已取消".to_owned()),
+            _ => {}
+        }
+    }
+    Ok(stations)
 }
 
 #[derive(Clone, Debug)]
@@ -673,6 +891,31 @@ mod prepare_fit_ffi_tests {
         assert!(crate::fit::is_valid_fit(&prepared.data));
         assert_eq!(prepared.virtual_power_filled_count, 0);
         assert!(!prepared.power_source_virtual);
+        assert_eq!(prepared.supplement_reports_json, "[]");
+    }
+
+    #[tokio::test]
+    async fn prepared_fit_reports_actual_supplement_fills() {
+        let mut bundle = serde_json::json!({
+            "uuid":"report", "startMs":1700000000000i64, "endMs":1700000060000i64,
+            "durationSeconds":60.0,"activityType":13,"events":[],"series":{},"route":[]
+        });
+        let primary =
+            crate::fit::encode_health_workout_bundle_json(&serde_json::to_vec(&bundle).unwrap(), 0)
+                .unwrap();
+        bundle["series"] = serde_json::json!({"HKQuantityTypeIdentifierHeartRate":[{"dateMs":1700000000000i64,"value":120.0}]});
+        let source =
+            crate::fit::encode_health_workout_bundle_json(&serde_json::to_vec(&bundle).unwrap(), 0)
+                .unwrap();
+        let prepared = prepare_fit_for_upload(primary, vec![source], false, None)
+            .await
+            .unwrap();
+        let reports: serde_json::Value =
+            serde_json::from_str(&prepared.supplement_reports_json).expect("report must be JSON");
+        assert_eq!(reports[0]["index"], 0);
+        assert_eq!(reports[0]["offsetSeconds"], 0);
+        assert_eq!(reports[0]["filledCounts"]["heartRate"], 1);
+        assert_eq!(reports[0]["filledCounts"]["power"], 0);
     }
 }
 
@@ -698,6 +941,103 @@ pub fn sync_recovery_apply(
 ) -> Result<Vec<u8>, String> {
     crate::sync_state::apply_recovery(&recovery_json, &command_json)
         .map_err(|error| error.to_string())
+}
+
+/// 远端活动预检排名：IoU 优先，其次 45 分钟开始差/时长，再其次稳定距离。
+#[flutter_rust_bridge::frb(sync)]
+pub fn strava_best_remote_activity_match_index(
+    start_time_seconds: f64,
+    end_time_seconds: f64,
+    distance_meters: Option<f64>,
+    candidates: Vec<StravaRemoteActivityResult>,
+) -> Option<u32> {
+    let candidates: Vec<_> = candidates
+        .into_iter()
+        .map(|activity| crate::strava::StravaRemoteActivity {
+            id: activity.id,
+            start_time_seconds: activity.start_time_seconds,
+            end_time_seconds: activity.end_time_seconds,
+            distance_meters: activity.distance_meters,
+        })
+        .collect();
+    crate::strava::best_remote_activity_match_index(
+        start_time_seconds,
+        end_time_seconds,
+        distance_meters,
+        &candidates,
+    )
+    .and_then(|index| u32::try_from(index).ok())
+}
+
+/// 仅骑行参与异常速度判定；与 Swift 摘要、最佳成绩及综合峰值阈值一致。
+#[flutter_rust_bridge::frb(sync)]
+pub fn strava_speed_is_anomalous(
+    sport_type: String,
+    listed_max_speed_mps: f64,
+    best_effort_peak_mps: f64,
+    max_speed_mps: f64,
+    average_speed_mps: f64,
+) -> bool {
+    crate::strava::speed_is_anomalous(
+        &sport_type,
+        listed_max_speed_mps,
+        best_effort_peak_mps,
+        max_speed_mps,
+        average_speed_mps,
+    )
+}
+
+#[derive(Clone, Debug)]
+pub struct StravaRateLimitWindow {
+    pub fifteen_minutes_used: u32,
+    pub fifteen_minutes_limit: u32,
+    pub daily_used: u32,
+    pub daily_limit: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct StravaRateLimitResult {
+    pub overall: StravaRateLimitWindow,
+    pub read: Option<StravaRateLimitWindow>,
+    pub observed_at_unix_seconds: f64,
+    pub rate_limited: bool,
+}
+
+fn rate_limit_result(usage: crate::strava::StravaRateLimitUsage) -> StravaRateLimitResult {
+    fn window(value: crate::strava::StravaRateLimitWindow) -> StravaRateLimitWindow {
+        StravaRateLimitWindow {
+            fifteen_minutes_used: value.fifteen_minutes_used,
+            fifteen_minutes_limit: value.fifteen_minutes_limit,
+            daily_used: value.daily_used,
+            daily_limit: value.daily_limit,
+        }
+    }
+    StravaRateLimitResult {
+        overall: window(usage.overall),
+        read: usage.read.map(window),
+        observed_at_unix_seconds: usage.observed_at_unix_seconds,
+        rate_limited: usage.rate_limited,
+    }
+}
+
+/// 最近一次该 token 的 API 响应限额；仅进程内有界缓存，时间戳明确标记数据时效。
+#[flutter_rust_bridge::frb(sync)]
+pub fn strava_rate_limit_snapshot(access_token: String) -> Option<StravaRateLimitResult> {
+    crate::strava::rate_limit_snapshot(&access_token).map(rate_limit_result)
+}
+
+/// 读取当前 API 限额，429 带有效限额响应头时也返回结果。使用远端读取句柄取消。
+pub async fn strava_fetch_rate_limit_usage(
+    operation_handle: String,
+    access_token: String,
+) -> Result<StravaRateLimitResult, String> {
+    let operation = UploadOperation::begin(operation_handle).map_err(remote_operation_error)?;
+    let client = crate::strava::StravaActivityClient::new().map_err(remote_activity_error)?;
+    client
+        .fetch_rate_limit_usage(&access_token, &operation.cancellation)
+        .await
+        .map(rate_limit_result)
+        .map_err(remote_activity_error)
 }
 
 #[derive(Clone)]
@@ -803,6 +1143,7 @@ pub async fn strava_upload_fit(
     filename: String,
     commute: bool,
     description: Option<String>,
+    name: Option<String>,
 ) -> StravaUploadFfiResponse {
     let mut operation = match UploadOperation::begin(operation_handle) {
         Ok(operation) => operation,
@@ -818,6 +1159,7 @@ pub async fn strava_upload_fit(
                     &filename,
                     commute,
                     description.as_deref(),
+                    name.as_deref(),
                     &operation.cancellation,
                 )
                 .await
@@ -844,6 +1186,7 @@ pub async fn strava_retry_upload_after_refresh(
     filename: String,
     commute: bool,
     description: Option<String>,
+    name: Option<String>,
 ) -> StravaUploadFfiResponse {
     let operation = match UploadOperation::begin(operation_handle) {
         Ok(operation) => operation,
@@ -859,6 +1202,7 @@ pub async fn strava_retry_upload_after_refresh(
                     &filename,
                     commute,
                     description.as_deref(),
+                    name.as_deref(),
                     &operation.cancellation,
                 )
                 .await
@@ -949,6 +1293,30 @@ pub async fn strava_list_remote_activities(
         .map_err(remote_activity_error)
 }
 
+/// 上传成功后的幂等元数据更新。调用前预留 operation handle；失败不应重新上传 FIT。
+pub async fn strava_update_activity_metadata(
+    operation_handle: String,
+    access_token: String,
+    activity_id: String,
+    name: String,
+    commute: bool,
+    description_note: Option<String>,
+) -> Result<(), String> {
+    let operation = UploadOperation::begin(operation_handle).map_err(remote_operation_error)?;
+    let client = crate::strava::StravaActivityClient::new().map_err(remote_activity_error)?;
+    client
+        .update_activity_metadata(
+            &access_token,
+            &activity_id,
+            &name,
+            commute,
+            description_note.as_deref(),
+            &operation.cancellation,
+        )
+        .await
+        .map_err(remote_activity_error)
+}
+
 /// 拉取单条 Strava 活动的摘要最高速与 best_efforts 峰值；404 返回 `null`。
 /// 调用约束与 `strava_list_remote_activities` 相同，避免读取任务无法中止。
 pub async fn strava_fetch_remote_activity_speed(
@@ -962,6 +1330,42 @@ pub async fn strava_fetch_remote_activity_speed(
         .activity_speed(&access_token, &activity_id, &operation.cancellation)
         .await
         .map(|activity| activity.map(remote_activity_speed_result))
+        .map_err(remote_activity_error)
+}
+
+/// 解析原生网页通道返回的单页训练 JSON；分页和日期过滤由调用方负责。
+#[flutter_rust_bridge::frb(sync)]
+pub fn strava_parse_web_remote_activities(
+    response_json: Vec<u8>,
+) -> Result<Vec<StravaRemoteActivityResult>, String> {
+    crate::strava::parse_web_remote_activities(&response_json)
+        .map(|items| items.into_iter().map(remote_activity_result).collect())
+        .map_err(remote_activity_error)
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn strava_parse_web_listed_activity_speeds(
+    response_json: Vec<u8>,
+) -> Result<Vec<StravaActivitySpeedResult>, String> {
+    crate::strava::parse_web_listed_activity_speeds(&response_json)
+        .map(|items| {
+            items
+                .into_iter()
+                .map(remote_activity_speed_result)
+                .collect()
+        })
+        .map_err(remote_activity_error)
+}
+
+/// 网页速度解析，不接触 Cookie；非骑车返回 null，坏页面返回明确错误。
+#[flutter_rust_bridge::frb(sync)]
+pub fn strava_parse_web_activity_speed(
+    activity_id: String,
+    page_html: String,
+    streams_json: Option<String>,
+) -> Result<Option<StravaActivitySpeedResult>, String> {
+    crate::strava::parse_web_activity_speed(&activity_id, &page_html, streams_json.as_deref())
+        .map(|item| item.map(remote_activity_speed_result))
         .map_err(remote_activity_error)
 }
 
@@ -1334,6 +1738,7 @@ mod upload_ffi_tests {
             "ride.fit".to_owned(),
             false,
             None,
+            None,
         )
         .await;
         assert_eq!(response.status, StravaUploadFfiStatus::Failed);
@@ -1380,4 +1785,30 @@ mod upload_ffi_tests {
         drop(retry);
         assert!(!strava_cancel_upload(handle));
     }
+}
+
+#[cfg(test)]
+mod preparation_cancellation_tests {
+    use super::*;
+    #[tokio::test]
+    async fn cancellation_before_prepare_never_parses_or_starts_weather() {
+        let reserved =
+            strava_reserve_remote_read("prepare-cancellation-regression".to_owned()).unwrap();
+        assert!(strava_cancel_remote_read(reserved.handle.clone()));
+        let result = prepare_fit_for_upload_cancellable(
+            reserved.handle.clone(),
+            vec![],
+            vec![],
+            false,
+            None,
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(!strava_release_remote_read(reserved.handle));
+    }
+}
+
+/// 预览使用异步工作线程；完整坐标摘要与有界显示数据分别计算。
+pub fn inspect_fit_preview(data: Vec<u8>) -> Result<String, String> {
+    crate::fit::inspect_fit_preview_json(&data)
 }

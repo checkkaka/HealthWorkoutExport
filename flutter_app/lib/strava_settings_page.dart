@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 
 import 'native_channels.dart';
 import 'src/rust/api/simple.dart';
+import 'strava_upload_api.dart' show stravaUploadSession;
+import 'virtual_power_settings.dart';
 
 typedef StravaCodeExchange =
     Future<StravaTokenResult> Function({
@@ -18,12 +20,14 @@ class StravaSettingsPage extends StatefulWidget {
     this.oauth = const StravaOAuthChannel(),
     this.web = const StravaWebChannel(),
     this.exchangeCode = stravaExchangeCode,
+    this.loadRateLimit,
   });
 
   final StravaSettingsStore store;
   final StravaOAuthChannel oauth;
   final StravaWebChannel web;
   final StravaCodeExchange exchangeCode;
+  final Future<StravaRateLimitResult> Function()? loadRateLimit;
 
   @override
   State<StravaSettingsPage> createState() => _StravaSettingsPageState();
@@ -36,6 +40,10 @@ class _StravaSettingsPageState extends State<StravaSettingsPage> {
   String? _message;
   var _loading = true;
   var _busy = false;
+  var _authorizing = false;
+  var _authGeneration = 0;
+  StravaRateLimitResult? _quota;
+  var _quotaLoading = false;
 
   @override
   void initState() {
@@ -45,6 +53,8 @@ class _StravaSettingsPageState extends State<StravaSettingsPage> {
 
   @override
   void dispose() {
+    _authGeneration++;
+    if (_authorizing) widget.oauth.cancel().catchError((Object _) {});
     _clientId.dispose();
     _clientSecret.dispose();
     super.dispose();
@@ -95,6 +105,34 @@ class _StravaSettingsPageState extends State<StravaSettingsPage> {
                   const SizedBox(height: 16),
                   Text(_message!, key: const Key('stravaSettingsMessage')),
                 ],
+                if (settings.mode == StravaUploadMode.api) ...[
+                  const Divider(height: 32),
+                  Text(
+                    'API 请求限额',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  if (_quota case final quota?) ...[
+                    Text(
+                      '15 分钟：${quota.overall.fifteenMinutesUsed}/${quota.overall.fifteenMinutesLimit}',
+                    ),
+                    Text(
+                      '每日：${quota.overall.dailyUsed}/${quota.overall.dailyLimit}',
+                    ),
+                    if (quota.read case final read?)
+                      Text(
+                        '读取请求：15 分钟 ${read.fifteenMinutesUsed}/${read.fifteenMinutesLimit}；每日 ${read.dailyUsed}/${read.dailyLimit}',
+                      ),
+                    if (quota.rateLimited) const Text('已触发限流，请等待配额恢复'),
+                  ] else
+                    const Text('刷新后显示 Strava 响应头中的当前限额'),
+                  TextButton(
+                    onPressed: _quotaLoading || !settings.isApiReady
+                        ? null
+                        : _refreshQuota,
+                    child: Text(_quotaLoading ? '读取中…' : '刷新限额'),
+                  ),
+                ],
+                const VirtualPowerSettingsCard(),
               ],
             ),
     );
@@ -134,12 +172,14 @@ class _StravaSettingsPageState extends State<StravaSettingsPage> {
           : _authorize,
       child: Text(_busy ? '授权中…' : '保存并授权 Strava'),
     ),
+    if (_authorizing)
+      TextButton(onPressed: _cancelAuthorization, child: const Text('取消授权')),
     const SizedBox(height: 12),
     Text(settings.isApiReady ? '已授权' : '未授权'),
     const SizedBox(height: 8),
     const Text(
       '授权回调域填写 localhost；App 回调为 '
-      'healthworkoutexport://localhost/callback。',
+      'healthworkoutexport://localhost/callback；Windows 使用本机 127.0.0.1 临时回调。',
     ),
   ];
 
@@ -200,22 +240,70 @@ class _StravaSettingsPageState extends State<StravaSettingsPage> {
     }
   }
 
+  Future<void> _refreshQuota() async {
+    setState(() => _quotaLoading = true);
+    try {
+      final override = widget.loadRateLimit;
+      StravaRateLimitResult value;
+      if (override != null) {
+        value = await override();
+      } else {
+        final token = await stravaUploadSession.accessToken();
+        final handle = stravaReserveRemoteRead(
+          operationId: 'quota-${DateTime.now().microsecondsSinceEpoch}',
+        ).handle;
+        try {
+          value = await stravaFetchRateLimitUsage(
+            operationHandle: handle,
+            accessToken: token,
+          );
+        } finally {
+          stravaReleaseRemoteRead(operationHandle: handle);
+        }
+      }
+      if (mounted) setState(() => _quota = value);
+    } catch (_) {
+      if (mounted) setState(() => _message = '无法读取限额，请检查授权和网络后重试');
+    } finally {
+      if (mounted) setState(() => _quotaLoading = false);
+    }
+  }
+
+  Future<void> _cancelAuthorization() async {
+    _authGeneration++;
+    try {
+      await widget.oauth.cancel();
+    } catch (_) {}
+    if (mounted) {
+      setState(() {
+        _authorizing = false;
+        _busy = false;
+        _message = '已取消授权';
+      });
+    }
+  }
+
   Future<void> _authorize() async {
+    if (_busy) return;
+    final generation = ++_authGeneration;
     final clientId = _clientId.text.trim();
     final clientSecret = _clientSecret.text.trim();
     setState(() {
       _busy = true;
+      _authorizing = true;
       _message = null;
     });
     try {
       final code = await widget.oauth.authorize(
         StravaOAuthChannel.authorizationUri(clientId),
       );
+      if (!mounted || generation != _authGeneration) return;
       final token = await widget.exchangeCode(
         clientId: clientId,
         clientSecret: clientSecret,
         code: code,
       );
+      if (!mounted || generation != _authGeneration) return;
       await widget.store.saveAuthorization(
         clientId: clientId,
         clientSecret: clientSecret,
@@ -231,10 +319,15 @@ class _StravaSettingsPageState extends State<StravaSettingsPage> {
         _message = 'Strava API 授权成功';
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _authGeneration) return;
       setState(() => _message = _safeErrorMessage(error));
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted && generation == _authGeneration) {
+        setState(() {
+          _busy = false;
+          _authorizing = false;
+        });
+      }
     }
   }
 
@@ -263,6 +356,24 @@ class _StravaSettingsPageState extends State<StravaSettingsPage> {
 
   Future<void> _clearWebCookies() async {
     if (_busy) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('清除 Strava 网页登录？'),
+        content: const Text('会移除本机网页登录凭据，需要重新登录才能继续网页同步，不会删除活动。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('清除登录'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted || _busy) return;
     setState(() {
       _busy = true;
       _message = null;
