@@ -206,6 +206,7 @@ void main() {
       markFailed: () async {},
       remoteActivities: const [
         rust.StravaRemoteActivityResult(
+          sportType: 'Ride',
           id: '42',
           startTimeSeconds: 1704067210,
           endTimeSeconds: 1704070800,
@@ -224,155 +225,183 @@ void main() {
     expect(order, ['remote-duplicate']);
   });
 
-  test('恢复重传复用已落盘 externalId，上传前持久化阶段并在完成后清理', () async {
-    const syncChannel = MethodChannel('health_workout_export/sync_files');
-    final recovery = Uint8List.fromList(
-      utf8.encode(
-        jsonEncode({
-          'primarySourceId': 'healthkit',
-          'primaryActivityId': _uuid,
-          'title': '骑车',
-          'startDate': 0,
-          'endDate': 3600,
-          'supplementSourceIds': <String>[],
-          'durationSeconds': 3600,
-          'uploadData': 'AQID',
-          'filename': 'recovery.fit',
-          'commute': false,
-          'phase': 'prepared',
-          'externalId': 'stable-recovery-id',
-          'fitSha256': 'e' * 64,
-        }),
-      ),
-    );
-    var state = Uint8List.fromList(utf8.encode('{}'));
-    var deletedRecovery = false;
-    Uint8List? savedFit;
-    final phases = <String>[];
-    messenger.setMockMethodCallHandler(syncChannel, (call) async {
-      switch (call.method) {
-        case 'readState':
-          return state;
-        case 'writeState':
-          state =
-              (call.arguments as Map<Object?, Object?>)['bytes']! as Uint8List;
-          return null;
-        case 'readSyncedFit':
-          throw PlatformException(code: 'sync_file_missing');
-        case 'writeSyncedFit':
-          savedFit =
-              (call.arguments as Map<Object?, Object?>)['bytes']! as Uint8List;
-          return null;
-        case 'readRecovery':
-          return recovery;
-        case 'writeRecovery':
-          phases.add(
-            (jsonDecode(
-                      utf8.decode(
-                        (call.arguments as Map<Object?, Object?>)['bytes']!
-                            as Uint8List,
-                      ),
-                    )
-                    as Map<String, dynamic>)['phase']
-                as String,
-          );
-          return null;
-        case 'deleteRecovery':
-          deletedRecovery = true;
-          return null;
-      }
-      throw MissingPluginException(call.method);
-    });
-
-    Uint8List applyState({
-      required List<int> stateJson,
-      required List<int> commandJson,
-    }) {
-      final records =
-          jsonDecode(utf8.decode(stateJson)) as Map<String, dynamic>;
-      final command =
-          jsonDecode(utf8.decode(commandJson)) as Map<String, dynamic>;
-      switch (command['operation']) {
-        case 'markPending':
-          final record = command['record'] as Map<String, dynamic>;
-          records[record['fingerprint'] as String] = record;
-          break;
-        case 'markUploaded':
-          final update = command['update'] as Map<String, dynamic>;
-          final record =
-              records[update['fingerprint'] as String] as Map<String, dynamic>;
-          record['status'] = 'uploaded';
-          record['remoteId'] = update['remoteId'];
-          break;
-        case 'markFailed':
-          final record =
-              records[command['fingerprint'] as String]
-                  as Map<String, dynamic>?;
-          if (record != null) record['status'] = 'failed';
-          break;
-      }
-      return Uint8List.fromList(utf8.encode(jsonEncode(records)));
-    }
-
-    Uint8List applyRecovery({
-      required List<int> recoveryJson,
-      required List<int> commandJson,
-    }) {
-      final value =
-          jsonDecode(utf8.decode(recoveryJson)) as Map<String, dynamic>;
-      final command =
-          jsonDecode(utf8.decode(commandJson)) as Map<String, dynamic>;
-      if (command['operation'] == 'markUploading') value['phase'] = 'uploading';
-      return Uint8List.fromList(utf8.encode(jsonEncode(value)));
-    }
-
-    try {
-      final store = SyncStateStore.withDependencies(
-        const SyncFilesChannel.withChannel(syncChannel),
-        applyState,
-        ({required recoveryJson}) => Uint8List.fromList(recoveryJson),
-        applyRecovery,
-      );
-      String? uploadedExternalId;
-      final result = await AutoSyncController(
-        inspectFit: ({required data}) async =>
-            '{"summary":{},"issues":[],"track":[],"series":{}}',
-        stateStore: store,
-        upload:
-            ({
-              required logicalOperationId,
-              required fit,
-              required externalId,
-              required filename,
-              required commute,
-              description,
-              name,
-            }) async {
-              uploadedExternalId = externalId;
-              expect(logicalOperationId, 'recovery-$fingerprint');
-              expect(filename, 'recovery.fit');
-              expect(fit, Uint8List.fromList(const [1, 2, 3]));
-              return const rust.StravaUploadFfiResponse(
-                status: rust.StravaUploadFfiStatus.completed,
-                remoteId: '42',
-                isDuplicate: false,
+  for (final cancelDuringInspection in [false, true]) {
+    test(
+      'legacy Run recovery keeps bytes/id and suppresses commute; cancel=$cancelDuringInspection',
+      () async {
+        const syncChannel = MethodChannel('health_workout_export/sync_files');
+        final recovery = Uint8List.fromList(
+          utf8.encode(
+            jsonEncode({
+              'primarySourceId': 'healthkit',
+              'primaryActivityId': _uuid,
+              'title': '骑车',
+              'startDate': 0,
+              'endDate': 3600,
+              'supplementSourceIds': <String>[],
+              'durationSeconds': 3600,
+              'uploadData': 'AQID',
+              'filename': 'recovery.fit',
+              'commute': true,
+              'phase': 'prepared',
+              'externalId': 'stable-recovery-id',
+              'fitSha256': 'e' * 64,
+            }),
+          ),
+        );
+        var state = Uint8List.fromList(utf8.encode('{}'));
+        var deletedRecovery = false;
+        Uint8List? savedFit;
+        final phases = <String>[];
+        messenger.setMockMethodCallHandler(syncChannel, (call) async {
+          switch (call.method) {
+            case 'readState':
+              return state;
+            case 'writeState':
+              state =
+                  (call.arguments as Map<Object?, Object?>)['bytes']!
+                      as Uint8List;
+              return null;
+            case 'readSyncedFit':
+              throw PlatformException(code: 'sync_file_missing');
+            case 'writeSyncedFit':
+              savedFit =
+                  (call.arguments as Map<Object?, Object?>)['bytes']!
+                      as Uint8List;
+              return null;
+            case 'readRecovery':
+              return recovery;
+            case 'writeRecovery':
+              phases.add(
+                (jsonDecode(
+                          utf8.decode(
+                            (call.arguments as Map<Object?, Object?>)['bytes']!
+                                as Uint8List,
+                          ),
+                        )
+                        as Map<String, dynamic>)['phase']
+                    as String,
               );
-            },
-      ).resumeRecovery(fingerprint);
+              return null;
+            case 'deleteRecovery':
+              deletedRecovery = true;
+              return null;
+          }
+          throw MissingPluginException(call.method);
+        });
 
-      expect(result.succeeded, isTrue, reason: result.message);
-      expect(uploadedExternalId, 'stable-recovery-id');
-      expect(phases, ['uploading']);
-      expect(savedFit, Uint8List.fromList(const [1, 2, 3]));
-      expect(deletedRecovery, isTrue);
-      expect(
-        (jsonDecode(utf8.decode(state)) as Map)[fingerprint]['status'],
-        'uploaded',
-      );
-    } finally {
-      messenger.setMockMethodCallHandler(syncChannel, null);
-    }
-  });
+        Uint8List applyState({
+          required List<int> stateJson,
+          required List<int> commandJson,
+        }) {
+          final records =
+              jsonDecode(utf8.decode(stateJson)) as Map<String, dynamic>;
+          final command =
+              jsonDecode(utf8.decode(commandJson)) as Map<String, dynamic>;
+          switch (command['operation']) {
+            case 'markPending':
+              final record = command['record'] as Map<String, dynamic>;
+              records[record['fingerprint'] as String] = record;
+              break;
+            case 'markUploaded':
+              final update = command['update'] as Map<String, dynamic>;
+              final record =
+                  records[update['fingerprint'] as String]
+                      as Map<String, dynamic>;
+              record['status'] = 'uploaded';
+              record['remoteId'] = update['remoteId'];
+              break;
+            case 'markFailed':
+              final record =
+                  records[command['fingerprint'] as String]
+                      as Map<String, dynamic>?;
+              if (record != null) record['status'] = 'failed';
+              break;
+          }
+          return Uint8List.fromList(utf8.encode(jsonEncode(records)));
+        }
+
+        Uint8List applyRecovery({
+          required List<int> recoveryJson,
+          required List<int> commandJson,
+        }) {
+          final value =
+              jsonDecode(utf8.decode(recoveryJson)) as Map<String, dynamic>;
+          final command =
+              jsonDecode(utf8.decode(commandJson)) as Map<String, dynamic>;
+          if (command['operation'] == 'markUploading') {
+            value['phase'] = 'uploading';
+          }
+          return Uint8List.fromList(utf8.encode(jsonEncode(value)));
+        }
+
+        try {
+          final store = SyncStateStore.withDependencies(
+            const SyncFilesChannel.withChannel(syncChannel),
+            applyState,
+            ({required recoveryJson}) => Uint8List.fromList(recoveryJson),
+            applyRecovery,
+          );
+          String? uploadedExternalId;
+          late AutoSyncController recoveryController;
+          recoveryController = AutoSyncController(
+            inspectFit: ({required data}) async {
+              if (cancelDuringInspection) {
+                recoveryController.cancelActiveOperations();
+              }
+              return '{"allSessionsRunning":true,"summary":{},"issues":[],"track":[],"series":{}}';
+            },
+            stateStore: store,
+            upload:
+                ({
+                  required logicalOperationId,
+                  required fit,
+                  required externalId,
+                  required filename,
+                  required commute,
+                  description,
+                  name,
+                }) async {
+                  uploadedExternalId = externalId;
+                  expect(logicalOperationId, 'recovery-$fingerprint');
+                  expect(filename, 'recovery.fit');
+                  expect(
+                    commute,
+                    false,
+                    reason:
+                        'legacy Run FIT must stay non-commute through upload and metadata finalization',
+                  );
+                  expect(fit, Uint8List.fromList(const [1, 2, 3]));
+                  return const rust.StravaUploadFfiResponse(
+                    status: rust.StravaUploadFfiStatus.completed,
+                    remoteId: '42',
+                    isDuplicate: false,
+                  );
+                },
+          );
+          final result = await recoveryController.resumeRecovery(fingerprint);
+          if (cancelDuringInspection) {
+            expect(result.cancelled, true);
+            expect(uploadedExternalId, isNull);
+            expect(deletedRecovery, false);
+            expect(savedFit, Uint8List.fromList(const [1, 2, 3]));
+            return;
+          }
+          expect(result.succeeded, isTrue, reason: result.message);
+          expect(uploadedExternalId, 'stable-recovery-id');
+          expect(phases, ['uploading']);
+          expect(savedFit, Uint8List.fromList(const [1, 2, 3]));
+          expect(deletedRecovery, isTrue);
+          expect(
+            (jsonDecode(utf8.decode(state)) as Map)[fingerprint]['status'],
+            'uploaded',
+          );
+        } finally {
+          messenger.setMockMethodCallHandler(syncChannel, null);
+        }
+      },
+    );
+  }
 
   WorkoutActivity activity(
     String id, {
@@ -380,6 +409,7 @@ void main() {
   }) => WorkoutActivity(
     id: id,
     sourceId: sourceId,
+    sportType: 'Ride',
     title: id,
     start: DateTime.fromMillisecondsSinceEpoch(1704067200000),
     end: DateTime.fromMillisecondsSinceEpoch(1704070800000),
@@ -566,6 +596,7 @@ void main() {
           order: order,
           remotes: const [
             rust.StravaRemoteActivityResult(
+              sportType: 'Ride',
               id: '42',
               startTimeSeconds: 1704067200,
               endTimeSeconds: 1704070800,
@@ -596,6 +627,7 @@ void main() {
           order: order,
           remotes: const [
             rust.StravaRemoteActivityResult(
+              sportType: 'Ride',
               id: '42',
               startTimeSeconds: 1704067200,
               endTimeSeconds: 1704070800,
@@ -642,6 +674,7 @@ void main() {
     WorkoutActivity activity(String id) => WorkoutActivity(
       id: id,
       sourceId: WorkoutSourceId.healthkit,
+      sportType: 'Ride',
       title: id,
       start: DateTime.fromMillisecondsSinceEpoch(1704067200000),
       end: DateTime.fromMillisecondsSinceEpoch(1704070800000),

@@ -20,6 +20,17 @@ foreach(test_name native_channel_validation strava_web oauth_validation)
   endif()
 endforeach()
 
+# Compile the production Keep dispatcher with a synthetic atomic vault backend.
+# Python only extracts source; the configured C++ compiler runs the behavior tests.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME keep_vault_dispatch COMMAND "${CMAKE_COMMAND}" -E env
+    "CXX=${CMAKE_CXX_COMPILER}" "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/keep_vault_dispatch_test.py")
+else()
+  message(STATUS "Python unavailable: portable Keep vault dispatch test is not registered")
+endif()
+
 if(WIN32)
   add_executable(windows_private_acl_test windows_private_acl_test.cpp)
   hwe_native_settings(windows_private_acl_test)

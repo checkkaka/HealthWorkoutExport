@@ -449,3 +449,49 @@ extension RunnerTests {
     XCTAssertEqual(replyOrder, [1, 2, 3])
   }
 }
+
+extension RunnerTests {
+  func testKeepVaultStoresOnlyAccountAndToken() throws {
+    XCTAssertEqual(ThirdPartyVaultPlugin.Vault.keep.accounts, ["keep.account", "keep.token"])
+    let authorization = try ThirdPartyVaultPlugin.parseKeepAuthorization(arguments: [
+      "account": "synthetic-account", "token": "synthetic-token",
+    ])
+    XCTAssertEqual(authorization.token, "synthetic-token")
+    for invalid in [
+      ["account": "synthetic-account", "token": " "],
+      ["account": "synthetic-account", "token": "synthetic-token", "password": "never-store"],
+    ] as [[String: Any]] {
+      XCTAssertThrowsError(try ThirdPartyVaultPlugin.parseKeepAuthorization(arguments: invalid))
+    }
+    let values: [String: String?] = ["keep.account": "synthetic-account", "keep.token": "synthetic-token"]
+    let status = ThirdPartyVaultPlugin.statusPayload(for: .keep, values: values)
+    XCTAssertEqual(Set(status.keys), Set(["hasAccount", "hasToken"]))
+    XCTAssertEqual(status["hasToken"] as? Bool, true)
+    let lease = ThirdPartyVaultPlugin.leasePayload(for: .keep, values: values)
+    XCTAssertEqual(Set(lease?.keys.map { $0 } ?? []), Set(["account", "token"]))
+    XCTAssertEqual(lease?["token"] as? String, "synthetic-token")
+    XCTAssertNil(ThirdPartyVaultPlugin.leasePayload(for: .keep, values: ["keep.account": "account"]))
+  }
+
+  func testKeepVaultTokenFailureRollsBackAccount() {
+    var stored = ["keep.account": "previous-account", "keep.token": "previous-token"]
+    let original = stored
+    let result = ThirdPartyVaultPlugin.performFixedTransaction(
+      entries: [
+        ThirdPartyVaultPlugin.StateEntry(account: "keep.account", value: "next-account"),
+        ThirdPartyVaultPlugin.StateEntry(account: "keep.token", value: "next-token"),
+      ],
+      read: { (stored[$0], nil) },
+      mutate: { account, value in
+        if account == "keep.token" { return FlutterError(code: "forced_failure", message: nil, details: nil) }
+        stored[account] = value
+        return nil
+      },
+      restore: { value, account in stored[account] = value; return true }
+    )
+    XCTAssertNotNil(result.error)
+    XCTAssertFalse(result.rollbackFailed)
+    XCTAssertEqual(stored, original)
+  }
+
+}

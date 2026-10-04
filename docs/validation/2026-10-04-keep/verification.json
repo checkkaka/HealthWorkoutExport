@@ -1,0 +1,96 @@
+{
+  "base_commit": "76a62abfda5b8267acb415bfb49b79b1f344d4e6",
+  "base_branch": "codex/flutter-rust-migration",
+  "feature_branch": "codex/keep-running-strava-20261004",
+  "toolchains": {
+    "rust": "1.98.1",
+    "flutter": "3.47.5",
+    "dart": "3.13.4",
+    "frb": "2.12.0 audited offline adapter"
+  },
+  "checks": {
+    "rust_tests": {
+      "command": "cargo test --manifest-path rust/workout_core/Cargo.toml --offline --locked",
+      "passed": 203,
+      "failed": 0,
+      "log_sha256": "b7172cff915f5903461312ee50f7c94f52e26b817578c3d60cc807f83f73bbe5"
+    },
+    "rust_clippy": {
+      "command": "cargo clippy --manifest-path rust/workout_core/Cargo.toml --offline --locked --all-targets -- -D warnings",
+      "result": "clean",
+      "log_sha256": "299f16a2c523be18fef769975d2df00e0505521db047540feea3a74b94666887"
+    },
+    "rust_format": {
+      "command": "cargo fmt --manifest-path rust/workout_core/Cargo.toml -- --check",
+      "result": "clean",
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "flutter_analyze": {
+      "command": "flutter --suppress-analytics analyze --no-pub",
+      "result": "no issues",
+      "log_sha256": "2105700352e145cedcd336310ea68567832dd21353b9befb59b2c183d2ee3ee3"
+    },
+    "flutter_tests": {
+      "command": "flutter --suppress-analytics test --no-pub",
+      "passed": 298,
+      "failed": 0,
+      "log_sha256": "bb48a9e72d0319fba780af1ae488db051d6ff51fbb33c81f925e20531cdac466"
+    },
+    "timezone": {
+      "command": "TZ=Asia/Shanghai flutter --suppress-analytics test --no-pub test/keep_source_page_test.dart --plain-name \"UTC Keep timestamps display in the device local day and time\"",
+      "passed": 1,
+      "failed": 0,
+      "log_sha256": "df9095ac43fcbdab0414c7b6281afd2c1555b7ebc2258ada3cf6bf6de6296e84"
+    },
+    "android_vault_jvm": {
+      "command": "python3 flutter_app/android/native_validation/run_keep_vault_jvm_tests.py --jars <prepared-official-test-jars>",
+      "passed": 15,
+      "failed": 0,
+      "log_sha256": "659b58132b5da0a07da1881ea79053b64ec60628015574d0b68211d474d195d1"
+    },
+    "android_vault_contract": {
+      "command": "python3 flutter_app/android/native_validation/test_keep_vault_contract.py",
+      "passed": 3,
+      "failed": 0,
+      "log_sha256": "921b60a7fd52e978fbb551cacd29df2d6708879400278e1fcc70fceeb0c6f8e0"
+    },
+    "windows_portable": {
+      "command": "Compile native_channel_validation, strava_web and oauth_validation portable tests with g++ -std=c++17 -Wall -Wextra -Werror -pedantic -O2; run each binary",
+      "assertions_passed": 277,
+      "log_sha256": "3250d86b77764a5d44ed835f682a1a3f28c5c153ac41431f53770f3ca68f31f0"
+    },
+    "windows_keep_dispatch": {
+      "command": "python3 flutter_app/windows/tests/keep_vault_dispatch_test.py",
+      "passed": 1,
+      "failed": 0,
+      "log_sha256": "5db454c04fe6393818cd9494b6a6cedd3ee685a6c483d587cf2cec42df694b25"
+    },
+    "windows_contract": {
+      "command": "python3 flutter_app/windows/tests/check_native_contract.py",
+      "result": "passed",
+      "log_sha256": "738e7435693ba23989b19db4cf55a4c696d1e1bf83aedb8f734bf5551cef9ec1"
+    },
+    "repository_scripts": {
+      "command": "python3 -m unittest discover -s scripts -p '*test*.py'",
+      "passed": 33,
+      "failed": 0,
+      "log_sha256": "8936a3ba9e0f2bdc7534e8eccc0ed3b953ec6353a12daa5e5b5f11eb7d3a588c"
+    }
+  },
+  "independent_review": {
+    "findings_fixed": 4,
+    "remaining_actionable": 0
+  },
+  "not_verified": [
+    "Apple native compilation/Keychain runtime (requires macOS/Xcode)",
+    "Android app/device Keystore runtime",
+    "Windows MSVC app/Credential Manager runtime",
+    "Real Keep login/API payloads and live Strava acceptance (no account/health upload performed)"
+  ],
+  "rulings": [
+    "Keep FIT absolute timestamps remain UTC; local FIT timestamp offset is zero rather than guessing historical IANA offsets",
+    "Legacy records with unknown sport do not authorize approximate cross-source duplicate association; exact identity/fingerprint remains valid",
+    "Keep token and account only are stored; passwords are not retained",
+    "CMake unavailable locally; documented direct g++ portable test route was used instead"
+  ]
+}

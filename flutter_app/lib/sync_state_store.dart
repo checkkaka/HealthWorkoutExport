@@ -102,6 +102,7 @@ final class SyncPendingRecord {
     this.uploadChannel,
     this.hasVirtualPower,
     this.coordinatesWgs84,
+    this.sportType,
     this.recoveryBatchId,
   });
 
@@ -118,6 +119,7 @@ final class SyncPendingRecord {
   final SyncUploadChannel? uploadChannel;
   final bool? hasVirtualPower;
   final bool? coordinatesWgs84;
+  final String? sportType;
   final String? recoveryBatchId;
 
   Map<String, Object?> toJson() => {
@@ -135,6 +137,7 @@ final class SyncPendingRecord {
     if (uploadChannel != null) 'uploadChannel': uploadChannel!.name,
     if (hasVirtualPower != null) 'hasVirtualPower': hasVirtualPower,
     if (coordinatesWgs84 != null) 'coordinatesWgs84': coordinatesWgs84,
+    if (sportType != null) 'sportType': sportType,
     if (recoveryBatchId != null) 'recoveryBatchId': recoveryBatchId,
   };
 }

@@ -68,7 +68,8 @@ final class ActivitySyncIndex {
         final activity = record['primaryActivityId'];
         if (source is! String || activity is! String) continue;
         // 早期 HealthKit 首传错误地使用采样应用 bundle id，兼容已保存记录。
-        final normalizedSource = source == 'xingzhe' || source == 'onelap'
+        final normalizedSource =
+            source == 'xingzhe' || source == 'onelap' || source == 'keep'
             ? source
             : 'healthkit';
         final id = key(normalizedSource, activity);
@@ -202,28 +203,28 @@ Future<void> showWorkoutActivityDetails(
   DateTime? end,
   required double durationSeconds,
   double? distanceMeters,
+  WorkoutActivity? workout,
 }) async {
   final sourceType = switch (sourceId) {
     'xingzhe' => WorkoutSourceId.xingzhe,
     'onelap' => WorkoutSourceId.onelap,
+    'keep' => WorkoutSourceId.keep,
     _ => WorkoutSourceId.healthkit,
   };
-  final WorkoutSource source = switch (sourceType) {
-    WorkoutSourceId.healthkit => HealthKitWorkoutSource(),
-    WorkoutSourceId.xingzhe => XingzheWorkoutSource(),
-    WorkoutSourceId.onelap => OnelapWorkoutSource(),
-  };
-  final activity = WorkoutActivity(
-    id: activityId,
-    sourceId: sourceType,
-    title: title,
-    start: start,
-    end:
-        end ??
-        start.add(Duration(milliseconds: (durationSeconds * 1000).round())),
-    durationSeconds: durationSeconds,
-    distanceMeters: distanceMeters,
-  );
+  final source = workoutSourceFor(sourceType);
+  final activity =
+      workout ??
+      WorkoutActivity(
+        id: activityId,
+        sourceId: sourceType,
+        title: title,
+        start: start,
+        end:
+            end ??
+            start.add(Duration(milliseconds: (durationSeconds * 1000).round())),
+        durationSeconds: durationSeconds,
+        distanceMeters: distanceMeters,
+      );
   var index = ActivitySyncIndex.load();
   final temporary = <Directory>[];
   try {
@@ -319,9 +320,7 @@ Future<void> showWorkoutActivityDetails(
                           ],
                           color: Theme.of(context).colorScheme.primary,
                           coordinateSystem:
-                              (!synced &&
-                                      sourceType ==
-                                          WorkoutSourceId.healthkit) ||
+                              (!synced && activity.hasWgs84Coordinates) ||
                                   (synced && status?.coordinatesWgs84 == true)
                               ? RouteCoordinateSystem.wgs84
                               : RouteCoordinateSystem.unknown,

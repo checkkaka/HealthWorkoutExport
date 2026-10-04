@@ -9,6 +9,8 @@
 
 `codex/flutter-rust-migration` 保留 Swift 基线，跨平台客户端位于 `flutter_app`，Rust 核心位于 `rust/workout_core`。功能对等按 [迁移矩阵](docs/flutter-rust-parity.md) 逐项验证；界面存在或能编译不代表四个平台均已迁移完成。
 
+Flutter/Rust 客户端新增 **Keep 跑步（实验性）**：在 Keep 页签登录自己的账号，选择室外/室内跑步后通过现有 Strava 上传流程同步。Keep 读取使用非官方接口，可能失效；密码不保存，账号和令牌写入系统安全存储。详见 [Keep → Strava 跑步教程](docs/Keep-Strava跑步同步.md)。旧 Swift 客户端不包含此入口。
+
 固定工具版本见 `.fvmrc` 和 `rust-toolchain.toml`。本地验证：
 
 ```bash

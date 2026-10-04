@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'src/rust/api/simple.dart' as rust;
 import 'sync_state_store.dart';
+import 'workout_sport.dart';
 
 /// Resumes only verified, durably saved bytes. No deletion is allowed before the
 /// pending record and final FIT exist. Once remoteDeleted/uploading is durable,
@@ -216,6 +217,7 @@ final class RecoveryUploadData {
     this.activityDescription,
     this.batchAt,
     this.coordinatesWgs84,
+    this.sportType,
     this.recoveryBatchId,
   });
   factory RecoveryUploadData.fromJson(Uint8List bytes) {
@@ -245,6 +247,12 @@ final class RecoveryUploadData {
     final description = value['activityDescription'];
     final channel = value['uploadChannel'];
     final coordinates = value['coordinatesWgs84'];
+    final sport = value['sportType'];
+    if (sport != null &&
+        (sport is! String ||
+            !RegExp(r'^[A-Za-z][A-Za-z0-9]{0,63}$').hasMatch(sport))) {
+      throw const FormatException('恢复运动类型无效');
+    }
     final batchId = value['recoveryBatchId'];
     if ((coordinates != null && coordinates is! bool) ||
         (batchId != null &&
@@ -277,13 +285,26 @@ final class RecoveryUploadData {
       fit: Uint8List.fromList(base64Decode(text('uploadData'))),
       message: message as String?,
       filename: text('filename'),
-      commute: value['commute'] as bool,
+      commute:
+          normalizedWorkoutSport(
+                sourceSportType(
+                  value['primarySourceId'] as String?,
+                  sportType: sport as String?,
+                ),
+              ) ==
+              'Run'
+          ? false
+          : value['commute'] as bool,
       channel: value['uploadChannel'] == 'web'
           ? SyncUploadChannel.web
           : SyncUploadChannel.api,
       hasVirtualPower: value['hasVirtualPower'] == true,
       activityDescription: description as String?,
       coordinatesWgs84: coordinates as bool?,
+      sportType: sourceSportType(
+        value['primarySourceId'] as String?,
+        sportType: sport,
+      ),
       recoveryBatchId: batchId as String?,
       batchAt: value['batchAt'] is num
           ? DateTime.fromMillisecondsSinceEpoch(
@@ -309,6 +330,7 @@ final class RecoveryUploadData {
   final String? activityDescription;
   final DateTime? batchAt;
   final bool? coordinatesWgs84;
+  final String? sportType;
   final String? recoveryBatchId;
 
   Uint8List encode() => Uint8List.fromList(
@@ -333,6 +355,7 @@ final class RecoveryUploadData {
         'hasVirtualPower': hasVirtualPower,
         'activityDescription': activityDescription,
         if (coordinatesWgs84 != null) 'coordinatesWgs84': coordinatesWgs84,
+        if (sportType != null) 'sportType': sportType,
         if (recoveryBatchId != null) 'recoveryBatchId': recoveryBatchId,
         if (batchAt != null)
           'batchAt': batchAt!.millisecondsSinceEpoch / 1000 - 978307200,
@@ -354,6 +377,7 @@ final class RecoveryUploadData {
     hasVirtualPower: hasVirtualPower,
     batchAt: batchAt,
     coordinatesWgs84: coordinatesWgs84,
+    sportType: sportType,
     recoveryBatchId: recoveryBatchId,
   );
 }

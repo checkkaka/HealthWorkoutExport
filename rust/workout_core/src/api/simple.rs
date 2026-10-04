@@ -955,6 +955,7 @@ pub fn strava_best_remote_activity_match_index(
         .into_iter()
         .map(|activity| crate::strava::StravaRemoteActivity {
             id: activity.id,
+            sport_type: activity.sport_type,
             start_time_seconds: activity.start_time_seconds,
             end_time_seconds: activity.end_time_seconds,
             distance_meters: activity.distance_meters,
@@ -1253,6 +1254,7 @@ pub struct StravaUploadReservation {
 #[derive(Clone, Debug)]
 pub struct StravaRemoteActivityResult {
     pub id: String,
+    pub sport_type: Option<String>,
     pub start_time_seconds: f64,
     pub end_time_seconds: f64,
     pub distance_meters: Option<f64>,
@@ -1374,6 +1376,7 @@ fn remote_activity_result(
 ) -> StravaRemoteActivityResult {
     StravaRemoteActivityResult {
         id: activity.id,
+        sport_type: activity.sport_type,
         start_time_seconds: activity.start_time_seconds,
         end_time_seconds: activity.end_time_seconds,
         distance_meters: activity.distance_meters,
@@ -1617,14 +1620,14 @@ enum UploadOperationState {
     Running,
 }
 
-struct UploadOperation {
+pub(crate) struct UploadOperation {
     handle: String,
-    cancellation: crate::strava::StravaCancellation,
+    pub(crate) cancellation: crate::strava::StravaCancellation,
     keep_reserved: bool,
 }
 
 #[derive(Debug)]
-enum UploadOperationError {
+pub(crate) enum UploadOperationError {
     Invalid,
     InUse,
     Exhausted,
@@ -1674,7 +1677,7 @@ impl UploadOperation {
         Ok(handle)
     }
 
-    fn begin(handle: String) -> Result<Self, UploadOperationError> {
+    pub(crate) fn begin(handle: String) -> Result<Self, UploadOperationError> {
         let mut registry = upload_operations()
             .lock()
             .expect("upload operation mutex poisoned");
@@ -1747,6 +1750,22 @@ mod upload_ffi_tests {
             StravaUploadFfiErrorCode::InvalidInput
         );
         assert!(!strava_cancel_upload("ffi-invalid".to_owned()));
+    }
+
+    #[test]
+    fn remote_activity_ffi_preserves_optional_sport_type() {
+        for sport in [Some("Run"), Some("Ride"), None] {
+            let remote = super::remote_activity_result(crate::strava::StravaRemoteActivity {
+                id: "42".to_owned(),
+                sport_type: sport.map(str::to_owned),
+                start_time_seconds: 1000.0,
+                end_time_seconds: 2000.0,
+                distance_meters: Some(3000.0),
+            });
+            assert_eq!(remote.sport_type.as_deref(), sport);
+            assert_eq!(remote.id, "42");
+            assert_eq!(remote.distance_meters, Some(3000.0));
+        }
     }
 
     #[test]

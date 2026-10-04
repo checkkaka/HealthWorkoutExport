@@ -218,9 +218,11 @@ final class AutoSyncController {
   StravaUploadTask? _activeUploadTask;
   String? _activeRemoteHandle;
   String? _activePreparationHandle;
+  var _uploadCancellationGeneration = 0;
 
   /// 中止可取消的原生 Rust 请求；不可取消的读取返回后也不会开始下一步。
   void cancelActiveOperations() {
+    _uploadCancellationGeneration++;
     _activeUploadTask?.cancel();
     final handle = _activeRemoteHandle;
     if (handle != null) rust.stravaCancelRemoteRead(operationHandle: handle);
@@ -411,6 +413,13 @@ final class AutoSyncController {
   }) async {
     String? fingerprint;
     var persisted = false;
+    final effectiveGcjEnabled = gcjEnabled && !activity.hasWgs84Coordinates;
+    final isCommute =
+        activity.isCycling &&
+        _commute(
+          distanceMeters: activity.distanceMeters,
+          durationSeconds: activity.durationSeconds,
+        );
     try {
       _checkCancelled(cancelled);
       final supplementIds = supplements
@@ -443,6 +452,7 @@ final class AutoSyncController {
               fingerprint: fingerprint,
               primarySourceId: primary.id.value,
               primaryActivityId: activity.id,
+              sportType: activity.effectiveSportType,
               updatedAt: DateTime.now(),
               startDate: activity.start,
               title: activity.title,
@@ -480,6 +490,7 @@ final class AutoSyncController {
               fingerprint: fingerprint,
               primarySourceId: primary.id.value,
               primaryActivityId: activity.id,
+              sportType: activity.effectiveSportType,
               updatedAt: DateTime.now(),
               startDate: activity.start,
               title: activity.title,
@@ -516,6 +527,7 @@ final class AutoSyncController {
               fingerprint: fingerprint,
               primarySourceId: primary.id.value,
               primaryActivityId: activity.id,
+              sportType: activity.effectiveSportType,
               updatedAt: DateTime.now(),
               startDate: activity.start,
               title: activity.title,
@@ -550,6 +562,7 @@ final class AutoSyncController {
               fingerprint: fingerprint,
               primarySourceId: primary.id.value,
               primaryActivityId: activity.id,
+              sportType: activity.effectiveSportType,
               updatedAt: DateTime.now(),
               startDate: activity.start,
               title: activity.title,
@@ -598,7 +611,15 @@ final class AutoSyncController {
       final ranked = <WorkoutSourceId, List<PreviewCandidate>>{};
       final selected = <String, String>{};
       for (final source in supplements) {
-        final candidates = supplementCache[source.id] ?? const [];
+        final candidates =
+            (supplementCache[source.id] ?? const <WorkoutActivity>[])
+                .where(
+                  (candidate) => compatibleWorkoutSports(
+                    activity.effectiveSportType,
+                    candidate.effectiveSportType,
+                  ),
+                )
+                .toList();
         ranked[source.id] = rankPreviewCandidates(
           candidate(activity),
           candidates.map(candidate).toList(),
@@ -661,8 +682,8 @@ final class AutoSyncController {
           prepared = await (_prepareFit ?? _prepareWithCancellation)(
             primary: primaryFit,
             supplements: supplementFits,
-            gcjEnabled: gcjEnabled,
-            virtualPower: virtualPower,
+            gcjEnabled: effectiveGcjEnabled,
+            virtualPower: activity.isCycling ? virtualPower : null,
           );
         }
         _checkCancelled(cancelled);
@@ -676,7 +697,7 @@ final class AutoSyncController {
           processingQualityIssues(
             original: original,
             finalFit: finalFit,
-            gcjEnabled: gcjEnabled,
+            gcjEnabled: effectiveGcjEnabled,
             repairedSpeedCount: prepared.repairedSpeedCount,
             rewrittenCoordinateCount: prepared.rewrittenCoordinateCount,
             virtualPowerCount: prepared.virtualPowerFilledCount,
@@ -706,9 +727,9 @@ final class AutoSyncController {
           finalFit: finalFit,
           issues: issues,
           fieldSources: fieldSources,
-          originalCoordinatesWgs84: primary.id == WorkoutSourceId.healthkit,
+          originalCoordinatesWgs84: activity.hasWgs84Coordinates,
           finalCoordinatesWgs84:
-              (primary.id == WorkoutSourceId.healthkit && !gcjEnabled) ||
+              activity.hasWgs84Coordinates ||
               prepared.rewrittenCoordinateCount > 0,
           groups: [
             for (final source in supplements)
@@ -766,10 +787,7 @@ final class AutoSyncController {
       }
       final effectiveTitle = customTitle?.trim().isNotEmpty == true
           ? customTitle!.trim()
-          : _commute(
-              distanceMeters: activity.distanceMeters,
-              durationSeconds: activity.durationSeconds,
-            )
+          : isCommute
           ? '通勤🚲'
           : activity.title;
       if (!uploadToStrava) {
@@ -777,6 +795,7 @@ final class AutoSyncController {
           fingerprint: fingerprint,
           primarySourceId: primary.id.value,
           primaryActivityId: activity.id,
+          sportType: activity.effectiveSportType,
           updatedAt: DateTime.now(),
           startDate: activity.start,
           title: activity.title,
@@ -785,6 +804,9 @@ final class AutoSyncController {
           durationSeconds: activity.durationSeconds,
           batchAt: batchAt,
           hasVirtualPower: prepared.powerSourceVirtual,
+          coordinatesWgs84:
+              activity.hasWgs84Coordinates ||
+              prepared.rewrittenCoordinateCount > 0,
         );
         await _stateStore.saveHealthFit(record: record, fit: prepared.data);
         _checkCancelled(cancelled);
@@ -794,6 +816,7 @@ final class AutoSyncController {
         final recovery = RecoveryUploadData(
           primarySourceId: primary.id.value,
           primaryActivityId: activity.id,
+          sportType: activity.effectiveSportType,
           title: effectiveTitle,
           startDate: activity.start,
           supplementSourceIds: supplementIds,
@@ -802,16 +825,13 @@ final class AutoSyncController {
           fit: prepared.data,
           message: null,
           filename: '$fingerprint.fit',
-          commute: _commute(
-            distanceMeters: activity.distanceMeters,
-            durationSeconds: activity.durationSeconds,
-          ),
+          commute: isCommute,
           channel: uploadChannel,
           hasVirtualPower: prepared.powerSourceVirtual,
           activityDescription: prepared.activityDescription,
           batchAt: batchAt,
           coordinatesWgs84:
-              (primary.id == WorkoutSourceId.healthkit && !gcjEnabled) ||
+              activity.hasWgs84Coordinates ||
               prepared.rewrittenCoordinateCount > 0,
           recoveryBatchId: RecoveryBatchCheckpoint.newGenerationId(),
         );
@@ -843,6 +863,7 @@ final class AutoSyncController {
         fingerprint: fingerprint,
         primarySourceId: primary.id.value,
         primaryActivityId: activity.id,
+        sportType: activity.effectiveSportType,
         updatedAt: DateTime.now(),
         startDate: activity.start,
         title: effectiveTitle,
@@ -852,21 +873,22 @@ final class AutoSyncController {
         durationSeconds: activity.durationSeconds,
         uploadChannel: uploadChannel,
         hasVirtualPower: prepared.powerSourceVirtual,
+        coordinatesWgs84:
+            activity.hasWgs84Coordinates ||
+            prepared.rewrittenCoordinateCount > 0,
       );
       await _persist(record: pending, fit: prepared.data);
       persisted = true;
       _checkCancelled(cancelled);
       final response = await _uploadFit(
         logicalOperationId: 'sync-$fingerprint',
+        cancelled: cancelled,
         fit: prepared.data,
         externalId: fingerprint,
         filename: '$fingerprint.fit',
         description: prepared.activityDescription,
         name: effectiveTitle,
-        commute: _commute(
-          distanceMeters: activity.distanceMeters,
-          durationSeconds: activity.durationSeconds,
-        ),
+        commute: isCommute,
         upload: upload,
       );
       if (response.status == rust.StravaUploadFfiStatus.cancelled) {
@@ -940,7 +962,7 @@ final class AutoSyncController {
     AutoSyncRemoteActivities? remoteActivities,
   ) async {
     final distance = activity.distanceMeters;
-    final activities =
+    final remoteList =
         await ((remoteActivities ?? _remoteActivities)?.call(
               after: activity.start.subtract(const Duration(days: 1)),
               before: activity.end.add(const Duration(days: 1)),
@@ -950,6 +972,14 @@ final class AutoSyncController {
               after: activity.start.subtract(const Duration(days: 1)),
               before: activity.end.add(const Duration(days: 1)),
             ));
+    final activities = remoteList
+        .where(
+          (remote) => compatibleWorkoutSports(
+            activity.effectiveSportType,
+            remote.sportType,
+          ),
+        )
+        .toList();
     if (activities.isEmpty) return null;
     final index = _remoteMatchIndex(
       startTimeSeconds: activity.start.millisecondsSinceEpoch / 1000,
@@ -1014,11 +1044,23 @@ final class AutoSyncController {
               'durationSeconds': duration,
               'uploadData': base64Encode(fit),
               'filename': '$fingerprint.fit',
-              'commute': _commute(
-                distanceMeters: (existing['distanceMeters'] as num?)
-                    ?.toDouble(),
-                durationSeconds: duration.toDouble(),
+              'sportType': sourceSportType(
+                sourceId,
+                sportType: existing['sportType'] as String?,
               ),
+              'commute':
+                  normalizedWorkoutSport(
+                        sourceSportType(
+                          sourceId,
+                          sportType: existing['sportType'] as String?,
+                        ),
+                      ) ==
+                      'Ride' &&
+                  _commute(
+                    distanceMeters: (existing['distanceMeters'] as num?)
+                        ?.toDouble(),
+                    durationSeconds: duration.toDouble(),
+                  ),
               'uploadChannel': existing['uploadChannel'] ?? 'api',
               'hasVirtualPower': existing['hasVirtualPower'] ?? false,
               'coordinatesWgs84': existing['coordinatesWgs84'],
@@ -1097,6 +1139,7 @@ final class AutoSyncController {
             },
         upload: (saved, externalId) => _uploadFit(
           logicalOperationId: 'recovery-$fingerprint',
+          cancelled: cancelled,
           fit: saved.fit,
           externalId: externalId,
           filename: saved.filename,
@@ -1198,10 +1241,12 @@ final class AutoSyncController {
         fit: fit,
         externalId: fingerprint,
         filename: '${summary.uuid}.fit',
-        commute: _commute(
-          distanceMeters: summary.totalDistanceMeters,
-          durationSeconds: summary.durationSeconds,
-        ),
+        commute:
+            healthKitSportType(summary.activityType) == 'Ride' &&
+            _commute(
+              distanceMeters: summary.totalDistanceMeters,
+              durationSeconds: summary.durationSeconds,
+            ),
       );
       if (response.status != rust.StravaUploadFfiStatus.completed) {
         throw const AutoSyncUploadException('Strava 上传未完成');
@@ -1261,6 +1306,8 @@ final class AutoSyncController {
     fingerprint: fingerprint,
     primarySourceId: summary.sourceBundleId ?? 'healthkit',
     primaryActivityId: summary.uuid,
+    sportType: healthKitSportType(summary.activityType),
+    coordinatesWgs84: true,
     updatedAt: DateTime.now(),
     startDate: DateTime.fromMillisecondsSinceEpoch(summary.startMs),
     title: summary.activityName,
@@ -1289,6 +1336,13 @@ final class AutoSyncController {
       final start = record['startDate'];
       final distance = record['distanceMeters'];
       if (!matched &&
+          compatibleWorkoutSports(
+            activity.effectiveSportType,
+            sourceSportType(
+              record['primarySourceId'] as String?,
+              sportType: record['sportType'] as String?,
+            ),
+          ) &&
           start is num &&
           distance is num &&
           activity.distanceMeters != null) {
@@ -1374,7 +1428,7 @@ final class AutoSyncController {
     final distance = summary.totalDistanceMeters;
     final start = DateTime.fromMillisecondsSinceEpoch(summary.startMs);
     final end = DateTime.fromMillisecondsSinceEpoch(summary.endMs);
-    final activities =
+    final remoteList =
         await (_remoteActivities?.call(
               after: start.subtract(const Duration(days: 1)),
               before: end.add(const Duration(days: 1)),
@@ -1384,6 +1438,14 @@ final class AutoSyncController {
               after: start.subtract(const Duration(days: 1)),
               before: end.add(const Duration(days: 1)),
             ));
+    final activities = remoteList
+        .where(
+          (remote) => compatibleWorkoutSports(
+            healthKitSportType(summary.activityType),
+            remote.sportType,
+          ),
+        )
+        .toList();
     if (activities.isEmpty) return null;
     final index = _remoteMatchIndex(
       startTimeSeconds: summary.startMs / 1000,
@@ -1436,9 +1498,31 @@ final class AutoSyncController {
     required String filename,
     required bool commute,
     AutoSyncUpload? upload,
+    bool Function()? cancelled,
     String? description,
     String? name,
   }) async {
+    final generation = _uploadCancellationGeneration;
+    var effectiveCommute = commute;
+    if (commute) {
+      // Legacy recovery files predate sport metadata. Classify their saved final
+      // bytes once so the same false flag reaches upload AND metadata finalization.
+      try {
+        final preview = jsonDecode(await _inspectFit(data: fit));
+        if (preview is Map && preview['allSessionsRunning'] == true) {
+          effectiveCommute = false;
+        }
+      } catch (_) {
+        // Unknown/invalid classification must not change legacy cycling intent.
+      }
+    }
+    if (generation != _uploadCancellationGeneration ||
+        cancelled?.call() == true) {
+      return const rust.StravaUploadFfiResponse(
+        status: rust.StravaUploadFfiStatus.cancelled,
+        isDuplicate: false,
+      );
+    }
     final uploader = upload ?? _upload;
     if (uploader != null) {
       return uploader(
@@ -1446,7 +1530,7 @@ final class AutoSyncController {
         fit: fit,
         externalId: externalId,
         filename: filename,
-        commute: commute,
+        commute: effectiveCommute,
         description: description,
         name: name,
       );
@@ -1456,7 +1540,7 @@ final class AutoSyncController {
       fit: fit,
       externalId: externalId,
       filename: filename,
-      commute: commute,
+      commute: effectiveCommute,
       description: description,
       name: name,
     );

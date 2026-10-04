@@ -132,7 +132,7 @@ fn coordinate_hashes(doc: &FitDocument) -> (String, String, usize) {
 /// Bounded display inspection; hashes cover the full coordinate snapshot, never only sampled points.
 /// Field IDs/scales follow Garmin's official FIT profile and FITInspection.swift's priorities.
 pub fn inspect_fit_preview_json(data: &[u8]) -> Result<String, String> {
-    let doc=match FitDocument::parse(data){Ok(doc)=>doc,Err(_)=>return Ok(json!({"summary":{},"track":[],"series":{},"issues":[issue("invalid-fit","error","FIT 无法解析","FIT 内容无效或超过安全限制")]}).to_string())};
+    let doc=match FitDocument::parse(data){Ok(doc)=>doc,Err(_)=>return Ok(json!({"allSessionsRunning":false,"summary":{},"track":[],"series":{},"issues":[issue("invalid-fit","error","FIT 无法解析","FIT 内容无效或超过安全限制")]}).to_string())};
     let mut records = doc
         .messages()
         .iter()
@@ -148,6 +148,10 @@ pub fn inspect_fit_preview_json(data: &[u8]) -> Result<String, String> {
         .filter(|(_, m)| m.global_number() == 18)
         .map(|(i, _)| i)
         .collect::<Vec<_>>();
+    let all_sessions_running = !sessions.is_empty()
+        && sessions
+            .iter()
+            .all(|&index| doc.read_u8(index, 5) == Some(1));
     let mut series: [Vec<Point>; 5] = std::array::from_fn(|_| Vec::new());
     let mut track = Vec::new();
     let mut times = Vec::new();
@@ -240,7 +244,13 @@ pub fn inspect_fit_preview_json(data: &[u8]) -> Result<String, String> {
             format!("发现 {invalid} 条缺少经纬度配对或超出有效范围的坐标"),
         ));
     }
-    if track.len() < 5 {
+    // A declared treadmill run legitimately has no route. Mixed/unknown/outdoor
+    // sessions still need the ordinary GPS warning; timestamp validation stays above.
+    let treadmill_run = !sessions.is_empty()
+        && sessions
+            .iter()
+            .all(|&index| doc.read_u8(index, 5) == Some(1) && doc.read_u8(index, 6) == Some(1));
+    if track.len() < 5 && !treadmill_run {
         issues.push(issue(
             "few-gps-points",
             "warning",
@@ -295,7 +305,7 @@ pub fn inspect_fit_preview_json(data: &[u8]) -> Result<String, String> {
             )
         })
         .collect();
-    let output=json!({"summary":summary,"track":sample(&track,2000).iter().map(|(time,lat,lon)|json!({"timeSeconds":time,"latitude":lat,"longitude":lon})).collect::<Vec<_>>(),"series":chart,"issues":issues,"coordinateShapeHash":shape_hash,"coordinateValueHash":value_hash}).to_string();
+    let output=json!({"allSessionsRunning":all_sessions_running,"summary":summary,"track":sample(&track,2000).iter().map(|(time,lat,lon)|json!({"timeSeconds":time,"latitude":lat,"longitude":lon})).collect::<Vec<_>>(),"series":chart,"issues":issues,"coordinateShapeHash":shape_hash,"coordinateValueHash":value_hash}).to_string();
     if output.len() > 4 * 1024 * 1024 {
         return Err("FIT 检查结果超过安全限制".to_owned());
     }
@@ -459,6 +469,97 @@ mod tests {
             average_coordinate_displacement(&original, &fit(record(1000, Some(0), 100))).unwrap(),
             0.0
         );
+    }
+
+    fn running_session(sport: u8, sub_sport: u8) -> Vec<u8> {
+        message(
+            18,
+            &[
+                (5, 0x00, vec![sport]),
+                (6, 0x00, vec![sub_sport]),
+                (8, 0x86, 1_800_000u32.to_le_bytes().to_vec()),
+                (9, 0x86, 500_000u32.to_le_bytes().to_vec()),
+            ],
+        )
+    }
+
+    #[test]
+    fn all_sessions_running_metadata_requires_valid_nonempty_explicit_run_sessions() {
+        for sessions in [
+            running_session(1, 0),
+            running_session(1, 1),
+            [running_session(1, 0), running_session(1, 1)].concat(),
+        ] {
+            let preview = inspect(&fit([sessions, record(1000, None, 140)].concat()));
+            assert_eq!(preview["allSessionsRunning"], true);
+            assert!(preview["summary"].get("allSessionsRunning").is_none());
+        }
+        for sessions in [
+            vec![],
+            running_session(0, 0),
+            running_session(2, 1),
+            running_session(255, 1),
+            message(18, &[(6, 0x00, vec![1])]),
+            [running_session(1, 1), running_session(2, 0)].concat(),
+            [running_session(1, 1), running_session(255, 0)].concat(),
+        ] {
+            let preview = inspect(&fit([sessions, record(1000, None, 140)].concat()));
+            assert_eq!(preview["allSessionsRunning"], false);
+        }
+        let mut corrupt = fit([running_session(1, 1), record(1000, None, 140)].concat());
+        let last = corrupt.len() - 1;
+        corrupt[last] ^= 1;
+        assert_eq!(inspect(&corrupt)["allSessionsRunning"], false);
+        assert_eq!(inspect(b"not a FIT")["allSessionsRunning"], false);
+    }
+
+    #[test]
+    fn treadmill_run_preview_needs_no_gps_override_and_preserves_summary_and_timestamp_rule() {
+        let session = running_session(1, 1);
+        let preview = inspect(&fit([session.clone(), record(1000, None, 140)].concat()));
+        assert_eq!(preview["summary"]["gpsCount"], 0);
+        assert_eq!(preview["summary"]["recordCount"], 1);
+        assert_eq!(preview["summary"]["durationSeconds"], 1800.0);
+        assert_eq!(preview["summary"]["distanceMeters"], 5000.0);
+        assert!(preview["track"].as_array().unwrap().is_empty());
+        assert!(
+            preview["issues"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|issue| issue["id"] != "few-gps-points" && issue["severity"] != "error")
+        );
+
+        let no_record = inspect(&fit(session));
+        assert!(
+            no_record["issues"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|issue| issue["id"] == "no-timestamp" && issue["severity"] == "error")
+        );
+    }
+
+    #[test]
+    fn outdoor_unknown_and_mixed_session_previews_keep_missing_gps_warning() {
+        for sessions in [
+            vec![],
+            running_session(1, 0),
+            running_session(2, 1),
+            running_session(255, 1),
+            running_session(1, 255),
+            [running_session(1, 1), running_session(1, 0)].concat(),
+            [running_session(1, 1), running_session(2, 1)].concat(),
+        ] {
+            let preview = inspect(&fit([sessions, record(1000, None, 140)].concat()));
+            assert!(
+                preview["issues"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|issue| issue["id"] == "few-gps-points" && issue["severity"] == "warning")
+            );
+        }
     }
 
     #[test]

@@ -29,7 +29,7 @@ const MAX_ACTIVITY_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_ACTIVITY_PAGES: u32 = 20;
 const ACTIVITY_PAGE_SIZE: u32 = 200;
 const MAX_FIT_BYTES: usize = 64 * 1024 * 1024;
-const UPLOAD_POLL_DELAYS_SECONDS: [u64; 7] = [0, 1, 2, 4, 8, 16, 32];
+const UPLOAD_POLL_DELAYS_SECONDS: [u64; 7] = [1, 1, 2, 4, 8, 16, 32];
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const POLL_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const ACTIVITY_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
@@ -281,6 +281,7 @@ impl StravaCancellation {
 #[derive(Clone, Debug, PartialEq)]
 pub struct StravaRemoteActivity {
     pub id: String,
+    pub sport_type: Option<String>,
     pub start_time_seconds: f64,
     pub end_time_seconds: f64,
     pub distance_meters: Option<f64>,
@@ -675,10 +676,83 @@ fn parse_remote_activity(value: &serde_json::Value) -> Option<StravaRemoteActivi
         .is_finite()
         .then_some(StravaRemoteActivity {
             id,
+            sport_type: remote_sport_type(value),
             start_time_seconds,
             end_time_seconds,
             distance_meters: json_positive_number(value.get("distance")),
         })
+}
+
+/// Normalize documented Strava sport values; missing or unknown values never imply Ride.
+/// Source: https://developers.strava.com/docs/reference/#api-models-SportType
+fn remote_sport_type(value: &serde_json::Value) -> Option<String> {
+    const SPORTS: &[&str] = &[
+        "AlpineSki",
+        "BackcountrySki",
+        "Badminton",
+        "Basketball",
+        "Canoeing",
+        "Cricket",
+        "Crossfit",
+        "Dance",
+        "EBikeRide",
+        "Elliptical",
+        "EMountainBikeRide",
+        "Golf",
+        "GravelRide",
+        "Handcycle",
+        "HighIntensityIntervalTraining",
+        "Hike",
+        "IceSkate",
+        "InlineSkate",
+        "Kayaking",
+        "Kitesurf",
+        "MountainBikeRide",
+        "NordicSki",
+        "Padel",
+        "PhysicalTherapy",
+        "Pickleball",
+        "Pilates",
+        "Racquetball",
+        "Ride",
+        "RockClimbing",
+        "RollerSki",
+        "Rowing",
+        "Run",
+        "Sail",
+        "Skateboard",
+        "Snowboard",
+        "Snowshoe",
+        "Soccer",
+        "Squash",
+        "StairStepper",
+        "StandUpPaddling",
+        "Surfing",
+        "Swim",
+        "TableTennis",
+        "Tennis",
+        "TrailRun",
+        "Velomobile",
+        "VirtualRide",
+        "VirtualRow",
+        "VirtualRun",
+        "Volleyball",
+        "Walk",
+        "WeightTraining",
+        "Wheelchair",
+        "Windsurf",
+        "Workout",
+        "Yoga",
+    ];
+    let sport = value
+        .get("sport_type")
+        .and_then(serde_json::Value::as_str)
+        .filter(|sport| !sport.trim().is_empty())
+        .or_else(|| value.get("type").and_then(serde_json::Value::as_str))?;
+    SPORTS
+        .iter()
+        .find(|known| known.eq_ignore_ascii_case(sport.trim()))
+        .map(|sport| (*sport).to_owned())
 }
 
 /// Swift StravaActivityLookup ranking is distinct from cross-source supplement matching:
@@ -1316,6 +1390,9 @@ impl StravaUploadClient {
 
         let name =
             valid_activity_name(name).map_err(|_| StravaUploadError::InvalidInput("name"))?;
+        // Classify only strictly valid FIT documents; legacy callers may still send raw
+        // bytes for Strava to validate, but those bytes must never imply a running sport.
+        let running = running_fit_metadata(&fit);
         let file = Part::bytes(fit)
             .file_name(filename.to_owned())
             .mime_str("application/octet-stream")
@@ -1323,7 +1400,12 @@ impl StravaUploadClient {
         let mut form = Form::new()
             .text("data_type", "fit")
             .text("external_id", external_id.to_owned());
-        if commute {
+        if let Some(treadmill) = running {
+            form = form.text("sport_type", "Run").text("commute", "0");
+            if treadmill {
+                form = form.text("trainer", "1");
+            }
+        } else if commute {
             form = form.text("commute", "1");
         }
         if let Some(description) = description.filter(|value| !value.is_empty()) {
@@ -1393,15 +1475,8 @@ impl StravaUploadClient {
         }
         let upload_id = json_upload_id(json.get("id"))
             .ok_or_else(|| StravaUploadError::UploadFailed("Strava 未返回上传 ID".to_owned()))?;
-        self.poll_upload(
-            access_token,
-            upload_id,
-            0,
-            false,
-            cancellation,
-            auth_retry_used,
-        )
-        .await
+        self.poll_upload(access_token, upload_id, 0, cancellation, auth_retry_used)
+            .await
     }
 
     pub async fn resume_poll_after_refresh(
@@ -1421,7 +1496,6 @@ impl StravaUploadClient {
             access_token,
             resume.upload_id,
             resume.attempt_index,
-            true,
             cancellation,
             true,
         )
@@ -1433,7 +1507,6 @@ impl StravaUploadClient {
         access_token: &str,
         upload_id: String,
         start_attempt: usize,
-        skip_first_delay: bool,
         cancellation: &StravaCancellation,
         auth_retry_used: bool,
     ) -> Result<StravaUploadResult, StravaUploadError> {
@@ -1444,7 +1517,7 @@ impl StravaUploadClient {
             .push(&upload_id);
         for attempt_index in start_attempt..self.poll_delays.len() {
             let delay = self.poll_delays[attempt_index];
-            if !(skip_first_delay && attempt_index == start_attempt) && !delay.is_zero() {
+            if !delay.is_zero() {
                 cancellation.run(tokio::time::sleep(delay)).await?;
             }
             let request = self
@@ -1533,6 +1606,27 @@ async fn read_bounded_body(
         body.extend_from_slice(&chunk);
     }
     Ok(body)
+}
+
+/// Every session must explicitly be running before we override upload metadata.
+/// The trainer flag is true only when every running session is treadmill (FIT 1).
+fn running_fit_metadata(fit: &[u8]) -> Option<bool> {
+    let document = crate::fit::FitDocument::parse(fit).ok()?;
+    let mut sessions = document
+        .messages()
+        .iter()
+        .enumerate()
+        .filter(|(_, message)| message.global_number() == 18)
+        .peekable();
+    sessions.peek()?;
+    let mut treadmill = true;
+    for (index, _) in sessions {
+        if document.read_u8(index, 5) != Some(1) {
+            return None;
+        }
+        treadmill &= document.read_u8(index, 6) == Some(1);
+    }
+    Some(treadmill)
 }
 
 fn valid_upload_input<'a>(
@@ -1851,6 +1945,159 @@ mod tests {
             activity_detail_endpoint: base.clone(),
             athlete_endpoint: base,
         }
+    }
+
+    fn fit_with_sessions(sports: &[(u8, u8)], gps: bool) -> Vec<u8> {
+        fn message(global: u16, fields: &[(u8, u8, Vec<u8>)]) -> Vec<u8> {
+            let mut bytes = vec![0x40, 0, 0];
+            bytes.extend_from_slice(&global.to_le_bytes());
+            bytes.push(fields.len() as u8);
+            for (number, base_type, value) in fields {
+                bytes.extend_from_slice(&[*number, value.len() as u8, *base_type]);
+            }
+            bytes.push(0);
+            for (_, _, value) in fields {
+                bytes.extend_from_slice(value);
+            }
+            bytes
+        }
+        fn crc(bytes: &[u8]) -> u16 {
+            bytes.iter().fold(0, |mut crc, byte| {
+                crc ^= u16::from(*byte);
+                for _ in 0..8 {
+                    crc = if crc & 1 != 0 {
+                        (crc >> 1) ^ 0xa001
+                    } else {
+                        crc >> 1
+                    };
+                }
+                crc
+            })
+        }
+        let mut fields = vec![
+            (253, 0x86, 1000u32.to_le_bytes().to_vec()),
+            (3, 0x02, vec![140]),
+        ];
+        if gps {
+            fields.extend([
+                (0, 0x85, 100i32.to_le_bytes().to_vec()),
+                (1, 0x85, 200i32.to_le_bytes().to_vec()),
+            ]);
+        }
+        let mut body = message(20, &fields);
+        for &(sport, sub_sport) in sports {
+            body.extend(message(
+                18,
+                &[(5, 0x00, vec![sport]), (6, 0x00, vec![sub_sport])],
+            ));
+        }
+        let mut bytes = vec![14, 0x20, 0x54, 0x08];
+        bytes.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(b".FIT");
+        bytes.extend_from_slice(&crc(&bytes).to_le_bytes());
+        bytes.extend(body);
+        bytes.extend_from_slice(&crc(&bytes).to_le_bytes());
+        assert!(crate::fit::is_valid_fit(&bytes));
+        bytes
+    }
+
+    #[tokio::test]
+    async fn running_upload_derives_run_and_treadmill_and_never_commutes_or_changes_fit() {
+        for (sub_sport, gps) in [(0, true), (1, false)] {
+            let fit = fit_with_sessions(&[(1, sub_sport)], gps);
+            let summary = crate::fit::decode_fit(&fit).unwrap();
+            assert_eq!(summary.gps_point_count, usize::from(gps));
+            let (endpoint, server) = mock_upload_server(vec![(201, r#"{"activity_id":42}"#)]);
+            let client = StravaUploadClient::for_test(endpoint, 4096).unwrap();
+            client
+                .upload_fit("token", fit.clone(), "external", "run.fit", true, None)
+                .await
+                .unwrap();
+            let requests = server.join().unwrap();
+            let body = String::from_utf8_lossy(&requests[0].body);
+            assert!(body.contains("name=\"sport_type\"\r\n\r\nRun\r\n"));
+            assert!(body.contains("name=\"commute\"\r\n\r\n0\r\n"));
+            assert!(!body.contains("name=\"commute\"\r\n\r\n1\r\n"));
+            assert_eq!(
+                body.contains("name=\"trainer\"\r\n\r\n1\r\n"),
+                sub_sport == 1
+            );
+            assert!(
+                requests[0]
+                    .body
+                    .windows(fit.len())
+                    .any(|bytes| bytes == fit)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn running_upload_auth_retry_retains_run_metadata() {
+        let (endpoint, server) = mock_upload_server(vec![(201, r#"{"activity_id":42}"#)]);
+        let client = StravaUploadClient::for_test(endpoint, 4096).unwrap();
+        client
+            .retry_upload_after_refresh(
+                "new-token",
+                fit_with_sessions(&[(1, 1)], false),
+                "external",
+                "run.fit",
+                true,
+                None,
+                None,
+                &StravaCancellation::new(),
+            )
+            .await
+            .unwrap();
+        let requests = server.join().unwrap();
+        let body = String::from_utf8_lossy(&requests[0].body);
+        assert!(body.contains("name=\"sport_type\"\r\n\r\nRun\r\n"));
+        assert!(body.contains("name=\"trainer\"\r\n\r\n1\r\n"));
+        assert!(!body.contains("name=\"commute\"\r\n\r\n1\r\n"));
+    }
+
+    #[tokio::test]
+    async fn cycling_unknown_mixed_and_invalid_fits_keep_legacy_multipart_behavior() {
+        let mut corrupt = fit_with_sessions(&[(1, 1)], false);
+        let end = corrupt.len() - 1;
+        corrupt[end] ^= 1;
+        for fit in [
+            fit_with_sessions(&[(2, 6)], true),
+            fit_with_sessions(&[(0, 0)], false),
+            fit_with_sessions(&[(1, 0), (2, 0)], false),
+            fit_with_sessions(&[(1, 0), (255, 0)], false),
+            fit_with_sessions(&[], false),
+            corrupt,
+            vec![1],
+        ] {
+            let (endpoint, server) = mock_upload_server(vec![(201, r#"{"activity_id":42}"#)]);
+            let client = StravaUploadClient::for_test(endpoint, 4096).unwrap();
+            client
+                .upload_fit("token", fit, "external", "activity.fit", true, None)
+                .await
+                .unwrap();
+            let requests = server.join().unwrap();
+            let body = String::from_utf8_lossy(&requests[0].body);
+            assert!(!body.contains("name=\"sport_type\""));
+            assert!(!body.contains("name=\"trainer\""));
+            assert!(body.contains("name=\"commute\"\r\n\r\n1\r\n"));
+        }
+    }
+
+    #[tokio::test]
+    async fn poll_after_auth_refresh_respects_at_least_one_second_delay() {
+        let (endpoint, server) = mock_upload_server(vec![(200, r#"{"activity_id":42}"#)]);
+        let client = StravaUploadClient::with_endpoint(&endpoint, 4096).unwrap();
+        let start = tokio::time::Instant::now();
+        client
+            .resume_poll_after_refresh(
+                "new-token",
+                StravaPollResume::new("77".into(), 0),
+                &StravaCancellation::new(),
+            )
+            .await
+            .unwrap();
+        assert!(start.elapsed() >= Duration::from_secs(1));
+        assert_eq!(server.join().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -2491,7 +2738,7 @@ mod tests {
 
     #[tokio::test]
     async fn validates_upload_boundary_and_matches_cleaning_contract() {
-        assert_eq!(UPLOAD_POLL_DELAYS_SECONDS, [0, 1, 2, 4, 8, 16, 32]);
+        assert_eq!(UPLOAD_POLL_DELAYS_SECONDS, [1, 1, 2, 4, 8, 16, 32]);
         assert_eq!(
             cleaned_upload_message("The FILE is EMPTY <b>secret</b>"),
             "上传文件为空，Strava 无法处理"
@@ -3053,6 +3300,7 @@ mod tests {
     ) -> super::StravaRemoteActivity {
         super::StravaRemoteActivity {
             id: "42".into(),
+            sport_type: None,
             start_time_seconds: 1_700_000_000.0 + start_offset,
             end_time_seconds: 1_700_000_000.0 + start_offset + minutes * 60.0,
             distance_meters: distance,
@@ -3145,6 +3393,7 @@ mod tests {
         );
         let invalid = [super::StravaRemoteActivity {
             id: "1".into(),
+            sport_type: None,
             start_time_seconds: base,
             end_time_seconds: f64::INFINITY,
             distance_meters: None,
@@ -3154,6 +3403,62 @@ mod tests {
             None
         );
     }
+    #[test]
+    fn remote_activity_sport_prefers_modern_type_falls_back_to_legacy_and_keeps_unknown_none() {
+        for (sport, legacy, expected) in [
+            (
+                serde_json::json!("TrailRun"),
+                serde_json::json!("Run"),
+                Some("TrailRun"),
+            ),
+            (
+                serde_json::json!(" ride "),
+                serde_json::json!("Run"),
+                Some("Ride"),
+            ),
+            (
+                serde_json::Value::Null,
+                serde_json::json!("Run"),
+                Some("Run"),
+            ),
+            (
+                serde_json::json!(""),
+                serde_json::json!("VirtualRun"),
+                Some("VirtualRun"),
+            ),
+            (
+                serde_json::json!("Swim"),
+                serde_json::Value::Null,
+                Some("Swim"),
+            ),
+            (
+                serde_json::json!("FutureUnknownSport"),
+                serde_json::Value::Null,
+                None,
+            ),
+            (serde_json::json!(false), serde_json::Value::Null, None),
+            (
+                serde_json::json!("Run\nInjected"),
+                serde_json::Value::Null,
+                None,
+            ),
+            (serde_json::Value::Null, serde_json::Value::Null, None),
+        ] {
+            let value = serde_json::json!({"id":42,"start_date":"2024-02-03T04:05:06Z","elapsed_time":1200,"sport_type":sport,"type":legacy});
+            assert_eq!(
+                parse_remote_activity(&value).unwrap().sport_type.as_deref(),
+                expected
+            );
+            let web = serde_json::to_vec(&serde_json::json!({"models":[value]})).unwrap();
+            assert_eq!(
+                super::parse_web_remote_activities(&web).unwrap()[0]
+                    .sport_type
+                    .as_deref(),
+                expected
+            );
+        }
+    }
+
     #[test]
     fn web_training_pages_support_legacy_shapes_fallbacks_and_safe_ids() {
         let page = serde_json::json!({"models":[

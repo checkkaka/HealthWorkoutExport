@@ -306,12 +306,23 @@ void HandleVault(const Call& call, Result* result, bool strava) {
   if (strava && (method == "stravaStatus" || method == "stravaLease" || method == "writeStravaAuthorization" || method == "clearStravaAuthorization")) vault = "strava";
   else if (!strava && (method == "xingzheStatus" || method == "xingzheLease" || method == "writeXingzheAuthorization" || method == "clearXingzheAuthorization")) vault = "xingzhe";
   else if (!strava && (method == "onelapStatus" || method == "onelapLease" || method == "writeOnelapAuthorization" || method == "clearOnelapAuthorization")) vault = "onelap";
+  else if (!strava && (method == "keepStatus" || method == "keepLease" || method == "writeKeepAuthorization" || method == "clearKeepAuthorization")) vault = "keep";
   else { result->NotImplemented(); return; }
   if (method.compare(0, 5, "clear") == 0) { ClearVault(vault, result); return; }
   SecretMap state;
   if (!ReadVault(vault, &state, result)) return;
   if (method.compare(0, 5, "write") == 0) {
     SecretMap next;
+    if (vault == "keep") {
+      // Keep never persists a password or an arbitrary credential field. The
+      // single Credential Manager record replaces account and token together.
+      const auto* arguments = call.arguments() ? std::get_if<Map>(call.arguments()) : nullptr;
+      if (!arguments || arguments->size() != 2 ||
+          !RequiredText(call, "account", &next["keep.account"]) ||
+          !RequiredText(call, "token", &next["keep.token"])) { Invalid(result); return; }
+      if (WriteVault(vault, next, result)) result->Success();
+      return;
+    }
     const std::vector<std::pair<const char*, const char*>> fields = strava
       ? std::vector<std::pair<const char*, const char*>>{{"clientId", "strava.clientId"}, {"clientSecret", "strava.clientSecret"}, {"accessToken", "strava.accessToken"}, {"refreshToken", "strava.refreshToken"}}
       : vault == "xingzhe" ? std::vector<std::pair<const char*, const char*>>{{"account", "xingzhe.account"}, {"password", "xingzhe.password"}, {"sessionId", "xingzhe.session"}}
@@ -347,6 +358,9 @@ void HandleVault(const Call& call, Result* result, bool strava) {
         {Value("hasAccessToken"), Value(Present(state, "strava.accessToken"))},
         {Value("hasRefreshToken"), Value(Present(state, "strava.refreshToken"))},
         {Value("expiresAtSeconds"), Value(Expiry(state))}};
+    } else if (vault == "keep") {
+      payload = {{Value("hasAccount"), Value(Present(state, "keep.account"))},
+                 {Value("hasToken"), Value(Present(state, "keep.token"))}};
     } else {
       payload = {{Value("hasAccount"), Value(Present(state, vault + ".account"))},
                  {Value("hasPassword"), Value(Present(state, vault + ".password"))}};
@@ -371,6 +385,12 @@ void HandleVault(const Call& call, Result* result, bool strava) {
       payload[Value(field.first)] = Value(Stored(state, field.second));
     }
     payload[Value("expiresAtSeconds")] = Value(Expiry(state));
+  } else if (vault == "keep") {
+    if (!Present(state, "keep.account") || !Present(state, "keep.token")) {
+      result->Error("keep_not_configured", "Keep authorization is not configured"); return;
+    }
+    payload = {{Value("account"), Value(Stored(state, "keep.account"))},
+               {Value("token"), Value(Stored(state, "keep.token"))}};
   } else {
     if (!Present(state, vault + ".account") || !Present(state, vault + ".password")) {
       result->Error(vault + "_not_configured", "Source authorization is not configured"); return;

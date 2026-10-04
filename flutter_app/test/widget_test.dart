@@ -40,12 +40,13 @@ void main() {
     expect(find.byType(HealthWorkoutExportApp), findsOneWidget);
   });
 
-  testWidgets('显示健康、行者和顽鹿三个页签', (tester) async {
+  testWidgets('显示健康、行者、顽鹿和 Keep 四个页签', (tester) async {
     await tester.pumpWidget(const HealthWorkoutExportApp());
 
     expect(find.text('健康'), findsOneWidget);
     expect(find.text('行者'), findsOneWidget);
     expect(find.text('顽鹿'), findsOneWidget);
+    expect(find.text('Keep'), findsOneWidget);
     expect(find.text('健康训练'), findsOneWidget);
   });
 

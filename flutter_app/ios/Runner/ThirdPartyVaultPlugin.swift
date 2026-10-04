@@ -6,7 +6,7 @@ import Security
   import FlutterMacOS
 #endif
 
-/// 行者和顽鹿的固定键凭据 vault；MethodChannel 不接受 account/key 参数。
+/// 固定用途凭据 vault；Keep 仅保存账号和 token，永不保存密码。
 final class ThirdPartyVaultPlugin: NSObject, FlutterPlugin {
   private static let channelName = "health_workout_export/third_party_vault"
   private static let service = "com.checkkaka.HealthWorkoutExport"
@@ -14,16 +14,20 @@ final class ThirdPartyVaultPlugin: NSObject, FlutterPlugin {
   enum Vault: String {
     case xingzhe
     case onelap
+    case keep
 
     var accounts: [String] {
       switch self {
       case .xingzhe: ["xingzhe.account", "xingzhe.password", "xingzhe.session"]
       case .onelap: ["onelap.account", "onelap.password", "onelap.token", "onelap.uid", "onelap.refresh"]
+      case .keep: ["keep.account", "keep.token"]
       }
     }
 
     var journalAccount: String { "\(rawValue).vaultJournal" }
-    var displayName: String { self == .xingzhe ? "行者" : "顽鹿" }
+    var displayName: String {
+      switch self { case .xingzhe: "行者"; case .onelap: "顽鹿"; case .keep: "Keep" }
+    }
   }
 
   struct XingzheAuthorization {
@@ -38,6 +42,11 @@ final class ThirdPartyVaultPlugin: NSObject, FlutterPlugin {
     let token: String
     let uid: String
     let refreshToken: String?
+  }
+
+  struct KeepAuthorization {
+    let account: String
+    let token: String
   }
 
   struct StateEntry: Codable {
@@ -72,9 +81,9 @@ final class ThirdPartyVaultPlugin: NSObject, FlutterPlugin {
         return
       }
       switch operation {
-      case .xingzheStatus, .onelapStatus:
+      case .xingzheStatus, .onelapStatus, .keepStatus:
         self.reportStatus(for: operation.vault, result: result)
-      case .xingzheLease, .onelapLease:
+      case .xingzheLease, .onelapLease, .keepLease:
         self.issueLease(for: operation.vault, result: result)
       case .writeXingzheAuthorization:
         do {
@@ -94,7 +103,12 @@ final class ThirdPartyVaultPlugin: NSObject, FlutterPlugin {
             result: result
           )
         } catch { result(self.invalidArguments()) }
-      case .clearXingzheAuthorization, .clearOnelapAuthorization:
+      case .writeKeepAuthorization:
+        do {
+          let authorization = try Self.parseKeepAuthorization(arguments: call.arguments)
+          self.apply(values: [authorization.account, authorization.token], for: .keep, result: result)
+        } catch { result(self.invalidArguments()) }
+      case .clearXingzheAuthorization, .clearOnelapAuthorization, .clearKeepAuthorization:
         self.apply(values: Array(repeating: nil, count: operation.vault.accounts.count), for: operation.vault, result: result)
       }
     }
@@ -122,7 +136,22 @@ final class ThirdPartyVaultPlugin: NSObject, FlutterPlugin {
       refreshToken: nonEmpty(arguments["refreshToken"] as? String))
   }
 
+  static func parseKeepAuthorization(arguments: Any?) throws -> KeepAuthorization {
+    guard
+      let arguments = arguments as? [String: Any],
+      Set(arguments.keys) == Set(["account", "token"]),
+      let account = nonEmpty(arguments["account"] as? String),
+      let token = nonEmpty(arguments["token"] as? String),
+      !account.contains("\0"), !token.contains("\0")
+    else { throw AuthorizationError.invalidArguments }
+    return KeepAuthorization(account: account, token: token)
+  }
+
   static func statusPayload(for vault: Vault, values: [String: String?]) -> [String: Any] {
+    if vault == .keep {
+      return ["hasAccount": nonEmpty(values["keep.account"] ?? nil) != nil,
+              "hasToken": nonEmpty(values["keep.token"] ?? nil) != nil]
+    }
     var payload: [String: Any] = [
       "hasAccount": nonEmpty(values[vault.accounts[0]] ?? nil) != nil,
       "hasPassword": nonEmpty(values[vault.accounts[1]] ?? nil) != nil,
@@ -137,11 +166,17 @@ final class ThirdPartyVaultPlugin: NSObject, FlutterPlugin {
   }
 
   static func leasePayload(for vault: Vault, values: [String: String?]) -> [String: Any]? {
+    if vault == .keep {
+      guard let account = nonEmpty(values["keep.account"] ?? nil),
+            let token = nonEmpty(values["keep.token"] ?? nil) else { return nil }
+      return ["account": account, "token": token]
+    }
     guard
       let account = nonEmpty(values[vault.accounts[0]] ?? nil),
       let password = nonEmpty(values[vault.accounts[1]] ?? nil)
     else { return nil }
     switch vault {
+    case .keep: return nil // Handled above; Keep has no password lease.
     case .xingzhe:
       var payload: [String: Any] = ["account": account, "password": password]
       if let sessionId = nonEmpty(values["xingzhe.session"] ?? nil) {
@@ -167,11 +202,13 @@ final class ThirdPartyVaultPlugin: NSObject, FlutterPlugin {
   private enum Operation: String {
     case xingzheStatus, xingzheLease, writeXingzheAuthorization, clearXingzheAuthorization
     case onelapStatus, onelapLease, writeOnelapAuthorization, clearOnelapAuthorization
+    case keepStatus, keepLease, writeKeepAuthorization, clearKeepAuthorization
 
     var vault: Vault {
       switch self {
       case .xingzheStatus, .xingzheLease, .writeXingzheAuthorization, .clearXingzheAuthorization: .xingzhe
       case .onelapStatus, .onelapLease, .writeOnelapAuthorization, .clearOnelapAuthorization: .onelap
+      case .keepStatus, .keepLease, .writeKeepAuthorization, .clearKeepAuthorization: .keep
       }
     }
   }

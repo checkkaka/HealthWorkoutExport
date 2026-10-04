@@ -4,6 +4,7 @@ import 'package:health_workout_export/src/rust/api/simple.dart' as rust;
 
 rust.StravaRemoteActivityResult remote(String id, double appleStart) =>
     rust.StravaRemoteActivityResult(
+      sportType: 'Ride',
       id: id,
       startTimeSeconds: 978307200 + appleStart,
       endTimeSeconds: 978307200 + appleStart + 3600,
@@ -14,9 +15,9 @@ void main() {
     () {
       final records = <String, Map<String, Object?>>{
         'occupied': {'remoteId': '9', 'startDate': 0},
-        'a': {'startDate': 100},
-        'b': {'startDate': 105},
-        'c': {'startDate': 400},
+        'a': {'sportType': 'Ride', 'startDate': 100},
+        'b': {'sportType': 'Ride', 'startDate': 105},
+        'c': {'sportType': 'Ride', 'startDate': 400},
       };
       final assigned = remoteIdAssignments(records, [
         remote('9', 100),
@@ -32,7 +33,7 @@ void main() {
     expect(
       remoteIdAssignments(
         {
-          'a': {'startDate': 0},
+          'a': {'sportType': 'Ride', 'startDate': 0},
         },
         [remote('x', 0), remote('../42', 0)],
       ),

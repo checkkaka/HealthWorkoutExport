@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_workout_export/src/rust/api/simple.dart';
+import 'package:health_workout_export/src/rust/api/keep.dart' as keep;
 import 'package:health_workout_export/src/rust/frb_generated.dart';
 
 const _startMs = 1704067200000;
@@ -11,7 +12,11 @@ final _fingerprint = 'a' * 64;
 
 // These fixtures are invented. Every operation stays in memory; no HealthKit,
 // source authentication, weather, upload, or remote deletion is involved.
-Future<Uint8List> _fixtureFit({bool sensors = true, int heartRate = 140}) {
+Future<Uint8List> _fixtureFit({
+  bool sensors = true,
+  int heartRate = 140,
+  int activityType = 13,
+}) {
   List<Map<String, Object>> samples(num first, num last) => [
     {'dateMs': _startMs, 'value': first},
     {'dateMs': _startMs + 60000, 'value': last},
@@ -23,7 +28,7 @@ Future<Uint8List> _fixtureFit({bool sensors = true, int heartRate = 140}) {
         'startMs': _startMs,
         'endMs': _startMs + 60000,
         'durationSeconds': 50,
-        'activityType': 13,
+        'activityType': activityType,
         'totalDistanceMeters': 1000,
         'totalEnergyKcal': 123,
         'events': [
@@ -363,6 +368,110 @@ void main() {
           commandJson: _jsonBytes({'operation': 'validate'}),
         ),
         beforeInvalidCommand,
+      );
+    },
+  );
+  test(
+    'Keep bridge cancellation never starts account/network work and cannot reuse handles',
+    () async {
+      final login = keep.keepReserveOperation(operationId: 'keep-ffi-login');
+      expect(keep.keepCancelOperation(operationHandle: login.handle), true);
+      await expectLater(
+        keep.keepLogin(
+          operationHandle: login.handle,
+          account: 'synthetic-account',
+          password: 'synthetic-password',
+        ),
+        throwsA(
+          predicate((error) => error.toString().contains('KeepCancelled')),
+        ),
+      );
+      expect(keep.keepReleaseOperation(operationHandle: login.handle), false);
+      final list = keep.keepReserveOperation(operationId: 'keep-ffi-login');
+      expect(list.handle, isNot(login.handle));
+      expect(keep.keepCancelOperation(operationHandle: login.handle), false);
+      expect(keep.keepCancelOperation(operationHandle: list.handle), true);
+      await expectLater(
+        keep.keepListWorkouts(
+          operationHandle: list.handle,
+          token: 'synthetic-token',
+          fromSeconds: 1704067200,
+          toSeconds: 1704070800,
+        ),
+        throwsA(
+          predicate((error) => error.toString().contains('KeepCancelled')),
+        ),
+      );
+      final detail = keep.keepReserveOperation(operationId: 'keep-ffi-detail');
+      expect(keep.keepCancelOperation(operationHandle: detail.handle), true);
+      await expectLater(
+        keep.keepDownloadFit(
+          operationHandle: detail.handle,
+          token: 'synthetic-token',
+          workoutId: '90071992547409931',
+        ),
+        throwsA(
+          predicate((error) => error.toString().contains('KeepCancelled')),
+        ),
+      );
+    },
+  );
+
+  test(
+    'Run remote sport and Keep idempotent fingerprint cross the real bridge',
+    () {
+      final activities = stravaParseWebRemoteActivities(
+        responseJson: _jsonBytes([
+          {
+            'id': 42,
+            'start_date': '2024-01-01T00:00:00Z',
+            'elapsed_time': 1800,
+            'distance': 3000,
+            'sport_type': 'Run',
+          },
+          {
+            'id': 43,
+            'start_date': '2024-01-01T00:00:00Z',
+            'elapsed_time': 1800,
+            'distance': 3000,
+            'type': 'Ride',
+          },
+        ]),
+      );
+      expect(activities.map((a) => a.sportType), ['Run', 'Ride']);
+      String fingerprint(List<String> supplements) => syncFingerprint(
+        primarySourceId: 'keep',
+        primaryActivityId: '90071992547409931',
+        startDateUnixSeconds: 1704067200,
+        supplementSourceIds: supplements,
+        destination: 'strava',
+      );
+      expect(
+        fingerprint(['healthkit', 'xingzhe']),
+        fingerprint(['xingzhe', 'healthkit']),
+      );
+      expect(fingerprint([]), isNot(fingerprint(['healthkit'])));
+    },
+  );
+  test(
+    'final FIT running classification crosses FFI without modifying bytes',
+    () async {
+      final running = await _fixtureFit(activityType: 37);
+      final original = List<int>.from(running);
+      final runPreview = _jsonObject(await inspectFitPreview(data: running));
+      expect(runPreview['allSessionsRunning'], true);
+      expect(running, original);
+      expect(
+        _jsonObject(
+          await inspectFitPreview(data: await _fixtureFit()),
+        )['allSessionsRunning'],
+        false,
+      );
+      expect(
+        _jsonObject(
+          await inspectFitPreview(data: [1, 2, 3]),
+        )['allSessionsRunning'],
+        false,
       );
     },
   );

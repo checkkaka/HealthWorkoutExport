@@ -85,3 +85,9 @@ jobs:
         working-directory: flutter_app
         env:
           CARGO_NET_OFFLINE: "true"
+      - name: Verify Keep device-local timestamps
+        run: flutter --suppress-analytics test --no-pub test/keep_source_page_test.dart --plain-name "UTC Keep timestamps display in the device local day and time"
+        working-directory: flutter_app
+        env:
+          TZ: Asia/Shanghai
+          CARGO_NET_OFFLINE: "true"

@@ -3,10 +3,14 @@ import 'dart:typed_data';
 
 import 'date_range.dart';
 import 'native_channels.dart';
+import 'keep_vault.dart';
+import 'src/rust/api/keep.dart' as keep;
+import 'workout_sport.dart';
+export 'workout_sport.dart';
 import 'src/rust/api/simple.dart' as rust;
 import 'workout_export.dart';
 
-enum WorkoutSourceId { healthkit, xingzhe, onelap }
+enum WorkoutSourceId { healthkit, xingzhe, onelap, keep }
 
 extension WorkoutSourceIdText on WorkoutSourceId {
   String get value => name;
@@ -14,6 +18,7 @@ extension WorkoutSourceIdText on WorkoutSourceId {
     WorkoutSourceId.healthkit => '健康',
     WorkoutSourceId.xingzhe => '行者',
     WorkoutSourceId.onelap => '顽鹿',
+    WorkoutSourceId.keep => 'Keep',
   };
 }
 
@@ -26,6 +31,9 @@ final class WorkoutActivity {
     required this.end,
     required this.durationSeconds,
     this.distanceMeters,
+    this.sportType,
+    this.coordinatesWgs84,
+    this.indoor = false,
   });
 
   final String id;
@@ -35,6 +43,17 @@ final class WorkoutActivity {
   final DateTime end;
   final double durationSeconds;
   final double? distanceMeters;
+  final String? sportType;
+  final bool? coordinatesWgs84;
+  final bool indoor;
+
+  String? get effectiveSportType =>
+      sourceSportType(sourceId.value, sportType: sportType);
+  bool get isCycling => normalizedWorkoutSport(effectiveSportType) == 'Ride';
+  bool get hasWgs84Coordinates =>
+      coordinatesWgs84 ??
+      (sourceId == WorkoutSourceId.healthkit ||
+          sourceId == WorkoutSourceId.keep);
 
   rust.ActivityIntervalInput get interval => rust.ActivityIntervalInput(
     startSeconds: start.millisecondsSinceEpoch / 1000,
@@ -90,6 +109,8 @@ final class HealthKitWorkoutSource implements WorkoutSource {
           end: DateTime.fromMillisecondsSinceEpoch(workout.endMs),
           durationSeconds: workout.durationSeconds,
           distanceMeters: workout.totalDistanceMeters,
+          sportType: healthKitSportType(workout.activityType),
+          coordinatesWgs84: true,
         ),
     ];
   }
@@ -361,10 +382,107 @@ final class OnelapWorkoutSource
   );
 }
 
+/// Experimental Keep account source. The vault stores token/account, never password.
+final class KeepWorkoutSource
+    implements WorkoutSource, CancellableWorkoutSource {
+  KeepWorkoutSource({KeepVaultChannel vault = const KeepVaultChannel()})
+    // ignore: prefer_initializing_formals
+    : _vault = vault;
+  final KeepVaultChannel _vault;
+  final _handles = <String>{};
+  var _generation = 0;
+  @override
+  WorkoutSourceId get id => WorkoutSourceId.keep;
+  @override
+  Future<bool> isAuthenticated() async => (await _vault.status()).isConfigured;
+  @override
+  Future<void> logout() async {
+    cancelPending();
+    await _vault.clearAuthorization();
+  }
+
+  @override
+  void cancelPending() {
+    _generation++;
+    for (final handle in _handles) {
+      keep.keepCancelOperation(operationHandle: handle);
+    }
+  }
+
+  Future<T> _run<T>(
+    String name,
+    Future<T> Function(String handle, String token) action,
+  ) async {
+    final generation = _generation;
+    final lease = await _vault.lease();
+    if (generation != _generation) throw StateError('KeepCancelled');
+    final reservation = keep.keepReserveOperation(
+      operationId: '$name-${DateTime.now().microsecondsSinceEpoch}',
+    );
+    _handles.add(reservation.handle);
+    try {
+      final result = await action(reservation.handle, lease.token);
+      if (generation != _generation) throw StateError('KeepCancelled');
+      return result;
+    } finally {
+      _handles.remove(reservation.handle);
+      keep.keepReleaseOperation(operationHandle: reservation.handle);
+    }
+  }
+
+  @override
+  Future<List<WorkoutActivity>> listActivities(DateInterval interval) async {
+    final records = await _run(
+      'keep-list',
+      (handle, token) => keep.keepListWorkouts(
+        operationHandle: handle,
+        token: token,
+        fromSeconds: interval.start.millisecondsSinceEpoch ~/ 1000,
+        toSeconds: interval.endExclusive.millisecondsSinceEpoch ~/ 1000,
+      ),
+    );
+    return [
+      for (final record in records)
+        WorkoutActivity(
+          id: record.id,
+          sourceId: id,
+          title: record.title,
+          start: DateTime.fromMillisecondsSinceEpoch(
+            (record.startTimeSeconds * 1000).round(),
+            isUtc: true,
+          ),
+          end: DateTime.fromMillisecondsSinceEpoch(
+            (record.endTimeSeconds * 1000).round(),
+            isUtc: true,
+          ),
+          durationSeconds: record.durationSeconds,
+          distanceMeters: record.distanceMeters,
+          sportType: 'Run',
+          coordinatesWgs84: true,
+          indoor: record.indoor,
+        ),
+    ];
+  }
+
+  @override
+  Future<Uint8List> fetchFit(WorkoutActivity activity) {
+    if (activity.sourceId != id) throw ArgumentError('Keep 活动来源不一致');
+    return _run(
+      'keep-fit',
+      (handle, token) => keep.keepDownloadFit(
+        operationHandle: handle,
+        token: token,
+        workoutId: activity.id,
+      ),
+    );
+  }
+}
+
 WorkoutSource workoutSourceFor(WorkoutSourceId id) => switch (id) {
   WorkoutSourceId.healthkit => HealthKitWorkoutSource(),
   WorkoutSourceId.xingzhe => XingzheWorkoutSource(),
   WorkoutSourceId.onelap => OnelapWorkoutSource(),
+  WorkoutSourceId.keep => KeepWorkoutSource(),
 };
 
 /// 顽鹿时间没有 UTC offset，必须用活动日期的本地时区规则，而非今天的偏移。

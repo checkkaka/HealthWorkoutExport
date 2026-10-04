@@ -6,6 +6,7 @@
 // Static analysis wrongly picks the IO variant, thus ignore this
 // ignore_for_file: argument_type_not_assignable
 
+import 'api/keep.dart';
 import 'api/simple.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -82,12 +83,24 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   PlatformInt64 dco_decode_i_64(dynamic raw);
 
   @protected
+  KeepLoginResult dco_decode_keep_login_result(dynamic raw);
+
+  @protected
+  KeepOperationReservation dco_decode_keep_operation_reservation(dynamic raw);
+
+  @protected
+  KeepWorkoutResult dco_decode_keep_workout_result(dynamic raw);
+
+  @protected
   List<String> dco_decode_list_String(dynamic raw);
 
   @protected
   List<ActivityIntervalInput> dco_decode_list_activity_interval_input(
     dynamic raw,
   );
+
+  @protected
+  List<KeepWorkoutResult> dco_decode_list_keep_workout_result(dynamic raw);
 
   @protected
   List<Uint8List> dco_decode_list_list_prim_u_8_strict(dynamic raw);
@@ -291,10 +304,28 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
 
   @protected
+  KeepLoginResult sse_decode_keep_login_result(SseDeserializer deserializer);
+
+  @protected
+  KeepOperationReservation sse_decode_keep_operation_reservation(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  KeepWorkoutResult sse_decode_keep_workout_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
 
   @protected
   List<ActivityIntervalInput> sse_decode_list_activity_interval_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<KeepWorkoutResult> sse_decode_list_keep_workout_result(
     SseDeserializer deserializer,
   );
 
@@ -549,11 +580,35 @@ abstract class WorkoutCoreRustLibApiImplPlatform
   void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
 
   @protected
+  void sse_encode_keep_login_result(
+    KeepLoginResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_keep_operation_reservation(
+    KeepOperationReservation self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_keep_workout_result(
+    KeepWorkoutResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_activity_interval_input(
     List<ActivityIntervalInput> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_keep_workout_result(
+    List<KeepWorkoutResult> self,
     SseSerializer serializer,
   );
 

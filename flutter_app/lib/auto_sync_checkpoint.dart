@@ -58,7 +58,7 @@ final class AutoSyncCheckpoint {
       'uploadToStrava',
       'writeToHealth',
     });
-    const sources = {'healthkit', 'xingzhe', 'onelap'};
+    const sources = {'healthkit', 'xingzhe', 'onelap', 'keep'};
     final title = config['customTitle'];
     if ((title != null &&
             (title is! String ||
@@ -104,6 +104,9 @@ final class AutoSyncCheckpoint {
         'endMs',
         'durationSeconds',
         'distanceMeters',
+        'sportType',
+        'coordinatesWgs84',
+        'indoor',
       });
       final id = raw['id'];
       final title = raw['title'];
@@ -111,6 +114,15 @@ final class AutoSyncCheckpoint {
       final end = raw['endMs'];
       final duration = raw['durationSeconds'];
       final distance = raw['distanceMeters'];
+      final sport = raw['sportType'];
+      if ((sport != null &&
+              (sport is! String ||
+                  !RegExp(r'^[A-Za-z][A-Za-z0-9]{0,63}$').hasMatch(sport))) ||
+          (raw['coordinatesWgs84'] != null &&
+              raw['coordinatesWgs84'] is! bool) ||
+          (raw['indoor'] != null && raw['indoor'] is! bool)) {
+        throw const FormatException('批次运动类型或坐标来源无效');
+      }
       if (id is! String ||
           id.isEmpty ||
           id.length > 1024 ||

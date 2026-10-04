@@ -15,3 +15,27 @@ gradle -p flutter_app/android/native_validation \
 Test results: `flutter_app/android/native_validation/build/test-results/testDebugUnitTest/`.
 
 This checks compilation and deterministic conversion/transport tests. It does not validate real Health Connect providers, permission revocation, per-route consent, OEM lifecycle behavior, real account authentication, or production uploads/deletions. Those require device acceptance tests with user-controlled data and permissions. The release owner must also ensure the in-app Health Connect rationale matches the privacy policy declared in Play Console.
+
+## Keep vault checks without an Android SDK
+
+`KeepVaultTest.kt` is included in the normal native unit test task. It covers
+strict account/token-only input, nonsecret status, encrypted single-record
+replacement, failed-commit rollback, fail-closed recovery, clear, and isolation
+from other providers. Every test uses synthetic credentials and real JVM AES-GCM;
+Android Keystore provisioning and SharedPreferences disk I/O are substituted.
+
+For environments without the Android toolchain, the same tests can run against
+the production `SecretStore` classes extracted from `MainActivity.kt`:
+
+```sh
+python3 flutter_app/android/native_validation/test_keep_vault_contract.py
+python3 flutter_app/android/native_validation/run_keep_vault_jvm_tests.py --jars /path/to/kotlin-test-jars
+```
+
+The jar directory needs Kotlin compiler-embeddable 2.2.0 and its published runtime
+dependencies, JetBrains annotations, JUnit 4.13.2, Hamcrest 1.3, and an Android API
+stub jar. Use official Maven Central artifacts. The helper does not download or
+install anything. It substitutes only Keystore type signatures for compilation
+and does not validate the complete native adapter, device Keystore, or real
+SharedPreferences failure/crash behavior. Run the Gradle task and device tests
+before claiming native-platform acceptance.

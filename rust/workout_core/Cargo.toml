@@ -8,6 +8,9 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
+aes = "=0.8.4"
+cbc = "=0.1.2"
+flate2 = "=1.1.5"
 base64 = "=0.22.1"
 flutter_rust_bridge = "=2.12.0"
 md-5 = "=0.10.6"

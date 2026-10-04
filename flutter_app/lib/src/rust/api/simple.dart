@@ -881,12 +881,14 @@ class StravaRateLimitWindow {
 /// Flutter 侧用于上传前远端预检的活动区间；字段语义与旧 Swift `RemoteActivity` 一致。
 class StravaRemoteActivityResult {
   final String id;
+  final String? sportType;
   final double startTimeSeconds;
   final double endTimeSeconds;
   final double? distanceMeters;
 
   const StravaRemoteActivityResult({
     required this.id,
+    this.sportType,
     required this.startTimeSeconds,
     required this.endTimeSeconds,
     this.distanceMeters,
@@ -895,6 +897,7 @@ class StravaRemoteActivityResult {
   @override
   int get hashCode =>
       id.hashCode ^
+      sportType.hashCode ^
       startTimeSeconds.hashCode ^
       endTimeSeconds.hashCode ^
       distanceMeters.hashCode;
@@ -905,6 +908,7 @@ class StravaRemoteActivityResult {
       other is StravaRemoteActivityResult &&
           runtimeType == other.runtimeType &&
           id == other.id &&
+          sportType == other.sportType &&
           startTimeSeconds == other.startTimeSeconds &&
           endTimeSeconds == other.endTimeSeconds &&
           distanceMeters == other.distanceMeters;

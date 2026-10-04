@@ -16,6 +16,7 @@ import 'sync_history_page.dart';
 import 'third_party_source_page.dart';
 import 'workout_export.dart';
 import 'workout_source.dart';
+import 'keep_source_page.dart';
 
 Future<void> main() => startApp();
 
@@ -96,8 +97,9 @@ class _RootTabsPageState extends State<_RootTabsPage> {
       ),
       const ThirdPartySourcePage(source: ThirdPartySourceType.xingzhe),
       const ThirdPartySourcePage(source: ThirdPartySourceType.onelap),
+      const KeepSourcePage(),
     ];
-    const titles = ['健康训练', '行者活动', '顽鹿活动'];
+    const titles = ['健康训练', '行者活动', '顽鹿活动', 'Keep 跑步'];
     return ListenableBuilder(
       listenable: AutoSyncSession.instance,
       builder: (context, _) {
@@ -205,6 +207,10 @@ class _RootTabsPageState extends State<_RootTabsPage> {
                 label: '行者',
               ),
               NavigationDestination(icon: Icon(Icons.flag), label: '顽鹿'),
+              NavigationDestination(
+                icon: Icon(Icons.directions_run),
+                label: 'Keep',
+              ),
             ],
           ),
         );
@@ -422,6 +428,17 @@ class _SourcePageState extends State<_SourcePage> {
                 end: DateTime.fromMillisecondsSinceEpoch(workout.endMs),
                 durationSeconds: workout.durationSeconds,
                 distanceMeters: workout.totalDistanceMeters,
+                workout: WorkoutActivity(
+                  id: workout.uuid,
+                  sourceId: WorkoutSourceId.healthkit,
+                  title: workout.activityName,
+                  start: DateTime.fromMillisecondsSinceEpoch(workout.startMs),
+                  end: DateTime.fromMillisecondsSinceEpoch(workout.endMs),
+                  durationSeconds: workout.durationSeconds,
+                  distanceMeters: workout.totalDistanceMeters,
+                  sportType: healthKitSportType(workout.activityType),
+                  coordinatesWgs84: true,
+                ),
               ),
             ),
             subtitle: Column(
@@ -552,6 +569,8 @@ class _SourcePageState extends State<_SourcePage> {
                   end: DateTime.fromMillisecondsSinceEpoch(workout.endMs),
                   durationSeconds: workout.durationSeconds,
                   distanceMeters: workout.totalDistanceMeters,
+                  sportType: healthKitSportType(workout.activityType),
+                  coordinatesWgs84: true,
                 ),
           ],
         ),

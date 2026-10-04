@@ -110,6 +110,35 @@ pub fn merge_fit_for_sync_with_report(
             "补源 FIT 无法解析，本次保留主源",
         ));
     };
+    // Remove known cross-sport sources before alignment: an incompatible source
+    // cannot contaminate sensors or prevent a compatible source from being aligned.
+    let accepted: Vec<_> = documents
+        .iter()
+        .enumerate()
+        .filter_map(|(index, document)| {
+            (!incompatible_session_sports(&primary_doc, document)).then_some(index)
+        })
+        .collect();
+    if accepted.len() != supplements.len() {
+        let mut result = unchanged_sync_merge(
+            primary,
+            supplements.len(),
+            "补源运动类型与主源不一致，已跳过补源",
+        );
+        if !accepted.is_empty() {
+            let compatible: Vec<_> = accepted.iter().map(|&index| supplements[index]).collect();
+            // Release the bounded parsed documents before reparsing the accepted subset.
+            drop(documents);
+            drop(primary_doc);
+            let merged = merge_fit_for_sync_with_report(primary, &compatible)?;
+            result.data = merged.data;
+            for (mut report, &index) in merged.supplement_reports.into_iter().zip(&accepted) {
+                report.index = index;
+                result.supplement_reports[index] = report;
+            }
+        }
+        return Ok(result);
+    }
     let (primary_speeds, primary_distances) = alignment_samples(&primary_doc);
     let automatic = documents
         .iter()
@@ -299,6 +328,31 @@ fn merge_fit_with_report(
         .iter()
         .map(|data| FitDocument::parse(data).map_err(FitMergeError::from))
         .collect::<Result<Vec<_>, _>>()?;
+    let mut source_indexes = Vec::with_capacity(sources.len());
+    let sources: Vec<_> = sources
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, source)| {
+            if incompatible_session_sports(&primary, &source) {
+                let report = &mut supplement_reports[index];
+                report.offset_seconds = None;
+                report
+                    .notes
+                    .push("补源运动类型与主源不一致，已跳过补源".to_owned());
+                None
+            } else {
+                source_indexes.push(index);
+                Some(source)
+            }
+        })
+        .collect();
+    if sources.is_empty() {
+        return Ok(FitMergeResult {
+            data: primary.to_bytes()?,
+            supplement_reports,
+        });
+    }
+    let offsets: Vec<_> = source_indexes.iter().map(|&index| offsets[index]).collect();
     let developer_index_maps = allocate_developer_indexes(&primary, &sources)?;
 
     let mut records = message_index_by_timestamp(&primary, 20);
@@ -331,7 +385,8 @@ fn merge_fit_with_report(
                         source_index,
                         &[3, 4, 7, 9, 13],
                         |field| {
-                            let counts = &mut supplement_reports[source_number].filled_counts;
+                            let counts = &mut supplement_reports[source_indexes[source_number]]
+                                .filled_counts;
                             match field {
                                 3 => counts.heart_rate += 1,
                                 4 => counts.cadence += 1,
@@ -424,6 +479,26 @@ fn merge_fit_with_report(
         data,
         supplement_reports,
     })
+}
+
+/// Generic/missing sport retains legacy behavior. Any pair of explicit differing
+/// session sports is unsafe, including a multisport supplement containing a run.
+fn incompatible_session_sports(primary: &FitDocument, supplement: &FitDocument) -> bool {
+    fn sports(document: &FitDocument) -> HashSet<u8> {
+        document
+            .messages()
+            .iter()
+            .enumerate()
+            .filter(|(_, message)| message.global_number() == 18)
+            .filter_map(|(index, _)| document.read_u8(index, 5))
+            .filter(|sport| *sport != 0)
+            .collect()
+    }
+    let primary = sports(primary);
+    let supplement = sports(supplement);
+    !primary.is_empty()
+        && !supplement.is_empty()
+        && (primary.len() != 1 || supplement.len() != 1 || primary != supplement)
 }
 
 fn validate_inputs(primary: &[u8], supplements: &[&[u8]]) -> Result<(), FitMergeError> {
@@ -848,6 +923,91 @@ mod tests {
     };
     use crate::fit::{FitDocument, crc16};
     use crate::fit_alignment::FitStaticAlignment;
+
+    fn session_sensor_fit(sports: &[u8], heart_rate: Option<u8>, timestamp: u32) -> Vec<u8> {
+        let timestamp = timestamp.to_le_bytes();
+        let hr = [heart_rate.unwrap_or(u8::MAX)];
+        let mut body = message(20, &[(253, 0x86, &timestamp), (3, 0x02, &hr)]);
+        for sport in sports {
+            body.extend(message(
+                18,
+                &[(2, 0x86, &timestamp), (5, 0x00, &[*sport]), (16, 0x02, &hr)],
+            ));
+        }
+        fit_file(&body)
+    }
+
+    #[test]
+    fn sync_rejects_incompatible_sport_per_supplement_before_alignment_or_sensor_copy() {
+        let primary = session_sensor_fit(&[1], None, 1000);
+        // This incompatible source also cannot align; it must not block the valid run.
+        let ride = session_sensor_fit(&[2], Some(90), 100_000);
+        let run = session_sensor_fit(&[1], Some(150), 1001);
+        let result = super::merge_fit_for_sync_with_report(&primary, &[&ride, &run]).unwrap();
+        let doc = FitDocument::parse(&result.data).unwrap();
+        assert_eq!(doc.read_u8(0, 3), Some(150));
+        assert_eq!(doc.read_u8(1, 16), Some(150));
+        assert_eq!(result.supplement_reports.len(), 2);
+        let rejected = &result.supplement_reports[0];
+        assert_eq!(rejected.index, 0);
+        assert_eq!(rejected.offset_seconds, None);
+        assert_eq!(
+            rejected.filled_counts,
+            super::FitSensorFilledCounts::default()
+        );
+        assert!(rejected.notes.iter().any(|note| note.contains("运动类型")));
+        assert_eq!(result.supplement_reports[1].index, 1);
+        assert_eq!(result.supplement_reports[1].offset_seconds, Some(-1));
+        assert_eq!(result.supplement_reports[1].filled_counts.heart_rate, 1);
+    }
+
+    #[test]
+    fn explicit_merge_rejects_known_cross_sport_and_mixed_sessions_in_both_modes() {
+        for mode in [
+            FitSupplementMode::SensorsOnly,
+            FitSupplementMode::FillRecords,
+        ] {
+            for (primary_sports, supplement_sports) in [
+                (&[1][..], &[2][..]),
+                (&[2][..], &[1][..]),
+                (&[1][..], &[1, 2][..]),
+                (&[1, 2][..], &[1, 2][..]),
+            ] {
+                let primary = session_sensor_fit(primary_sports, None, 1000);
+                let other = session_sensor_fit(supplement_sports, Some(90), 1000);
+                let result = super::merge_fit_with_report(
+                    &primary,
+                    &[&other],
+                    &FitMergeOptions {
+                        supplement_mode: mode,
+                        alignment: FitStaticAlignment::Absolute,
+                    },
+                )
+                .unwrap();
+                assert_eq!(result.data, primary);
+                assert_eq!(result.supplement_reports[0].offset_seconds, None);
+                assert!(
+                    result.supplement_reports[0]
+                        .notes
+                        .iter()
+                        .any(|note| note.contains("运动类型"))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn merge_preserves_legacy_unknown_and_same_sport_supplements() {
+        for sports in [&[][..], &[0][..], &[255][..], &[1][..], &[1, 1][..]] {
+            let primary = session_sensor_fit(&[1], None, 1000);
+            let supplement = session_sensor_fit(sports, Some(150), 1000);
+            let merged = merge_fit_sensors(&primary, &[&supplement]).unwrap();
+            assert_eq!(
+                FitDocument::parse(&merged).unwrap().read_u8(0, 3),
+                Some(150)
+            );
+        }
+    }
 
     #[test]
     fn sync_report_counts_actual_record_fills_in_source_priority_order() {

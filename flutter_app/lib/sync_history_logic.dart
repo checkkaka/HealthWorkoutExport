@@ -1,4 +1,5 @@
 import 'native_channels.dart';
+import 'workout_sport.dart';
 import 'src/rust/api/simple.dart' as rust;
 
 /// Swift parity: oldest local first, closest start strictly within two minutes,
@@ -36,6 +37,15 @@ Map<String, String> remoteIdAssignments(
     var delta = 120.0;
     for (final remote in remotes) {
       if (!isValidStravaActivityId(remote.id) || used.contains(remote.id)) {
+        continue;
+      }
+      if (!compatibleWorkoutSports(
+        sourceSportType(
+          local.value['primarySourceId'] as String?,
+          sportType: local.value['sportType'] as String?,
+        ),
+        remote.sportType,
+      )) {
         continue;
       }
       final candidateDelta = (remote.startTimeSeconds - start).abs();

@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -757,6 +758,27 @@ class NativeChannels {
             }
             return
         }
+        if (call.method in setOf("keepStatus", "keepLease", "writeKeepAuthorization", "clearKeepAuthorization")) {
+            try {
+                when (call.method) {
+                    "keepStatus" -> result.success(store.keepStatus())
+                    "keepLease" -> result.success(store.keepLease())
+                    "writeKeepAuthorization" -> {
+                        store.writeKeepAuthorization(call.arguments)
+                        result.success(null)
+                    }
+                    "clearKeepAuthorization" -> {
+                        store.clearKeepAuthorization()
+                        result.success(null)
+                    }
+                }
+            } catch (failure: SecretStore.KeepFailure) {
+                // Credential values and storage exception details never cross
+                // the method channel in an error response.
+                result.error(failure.code, "Keep authorization is unavailable; please authorize again", null)
+            }
+            return
+        }
         when (call.method) {
             "xingzheStatus" -> result.success(
                 mapOf(
@@ -853,23 +875,135 @@ private fun MethodCall.bytes(): ByteArray {
     }
 }
 
-class SecretStore(context: Context) {
-    private val prefs = context.getSharedPreferences("health_workout_export_vault", Context.MODE_PRIVATE)
+internal interface SecretCipher {
+    fun encrypt(value: String): String
+    fun decrypt(packed: String): String
+}
+
+class SecretStore internal constructor(
+    private val prefs: SharedPreferences,
+    private val cipher: SecretCipher,
+) {
+    constructor(context: Context) : this(
+        context.getSharedPreferences("health_workout_export_vault", Context.MODE_PRIVATE),
+        AndroidKeyStoreCipher(),
+    )
 
     fun get(account: String): String? {
         val packed = prefs.getString(account, null) ?: return null
-        return decrypt(packed)
+        return cipher.decrypt(packed)
     }
 
     fun require(account: String): String = get(account) ?: error("missing $account")
 
     fun set(account: String, value: String) {
-        prefs.edit().putString(account, encrypt(value)).apply()
+        prefs.edit().putString(account, cipher.encrypt(value)).apply()
     }
 
     fun delete(account: String) {
         prefs.edit().remove(account).apply()
     }
+
+    class KeepFailure(val code: String) : RuntimeException("Keep authorization operation failed")
+
+    fun keepStatus(): Map<String, Boolean> = synchronized(KEEP_LOCK) {
+        val configured = readKeep() != null
+        mapOf("hasAccount" to configured, "hasToken" to configured)
+    }
+
+    fun keepLease(): Map<String, String> = synchronized(KEEP_LOCK) {
+        readKeep() ?: throw KeepFailure("keep_not_configured")
+    }
+
+    fun writeKeepAuthorization(arguments: Any?) {
+        val authorization = validateKeep(arguments, "invalid_arguments")
+        // Seal the entire pair before acquiring an editor or touching storage.
+        // A single ciphertext prevents mixed-account leases even after a crash.
+        val packed = try {
+            val account = authorization.getValue("account")
+            // A versioned, length-prefixed pair keeps token characters opaque
+            // and cannot acquire arbitrary credential fields.
+            cipher.encrypt("K1:${account.length}:$account${authorization.getValue("token")}")
+        } catch (_: Exception) {
+            throw KeepFailure("credential_store_error")
+        }
+        replaceKeep(packed)
+    }
+
+    fun clearKeepAuthorization() = replaceKeep(null)
+
+    private fun readKeep(): Map<String, String>? {
+        if (prefs in KEEP_UNCERTAIN) throw KeepFailure("credential_store_error")
+        val packed = try { prefs.getString(KEEP_RECORD, null) }
+        catch (_: Exception) { throw KeepFailure("credential_store_error") }
+        if (packed == null) return null
+        try {
+            val record = cipher.decrypt(packed)
+            if (!record.startsWith("K1:")) throw KeepFailure("credential_store_corrupt")
+            val separator = record.indexOf(':', 3)
+            if (separator !in 4..7) throw KeepFailure("credential_store_corrupt")
+            val lengthText = record.substring(3, separator)
+            val accountLength = lengthText.toIntOrNull() ?: throw KeepFailure("credential_store_corrupt")
+            if (accountLength !in 1..2560 || accountLength.toString() != lengthText ||
+                separator + 1 + accountLength >= record.length) throw KeepFailure("credential_store_corrupt")
+            val accountEnd = separator + 1 + accountLength
+            return validateKeep(mapOf(
+                "account" to record.substring(separator + 1, accountEnd),
+                "token" to record.substring(accountEnd),
+            ), "credential_store_corrupt")
+        } catch (_: Exception) {
+            throw KeepFailure("credential_store_corrupt")
+        }
+    }
+
+    private fun replaceKeep(packed: String?) = synchronized(KEEP_LOCK) {
+        val previous = try { prefs.getString(KEEP_RECORD, null) }
+        catch (_: Exception) { throw KeepFailure("credential_store_error") }
+        if (commitKeep(packed)) {
+            KEEP_UNCERTAIN.remove(prefs)
+        } else {
+            // Android may update its in-process map even when commit() fails.
+            // Restore the old ciphertext synchronously before permitting leases.
+            // If restoring also fails, every store using these preferences stays
+            // blocked until a fresh authorization or clear is confirmed durable.
+            if (!commitKeep(previous)) KEEP_UNCERTAIN.add(prefs)
+            throw KeepFailure("credential_store_error")
+        }
+        Unit
+    }
+
+    private fun commitKeep(packed: String?): Boolean = try {
+        val editor = prefs.edit()
+        if (packed == null) editor.remove(KEEP_RECORD) else editor.putString(KEEP_RECORD, packed)
+        editor.commit()
+    } catch (_: Exception) { false }
+
+    private fun validateKeep(arguments: Any?, failureCode: String): Map<String, String> {
+        val values = arguments as? Map<*, *> ?: throw KeepFailure(failureCode)
+        if (values.keys != setOf("account", "token")) throw KeepFailure(failureCode)
+        val account = values["account"] as? String ?: throw KeepFailure(failureCode)
+        val token = values["token"] as? String ?: throw KeepFailure(failureCode)
+        val encodedSizes = listOf(account, token).map { value ->
+            if (value.isBlank() || value.length > 2560 || '\u0000' in value) throw KeepFailure(failureCode)
+            try {
+                Charsets.UTF_8.newEncoder().onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .encode(java.nio.CharBuffer.wrap(value)).remaining()
+            } catch (_: Exception) { throw KeepFailure(failureCode) }
+        }
+        // Match the Windows record's 2560-byte bound including its 32-byte header.
+        if (encodedSizes.sum() > 2528) throw KeepFailure(failureCode)
+        return mapOf("account" to account, "token" to token)
+    }
+
+    companion object {
+        private const val KEEP_RECORD = "keep.authorization.v1"
+        private val KEEP_LOCK = Any()
+        private val KEEP_UNCERTAIN = mutableSetOf<SharedPreferences>()
+    }
+}
+
+private class AndroidKeyStoreCipher : SecretCipher {
 
     private fun key(): SecretKey {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -887,14 +1021,14 @@ class SecretStore(context: Context) {
         return generator.generateKey()
     }
 
-    private fun encrypt(value: String): String {
+    override fun encrypt(value: String): String {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())
         val encrypted = cipher.doFinal(value.toByteArray())
         return android.util.Base64.encodeToString(cipher.iv + encrypted, android.util.Base64.NO_WRAP)
     }
 
-    private fun decrypt(packed: String): String {
+    override fun decrypt(packed: String): String {
         val all = android.util.Base64.decode(packed, android.util.Base64.NO_WRAP)
         val iv = all.copyOfRange(0, 12)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")

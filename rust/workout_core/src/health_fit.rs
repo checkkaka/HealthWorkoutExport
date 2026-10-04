@@ -47,6 +47,10 @@ struct Bundle {
     duration_seconds: f64,
     activity_type: i64,
     #[serde(default)]
+    source_name: Option<String>,
+    #[serde(default)]
+    sub_sport: Option<u8>,
+    #[serde(default)]
     total_energy_kcal: Option<f64>,
     #[serde(default)]
     total_distance_meters: Option<f64>,
@@ -164,7 +168,16 @@ pub fn encode_health_workout_bundle_json(
             field_u32(3, 0x8c, serial),
             field_u16(4, 1),
             field_u16(5, 100),
-            field_bytes(27, 0x07, b"HK Export\0".to_vec()),
+            field_bytes(27, 0x07, {
+                let mut name = bundle
+                    .source_name
+                    .as_deref()
+                    .unwrap_or("HK Export")
+                    .as_bytes()
+                    .to_vec();
+                name.push(0);
+                name
+            }),
         ],
     )?;
 
@@ -220,6 +233,7 @@ pub fn encode_health_workout_bundle_json(
             average_heart_rate,
             maximum_heart_rate,
             sport,
+            bundle.sub_sport.unwrap_or(0),
         )?,
     )?;
     writer.message(
@@ -236,6 +250,7 @@ pub fn encode_health_workout_bundle_json(
             average_heart_rate,
             maximum_heart_rate,
             sport,
+            bundle.sub_sport.unwrap_or(0),
         )?,
     )?;
     let local_timestamp = i64::from(end_fit) + i64::from(timezone_offset_seconds);
@@ -256,6 +271,12 @@ pub fn encode_health_workout_bundle_json(
 }
 
 fn validate_bundle(bundle: &Bundle, timezone_offset_seconds: i32) -> Result<(), HealthFitError> {
+    if bundle.source_name.as_ref().is_some_and(|name| {
+        name.is_empty() || name.len() > 80 || name.chars().any(char::is_control)
+    }) || bundle.sub_sport == Some(u8::MAX)
+    {
+        return Err(HealthFitError::InvalidValue);
+    }
     if bundle.start_ms > bundle.end_ms
         || !bundle.duration_seconds.is_finite()
         || bundle.duration_seconds < 0.0
@@ -500,6 +521,7 @@ fn summary_fields(
     average_hr: Option<f64>,
     maximum_hr: Option<f64>,
     sport: u8,
+    sub_sport: u8,
 ) -> Result<Vec<Field>, HealthFitError> {
     let mut fields = vec![
         field_u16(254, 0),
@@ -524,7 +546,7 @@ fn summary_fields(
         fields.push(scaled_u8(if lap { 16 } else { 17 }, value, 1.0)?);
     }
     fields.push(field_u8(if lap { 25 } else { 5 }, 0x00, sport));
-    fields.push(field_u8(if lap { 39 } else { 6 }, 0x00, 0));
+    fields.push(field_u8(if lap { 39 } else { 6 }, 0x00, sub_sport));
     if !lap {
         fields.push(field_u16(25, 0));
         fields.push(field_u16(26, 1));

@@ -6,6 +6,7 @@ pub mod fit_alignment;
 #[allow(unsafe_code)]
 mod frb_generated;
 pub mod health_draft;
+pub mod keep;
 pub mod onelap;
 pub mod strava;
 pub mod sync_state;
