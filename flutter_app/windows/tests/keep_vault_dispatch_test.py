@@ -6,23 +6,24 @@ translation unit. The replacement backend models atomic Credential Manager
 writes; no Windows installation, real credentials, or network is used. A native
 Windows adapter build is still required separately.
 """
+import argparse
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class KeepVaultDispatchTest(unittest.TestCase):
-    def test_production_keep_dispatch(self):
-        source = (ROOT / "runner/native_channels.cpp").read_text()
-        self.assertTrue('method == "keepStatus"' in source,
-                        "The production third-party vault must dispatch Keep")
-        checks = source[source.index("const Value* Argument("):source.index("std::wstring Wide(")]
-        dispatch = source[source.index("bool Present("):source.index("bool EncodePreference(")]
-        shim = r'''
+def fixture_source():
+    source = (ROOT / "runner/native_channels.cpp").read_text(encoding="utf-8")
+    if 'method == "keepStatus"' not in source:
+        raise AssertionError("The production third-party vault must dispatch Keep")
+    checks = source[source.index("const Value* Argument("):source.index("std::wstring Wide(")]
+    dispatch = source[source.index("bool Present("):source.index("bool EncodePreference(")]
+    shim = r'''
 #include "native_channel_validation.h"
 #include <algorithm>
 #include <cmath>
@@ -78,7 +79,7 @@ void ClearVault(const std::string& vault, Result* result) {
   storage.erase(vault); if (vault == "keep") corrupt_record = false; result->Success();
 }
 '''
-        cases = r'''
+    cases = r'''
 void Check(bool value, const char* name) {
   if (!value) { std::cerr << "FAIL: " << name << "\n"; std::exit(1); }
 }
@@ -150,9 +151,14 @@ int main() {
   std::cout << "Keep production dispatch tests passed (synthetic backend)\n";
 }
 '''
+    return shim + checks + dispatch + cases
+
+
+class KeepVaultDispatchTest(unittest.TestCase):
+    def test_production_keep_dispatch(self):
         with tempfile.TemporaryDirectory(prefix="hwe-keep-windows-") as directory:
             unit = Path(directory) / "dispatch.cpp"
-            unit.write_text(shim + checks + dispatch + cases)
+            unit.write_text(fixture_source(), encoding="utf-8")
             binary = Path(directory) / ("keep_dispatch.exe" if os.name == "nt" else "keep_dispatch")
             compiler = os.environ.get("CXX", "g++")
             if Path(compiler).stem.lower() in ("cl", "clang-cl"):
@@ -166,4 +172,14 @@ int main() {
 
 
 if __name__ == "__main__":
-    unittest.main()
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--emit-cpp", type=Path)
+    options, test_arguments = parser.parse_known_args()
+    if options.emit_cpp is not None:
+        if test_arguments:
+            parser.error("--emit-cpp does not accept test arguments")
+        # CMake owns compilation so MSBuild supplies the MSVC include/library setup.
+        with options.emit_cpp.open("w", encoding="utf-8", newline="\n") as output:
+            output.write(fixture_source())
+    else:
+        unittest.main(argv=[sys.argv[0]] + test_arguments)

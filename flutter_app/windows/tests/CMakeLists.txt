@@ -24,9 +24,23 @@ endforeach()
 # Python only extracts source; the configured C++ compiler runs the behavior tests.
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
-  add_test(NAME keep_vault_dispatch COMMAND "${CMAKE_COMMAND}" -E env
-    "CXX=${CMAKE_CXX_COMPILER}" "${Python3_EXECUTABLE}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/keep_vault_dispatch_test.py")
+  set(keep_vault_fixture "${CMAKE_CURRENT_BINARY_DIR}/keep_vault_dispatch_fixture.cpp")
+  add_custom_command(
+    OUTPUT "${keep_vault_fixture}"
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/keep_vault_dispatch_test.py"
+      --emit-cpp "${keep_vault_fixture}"
+    DEPENDS
+      "${CMAKE_CURRENT_SOURCE_DIR}/keep_vault_dispatch_test.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../runner/native_channels.cpp"
+    VERBATIM
+  )
+  add_executable(keep_vault_dispatch_test "${keep_vault_fixture}")
+  hwe_native_settings(keep_vault_dispatch_test)
+  target_include_directories(keep_vault_dispatch_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../runner")
+  add_test(NAME keep_vault_dispatch COMMAND keep_vault_dispatch_test)
+  add_test(NAME keep_vault_fixture_generation COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/keep_vault_fixture_generation_test.py")
 else()
   message(STATUS "Python unavailable: portable Keep vault dispatch test is not registered")
 endif()
