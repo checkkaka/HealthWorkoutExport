@@ -68,6 +68,10 @@ final class KeepVaultChannel {
 
   Future<void> clearAuthorization() =>
       _channel.invokeMethod<void>('clearKeepAuthorization');
+
+  /// Destructive recovery only after explicit confirmation. No old data is read.
+  Future<void> resetAuthorization() =>
+      _channel.invokeMethod<void>('resetKeepAuthorization');
 }
 
 Map<Object?, Object?> _map(Object? value) {

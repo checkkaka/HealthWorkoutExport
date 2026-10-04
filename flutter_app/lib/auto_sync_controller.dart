@@ -1030,6 +1030,10 @@ final class AutoSyncController {
           throw const AutoSyncRecoveryException('旧记录缺少恢复所需的活动信息');
         }
         final fit = await _stateStore.readSyncedFit(fingerprint);
+        final recordedSport = sourceSportType(
+          sourceId,
+          sportType: existing['sportType'] as String?,
+        );
         final payload = Uint8List.fromList(
           utf8.encode(
             jsonEncode({
@@ -1044,18 +1048,13 @@ final class AutoSyncController {
               'durationSeconds': duration,
               'uploadData': base64Encode(fit),
               'filename': '$fingerprint.fit',
-              'sportType': sourceSportType(
-                sourceId,
-                sportType: existing['sportType'] as String?,
-              ),
+              'sportType': recordedSport,
               'commute':
-                  normalizedWorkoutSport(
-                        sourceSportType(
-                          sourceId,
-                          sportType: existing['sportType'] as String?,
-                        ),
-                      ) ==
-                      'Ride' &&
+                  // Legacy HealthKit/bundle-ID records have no sport field.
+                  // Preserve their old commute candidate; _uploadFit classifies
+                  // the saved final FIT and suppresses it for explicit Run bytes.
+                  (recordedSport == null ||
+                      normalizedWorkoutSport(recordedSport) == 'Ride') &&
                   _commute(
                     distanceMeters: (existing['distanceMeters'] as num?)
                         ?.toDouble(),

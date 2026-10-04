@@ -10,7 +10,7 @@ SOURCE = (Path(__file__).resolve().parents[1] /
 class KeepVaultContractTest(unittest.TestCase):
     def test_keep_channel_methods_exist(self):
         source = SOURCE.read_text()
-        for method in ("keepStatus", "keepLease", "writeKeepAuthorization", "clearKeepAuthorization"):
+        for method in ("keepStatus", "keepLease", "writeKeepAuthorization", "clearKeepAuthorization", "resetKeepAuthorization"):
             self.assertTrue(f'"{method}"' in source, f"Keep method missing: {method}")
 
     def test_secret_store_record_codec_has_no_android_runtime_dependencies(self):

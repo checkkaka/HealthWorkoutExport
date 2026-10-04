@@ -56,8 +56,11 @@ struct Result {
 };
 std::map<std::string, SecretMap> storage;
 int writes = 0;
-bool fail_write = false, fail_clear = false;
-bool ReadVault(const std::string& vault, SecretMap* state, Result*) {
+bool fail_write = false, fail_clear = false, corrupt_record = false;
+int reads = 0;
+bool ReadVault(const std::string& vault, SecretMap* state, Result* result) {
+  ++reads;
+  if (vault == "keep" && corrupt_record) { result->Error("credential_store_corrupt", "synthetic corruption"); return false; }
   *state = storage[vault]; return true;
 }
 bool WriteVault(const std::string& vault, const SecretMap& state, Result* result) {
@@ -72,7 +75,7 @@ bool WriteVault(const std::string& vault, const SecretMap& state, Result* result
 }
 void ClearVault(const std::string& vault, Result* result) {
   if (fail_clear) { result->Error("credential_store_error", "synthetic failure"); return; }
-  storage.erase(vault); result->Success();
+  storage.erase(vault); if (vault == "keep") corrupt_record = false; result->Success();
 }
 '''
         cases = r'''
@@ -127,6 +130,22 @@ int main() {
     storage["keep"] = partial;
     Check(Run("keepLease").code == "keep_not_configured", "Partial record fails closed");
   }
+  corrupt_record = true;
+  Check(Run("keepStatus").code == "credential_store_corrupt", "Corrupt status fails closed");
+  const auto before_write = writes;
+  Check(Run("writeKeepAuthorization", Credentials()).code == "credential_store_corrupt", "Login cannot silently overwrite corruption");
+  Check(writes == before_write, "Corrupt storage never reaches writer");
+  const auto before_reset_reads = reads;
+  fail_clear = true;
+  Check(Run("resetKeepAuthorization").code == "credential_store_error", "Reset deletion failure is surfaced");
+  Check(corrupt_record, "Failed reset cannot claim corruption is cleared");
+  fail_clear = false;
+  Check(Run("resetKeepAuthorization").code == "success", "Explicit reset recovers corrupt record");
+  Check(Run("resetKeepAuthorization").code == "success", "Reset is idempotent");
+  Check(reads == before_reset_reads, "Reset never reads or decodes old record");
+  Check(Run("resetKeepAuthorization", {}, true).code == "not_implemented", "Reset cannot reach Strava channel");
+  Check(Run("resetOnelapAuthorization").code == "not_implemented", "Reset is Keep-specific");
+  Check(Run("writeKeepAuthorization", Credentials()).code == "success", "Login works after confirmed reset");
   Check(storage["onelap"] == SecretMap{{"onelap.account", "another-provider"}}, "Other vaults are untouched");
   std::cout << "Keep production dispatch tests passed (synthetic backend)\n";
 }

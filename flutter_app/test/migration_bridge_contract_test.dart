@@ -3,6 +3,9 @@ import 'dart:io';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
+import 'package:health_workout_export/auto_sync_controller.dart';
+import 'package:health_workout_export/sync_state_store.dart';
 import 'package:health_workout_export/src/rust/api/simple.dart';
 import 'package:health_workout_export/src/rust/api/keep.dart' as keep;
 import 'package:health_workout_export/src/rust/frb_generated.dart';
@@ -475,4 +478,123 @@ void main() {
       );
     },
   );
+  for (final activityType in [13, 37]) {
+    for (final sourceId in ['healthkit', 'legacy.watch.bundle']) {
+      for (final replace in [false, true]) {
+        test(
+          'legacy saved FIT reconstructs sport safely: type=$activityType source=$sourceId replace=$replace',
+          () async {
+            const channel = MethodChannel('health_workout_export/sync_files');
+            final messenger = TestDefaultBinaryMessengerBinding
+                .instance
+                .defaultBinaryMessenger;
+            final fit = await _fixtureFit(activityType: activityType);
+            Uint8List state = _jsonBytes({
+              _fingerprint: {
+                'fingerprint': _fingerprint,
+                'status': replace ? 'uploaded' : 'failed',
+                'primarySourceId': sourceId,
+                'primaryActivityId': 'legacy-workout',
+                'updatedAt': 725760000,
+                'startDate': 725760000,
+                'durationSeconds': 50,
+                'distanceMeters': 1000,
+                'title': 'Legacy workout',
+                if (replace) 'remoteId': '900',
+              },
+            });
+            Uint8List? recovery;
+            String? transactionExternalId;
+            var uploads = 0, deletes = 0;
+            messenger.setMockMethodCallHandler(channel, (call) async {
+              final arguments = call.arguments as Map?;
+              switch (call.method) {
+                case 'readState':
+                  return state;
+                case 'writeState':
+                  state = arguments!['bytes'] as Uint8List;
+                  return null;
+                case 'readSyncedFit':
+                  return fit;
+                case 'writeSyncedFit':
+                  expect(arguments!['bytes'], fit);
+                  return null;
+                case 'readRecovery':
+                  if (recovery == null) {
+                    throw PlatformException(code: 'sync_file_missing');
+                  }
+                  return recovery;
+                case 'writeRecovery':
+                  recovery = arguments!['bytes'] as Uint8List;
+                  final saved = jsonDecode(utf8.decode(recovery!)) as Map;
+                  transactionExternalId = saved['externalId'] as String?;
+                  return null;
+                case 'deleteRecovery':
+                  recovery = null;
+                  return null;
+                default:
+                  throw MissingPluginException(call.method);
+              }
+            });
+            try {
+              final controller = AutoSyncController(
+                stateStore: SyncStateStore.withDependencies(
+                  const SyncFilesChannel.withChannel(channel),
+                  syncStateApply,
+                  syncRecoveryReencode,
+                  syncRecoveryApply,
+                ),
+                upload:
+                    ({
+                      required logicalOperationId,
+                      required fit,
+                      required externalId,
+                      required filename,
+                      required commute,
+                      description,
+                      name,
+                    }) async {
+                      uploads++;
+                      expect(
+                        commute,
+                        activityType == 13,
+                        reason:
+                            'legacy cycling keeps commute; Run final bytes suppress it',
+                      );
+                      expect(externalId, transactionExternalId);
+                      expect(
+                        fit,
+                        await _fixtureFit(activityType: activityType),
+                      );
+                      return const StravaUploadFfiResponse(
+                        status: StravaUploadFfiStatus.completed,
+                        remoteId: '901',
+                        isDuplicate: false,
+                      );
+                    },
+              );
+              final result = await controller.resumeRecovery(
+                _fingerprint,
+                replaceExisting: replace,
+                deleteRemote: (id) async {
+                  expect(id, '900');
+                  deletes++;
+                },
+              );
+              expect(result.succeeded, true, reason: result.message);
+              expect(uploads, 1);
+              expect(deletes, replace ? 1 : 0);
+              expect(recovery, isNull);
+              final saved =
+                  (jsonDecode(utf8.decode(state)) as Map)[_fingerprint] as Map;
+              expect(saved['status'], 'uploaded');
+              expect(saved['remoteId'], '901');
+            } finally {
+              messenger.setMockMethodCallHandler(channel, null);
+            }
+          },
+        );
+      }
+    }
+  }
 }

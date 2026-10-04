@@ -14,12 +14,13 @@ Flutter/Rust 客户端新增 **Keep 跑步（实验性）**：在 Keep 页签登
 固定工具版本见 `.fvmrc` 和 `rust-toolchain.toml`。本地验证：
 
 ```bash
+export CI=true BOT=true DASH__SUPPRESS_ANALYTICS=true FLUTTER_SUPPRESS_ANALYTICS=true
 cargo test --manifest-path rust/workout_core/Cargo.toml --locked
 cargo clippy --manifest-path rust/workout_core/Cargo.toml --locked --all-targets -- -D warnings
 cd flutter_app
-flutter pub get --enforce-lockfile
-flutter analyze
-flutter test
+flutter --suppress-analytics pub get --enforce-lockfile
+flutter --suppress-analytics analyze --no-pub
+flutter --suppress-analytics test --no-pub
 ```
 
 Flutter 单测包含真实 Rust FFI 调用，需要 Cargo 可用。Linux 仅用于核心及 Flutter 单测，不是本项目交付平台。iOS/macOS 编译与真机健康权限、Android Health Connect、Windows 原生通道仍需相应平台验收。

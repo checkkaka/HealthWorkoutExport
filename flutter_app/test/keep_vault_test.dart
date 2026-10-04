@@ -79,6 +79,22 @@ void main() {
   );
 
   test(
+    'Keep reset uses a fixed no-argument method and propagates failures',
+    () async {
+      await vault.resetAuthorization();
+      expect(calls.single.method, 'resetKeepAuthorization');
+      expect(calls.single.arguments, isNull);
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        throw PlatformException(code: 'credential_store_error');
+      });
+      await expectLater(
+        vault.resetAuthorization(),
+        throwsA(isA<PlatformException>()),
+      );
+    },
+  );
+
+  test(
     'invalid Keep credentials never cross the method channel or leak in errors',
     () async {
       for (final token in ['', '  ', 'bad\u0000token']) {

@@ -76,11 +76,18 @@ final class ThirdPartyVaultPlugin: NSObject, FlutterPlugin {
       return
     }
     DispatchQueue.main.async {
+      // Explicit, confirmed recovery must work even when old values or the
+      // transaction journal cannot be decoded. Ordinary operations stay atomic.
+      if operation == .resetKeepAuthorization {
+        result(Self.resetKeepAuthorization(remove: self.remove))
+        return
+      }
       if let error = self.recoverJournalIfNeeded(for: operation.vault) {
         result(error)
         return
       }
       switch operation {
+      case .resetKeepAuthorization: return // Handled before any Keychain read.
       case .xingzheStatus, .onelapStatus, .keepStatus:
         self.reportStatus(for: operation.vault, result: result)
       case .xingzheLease, .onelapLease, .keepLease:
@@ -202,13 +209,13 @@ final class ThirdPartyVaultPlugin: NSObject, FlutterPlugin {
   private enum Operation: String {
     case xingzheStatus, xingzheLease, writeXingzheAuthorization, clearXingzheAuthorization
     case onelapStatus, onelapLease, writeOnelapAuthorization, clearOnelapAuthorization
-    case keepStatus, keepLease, writeKeepAuthorization, clearKeepAuthorization
+    case keepStatus, keepLease, writeKeepAuthorization, clearKeepAuthorization, resetKeepAuthorization
 
     var vault: Vault {
       switch self {
       case .xingzheStatus, .xingzheLease, .writeXingzheAuthorization, .clearXingzheAuthorization: .xingzhe
       case .onelapStatus, .onelapLease, .writeOnelapAuthorization, .clearOnelapAuthorization: .onelap
-      case .keepStatus, .keepLease, .writeKeepAuthorization, .clearKeepAuthorization: .keep
+      case .keepStatus, .keepLease, .writeKeepAuthorization, .clearKeepAuthorization, .resetKeepAuthorization: .keep
       }
     }
   }
@@ -264,11 +271,28 @@ final class ThirdPartyVaultPlugin: NSObject, FlutterPlugin {
       let journal = try? JSONDecoder().decode(VaultJournal.self, from: data),
       journal.previous.map(\.account) == vault.accounts
         || (vault == .onelap && journal.previous.map(\.account) == Array(vault.accounts.dropLast()))
-    else { return purgeUnrecoverableVault(vault) }
+    else {
+      if vault == .keep {
+        return vaultError("keep_vault_corrupt", "Keep 凭据事务已损坏，请确认重置本机登录信息")
+      }
+      return purgeUnrecoverableVault(vault)
+    }
     guard restore(journal.previous), remove(account: vault.journalAccount) == nil else {
       return vaultError("\(vault.rawValue)_vault_recovery_failed", "\(vault.displayName)凭据事务恢复失败，请重试")
     }
     return nil
+  }
+
+  /// A deliberately nontransactional fixed-key reset. Delete the journal first
+  /// so it can never restore credentials after a partially successful reset.
+  /// No old values are read, decoded, backed up, or rewritten.
+  static func resetKeepAuthorization(remove: (String) -> FlutterError?) -> FlutterError? {
+    if let error = remove(Vault.keep.journalAccount) { return error }
+    var failure: FlutterError?
+    for account in Vault.keep.accounts {
+      if let error = remove(account) { failure = failure ?? error }
+    }
+    return failure
   }
 
   private func purgeUnrecoverableVault(_ vault: Vault) -> FlutterError? {

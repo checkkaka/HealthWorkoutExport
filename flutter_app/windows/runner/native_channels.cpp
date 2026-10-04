@@ -306,9 +306,9 @@ void HandleVault(const Call& call, Result* result, bool strava) {
   if (strava && (method == "stravaStatus" || method == "stravaLease" || method == "writeStravaAuthorization" || method == "clearStravaAuthorization")) vault = "strava";
   else if (!strava && (method == "xingzheStatus" || method == "xingzheLease" || method == "writeXingzheAuthorization" || method == "clearXingzheAuthorization")) vault = "xingzhe";
   else if (!strava && (method == "onelapStatus" || method == "onelapLease" || method == "writeOnelapAuthorization" || method == "clearOnelapAuthorization")) vault = "onelap";
-  else if (!strava && (method == "keepStatus" || method == "keepLease" || method == "writeKeepAuthorization" || method == "clearKeepAuthorization")) vault = "keep";
+  else if (!strava && (method == "keepStatus" || method == "keepLease" || method == "writeKeepAuthorization" || method == "clearKeepAuthorization" || method == "resetKeepAuthorization")) vault = "keep";
   else { result->NotImplemented(); return; }
-  if (method.compare(0, 5, "clear") == 0) { ClearVault(vault, result); return; }
+  if (method.compare(0, 5, "clear") == 0 || method == "resetKeepAuthorization") { ClearVault(vault, result); return; }
   SecretMap state;
   if (!ReadVault(vault, &state, result)) return;
   if (method.compare(0, 5, "write") == 0) {

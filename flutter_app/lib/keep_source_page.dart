@@ -45,6 +45,7 @@ class _KeepSourcePageState extends State<KeepSourcePage> {
   DateTime _customStart = DateTime.now().subtract(const Duration(days: 30));
   DateTime _customEnd = DateTime.now();
   var _configured = false;
+  var _statusError = false;
   var _loading = true;
   var _loggingIn = false;
   var _savingAuthorization = false;
@@ -111,6 +112,8 @@ class _KeepSourcePageState extends State<KeepSourcePage> {
       const SizedBox(height: 12),
       if (_loading && !_configured)
         const Center(child: CircularProgressIndicator())
+      else if (_statusError)
+        _recoveryCard()
       else if (!_configured)
         _loginCard()
       else
@@ -136,6 +139,32 @@ class _KeepSourcePageState extends State<KeepSourcePage> {
         ),
       ],
     ],
+  );
+
+  Widget _recoveryCard() => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(_error ?? '无法读取 Keep 登录状态，请重试'),
+          const SizedBox(height: 8),
+          const Text('安全存储可能暂时不可用，请先重试。若仍无法读取，可重置本机 Keep 登录信息后重新登录。'),
+          TextButton(
+            onPressed: _loggingOut || _loading
+                ? null
+                : () => unawaited(_refreshConfiguration()),
+            child: const Text('重试读取登录状态'),
+          ),
+          TextButton(
+            onPressed: _loggingOut || _loading
+                ? null
+                : () => unawaited(_resetAuthorization()),
+            child: const Text('重置本机 Keep 登录信息'),
+          ),
+        ],
+      ),
+    ),
   );
 
   Widget _loginCard() => Card(
@@ -368,12 +397,14 @@ class _KeepSourcePageState extends State<KeepSourcePage> {
   );
 
   Future<void> _refreshConfiguration() async {
+    setState(() => _loading = true);
     final requestId = ++_requestId;
     try {
       final status = await widget.vault.status();
       if (!mounted || requestId != _requestId) return;
       setState(() {
         _configured = status.isConfigured;
+        _statusError = false;
         _loading = false;
         _error = null;
       });
@@ -382,6 +413,7 @@ class _KeepSourcePageState extends State<KeepSourcePage> {
       if (!mounted || requestId != _requestId) return;
       setState(() {
         _loading = false;
+        _statusError = true;
         _error = '无法读取 Keep 登录状态，请重试';
       });
     }
@@ -399,7 +431,7 @@ class _KeepSourcePageState extends State<KeepSourcePage> {
   }
 
   Future<void> _login() async {
-    if (_loggingIn) return;
+    if (_loggingIn || _statusError || _loading || _loggingOut) return;
     final account = _account.text.trim();
     final password = _password.text;
     if (account.isEmpty || password.isEmpty) return;
@@ -509,6 +541,49 @@ class _KeepSourcePageState extends State<KeepSourcePage> {
       _selected.clear();
       _error = null;
     });
+  }
+
+  Future<void> _resetAuthorization() async {
+    if (_loggingOut || _loading || _exporting || !_statusError) return;
+    setState(() => _loggingOut = true);
+    final accepted = await confirmDestructiveAction(
+      context,
+      title: '重置本机 Keep 登录信息？',
+      message:
+          '将直接删除本机 Keep 账号、登录凭据和未完成的凭据事务；其他账号、已同步的 FIT 文件和历史记录会保留。重置后需要重新登录。',
+      confirmLabel: '确认重置',
+    );
+    if (!mounted) return;
+    if (!accepted) {
+      setState(() => _loggingOut = false);
+      return;
+    }
+    ++_requestId;
+    _cancelSource();
+    try {
+      await widget.vault.resetAuthorization();
+      if (!mounted) return;
+      _account.clear();
+      _password.clear();
+      setState(() {
+        _configured = false;
+        _sessionExpired = false;
+        _workouts = const [];
+        _selected.clear();
+      });
+      // Re-read before enabling login; a successful deletion does not imply the
+      // secure store is currently readable (for example, a device may lock).
+      await _refreshConfiguration();
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = '重置失败，登录信息尚未确认清除，请重试';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _loggingOut = false);
+    }
   }
 
   Future<void> _logout() async {

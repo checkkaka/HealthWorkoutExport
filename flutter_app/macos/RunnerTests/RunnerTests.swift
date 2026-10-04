@@ -473,6 +473,59 @@ extension RunnerTests {
     XCTAssertNil(ThirdPartyVaultPlugin.leasePayload(for: .keep, values: ["keep.account": "account"]))
   }
 
+  func testKeepResetDeletesCorruptValuesAndJournalsWithoutReading() {
+    for journal in [Data([0xff, 0xfe]), Data("not-a-journal".utf8)] {
+      var stored = [
+        "keep.account": Data([0xff]), "keep.token": Data([0xfe]),
+        "keep.vaultJournal": journal,
+        "onelap.token": Data("other-provider".utf8),
+        "synced.history": Data("workout-history".utf8),
+      ]
+      let expected = ["onelap.token": stored["onelap.token"]!, "synced.history": stored["synced.history"]!]
+      var deleted: [String] = []
+      let remove: (String) -> FlutterError? = { account in
+        deleted.append(account)
+        stored.removeValue(forKey: account)
+        return nil
+      }
+      XCTAssertNil(ThirdPartyVaultPlugin.resetKeepAuthorization(remove: remove))
+      XCTAssertEqual(deleted, ["keep.vaultJournal", "keep.account", "keep.token"])
+      XCTAssertEqual(stored, expected)
+      XCTAssertNil(ThirdPartyVaultPlugin.resetKeepAuthorization(remove: remove))
+      XCTAssertEqual(stored, expected)
+    }
+  }
+
+  func testKeepResetJournalDeletionFailureDoesNotTouchCredentials() {
+    var stored = ["keep.account": "account", "keep.token": "token", "keep.vaultJournal": "journal"]
+    let original = stored
+    var deleted: [String] = []
+    let error = ThirdPartyVaultPlugin.resetKeepAuthorization { account in
+      deleted.append(account)
+      if account == "keep.vaultJournal" { return FlutterError(code: "locked", message: nil, details: nil) }
+      stored.removeValue(forKey: account)
+      return nil
+    }
+    XCTAssertEqual(error?.code, "locked")
+    XCTAssertEqual(deleted, ["keep.vaultJournal"])
+    XCTAssertEqual(stored, original)
+  }
+
+  func testKeepResetDeletionFailureIsReportedAndCanBeRetried() {
+    var stored = ["keep.account": "account", "keep.token": "token", "keep.vaultJournal": "journal", "onelap.token": "other"]
+    var failToken = true
+    let remove: (String) -> FlutterError? = { account in
+      if account == "keep.token" && failToken { return FlutterError(code: "locked", message: nil, details: nil) }
+      stored.removeValue(forKey: account)
+      return nil
+    }
+    XCTAssertEqual(ThirdPartyVaultPlugin.resetKeepAuthorization(remove: remove)?.code, "locked")
+    XCTAssertEqual(stored, ["keep.token": "token", "onelap.token": "other"])
+    failToken = false
+    XCTAssertNil(ThirdPartyVaultPlugin.resetKeepAuthorization(remove: remove))
+    XCTAssertEqual(stored, ["onelap.token": "other"])
+  }
+
   func testKeepVaultTokenFailureRollsBackAccount() {
     var stored = ["keep.account": "previous-account", "keep.token": "previous-token"]
     let original = stored

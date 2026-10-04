@@ -160,6 +160,34 @@ class KeepVaultTest {
         }
     }
 
+    @Test fun confirmedResetNeverReadsCorruptStorageAndPreservesOtherData() {
+        store.writeKeepAuthorization(authorization())
+        val record = prefs.values.keys.single()
+        prefs.values[record] = "corrupt-synthetic-secret"
+        prefs.values["onelap.token"] = "unrelated-token"
+        prefs.values["history"] = "synced-workout"
+        prefs.failReads = true
+        store.resetKeepAuthorization()
+        store.resetKeepAuthorization()
+        assertEquals(mapOf("onelap.token" to "unrelated-token", "history" to "synced-workout"), prefs.values)
+        assertEquals(prefs.values, prefs.disk)
+        prefs.failReads = false
+        expectFailure("keep_not_configured") { store.keepLease() }
+    }
+
+    @Test fun failedResetCannotExposeUndurableDeletionAsSuccess() {
+        store.writeKeepAuthorization(authorization())
+        val saved = prefs.disk.toMap()
+        prefs.results.add(false)
+        expectFailure("credential_store_error") { store.resetKeepAuthorization() }
+        assertEquals(saved, prefs.disk)
+        val replacement = SecretStore(prefs, cipher)
+        expectFailure("credential_store_error") { replacement.keepStatus() }
+        replacement.resetKeepAuthorization()
+        assertTrue(prefs.disk.isEmpty())
+        assertEquals(mapOf("hasAccount" to false, "hasToken" to false), store.keepStatus())
+    }
+
     /** Real JVM AES-GCM, substituting only Android Keystore key provisioning. */
     private class TestCipher : SecretCipher {
         private val key = KeyGenerator.getInstance("AES").apply { init(128) }.generateKey()
@@ -187,8 +215,12 @@ class KeepVaultTest {
         val results = ArrayDeque<Boolean>()
         var commits = 0
         var applies = 0
+        var failReads = false
         override fun getAll(): Map<String, *> = values.toMap()
-        override fun getString(key: String?, default: String?): String? = values[key] ?: default
+        override fun getString(key: String?, default: String?): String? {
+            if (failReads) throw ClassCastException("synthetic unreadable stored value")
+            return values[key] ?: default
+        }
         override fun contains(key: String?): Boolean = values.containsKey(key)
         override fun edit(): SharedPreferences.Editor = Editor()
         override fun getStringSet(key: String?, default: MutableSet<String>?): MutableSet<String>? = error("unused")

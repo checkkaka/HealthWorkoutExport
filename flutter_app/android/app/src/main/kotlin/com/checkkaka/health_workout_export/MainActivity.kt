@@ -758,7 +758,7 @@ class NativeChannels {
             }
             return
         }
-        if (call.method in setOf("keepStatus", "keepLease", "writeKeepAuthorization", "clearKeepAuthorization")) {
+        if (call.method in setOf("keepStatus", "keepLease", "writeKeepAuthorization", "clearKeepAuthorization", "resetKeepAuthorization")) {
             try {
                 when (call.method) {
                     "keepStatus" -> result.success(store.keepStatus())
@@ -769,6 +769,10 @@ class NativeChannels {
                     }
                     "clearKeepAuthorization" -> {
                         store.clearKeepAuthorization()
+                        result.success(null)
+                    }
+                    "resetKeepAuthorization" -> {
+                        store.resetKeepAuthorization()
                         result.success(null)
                     }
                 }
@@ -931,6 +935,18 @@ class SecretStore internal constructor(
     }
 
     fun clearKeepAuthorization() = replaceKeep(null)
+
+    // Explicit destructive recovery: never read or decrypt the prior record.
+    // A failed commit may remove only the in-process value, so fail closed until
+    // a retry confirms deletion on disk for all store instances.
+    fun resetKeepAuthorization() = synchronized(KEEP_LOCK) {
+        if (!commitKeep(null)) {
+            KEEP_UNCERTAIN.add(prefs)
+            throw KeepFailure("credential_store_error")
+        }
+        KEEP_UNCERTAIN.remove(prefs)
+        Unit
+    }
 
     private fun readKeep(): Map<String, String>? {
         if (prefs in KEEP_UNCERTAIN) throw KeepFailure("credential_store_error")

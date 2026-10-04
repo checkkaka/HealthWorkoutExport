@@ -48,16 +48,28 @@ void main() {
   final calls = <MethodCall>[];
   var configured = false;
   var failClear = false;
+  var failReset = false;
+  var failStatus = false;
   setUp(() {
     calls.clear();
     configured = false;
     failClear = false;
+    failReset = false;
+    failStatus = false;
     messenger.setMockMethodCallHandler(vault, (call) async {
       calls.add(call);
       if (call.method == 'keepStatus') {
+        if (failStatus) {
+          throw PlatformException(code: 'credential_store_corrupt');
+        }
         return {'hasAccount': configured, 'hasToken': configured};
       }
       if (call.method == 'writeKeepAuthorization') configured = true;
+      if (call.method == 'resetKeepAuthorization') {
+        if (failReset) throw PlatformException(code: 'vault_unavailable');
+        configured = false;
+        failStatus = false;
+      }
       if (call.method == 'clearKeepAuthorization') {
         if (failClear) throw PlatformException(code: 'vault_unavailable');
         configured = false;
@@ -97,6 +109,72 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, '登录 Keep'));
     await tester.pump();
   }
+
+  testWidgets('unreadable status offers retry before allowing login', (
+    tester,
+  ) async {
+    failStatus = true;
+    final source = FakeKeepSource();
+    await mount(tester, source);
+    expect(find.text('重试读取登录状态'), findsOneWidget);
+    expect(find.text('重置本机 Keep 登录信息'), findsOneWidget);
+    expect(find.byKey(const Key('keepPassword')), findsNothing);
+    expect(source.loads, 0);
+    failStatus = false;
+    configured = true;
+    await tester.tap(find.text('重试读取登录状态'));
+    await tester.pumpAndSettle();
+    expect(find.text('晨跑 run-1'), findsOneWidget);
+    expect(
+      calls.where((call) => call.method == 'resetKeepAuthorization'),
+      isEmpty,
+    );
+  });
+
+  testWidgets(
+    'corrupt credentials reset requires confirmation and preserves history',
+    (tester) async {
+      failStatus = true;
+      await mount(tester, FakeKeepSource());
+      await tester.tap(find.text('重置本机 Keep 登录信息'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('已同步的 FIT 文件和历史记录会保留'), findsOneWidget);
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      expect(
+        calls.where((call) => call.method == 'resetKeepAuthorization'),
+        isEmpty,
+      );
+      expect(find.byKey(const Key('keepPassword')), findsNothing);
+      await tester.tap(find.text('重置本机 Keep 登录信息'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '确认重置'));
+      await tester.pumpAndSettle();
+      expect(calls.map((call) => call.method), [
+        'keepStatus',
+        'resetKeepAuthorization',
+        'keepStatus',
+      ]);
+      expect(find.byKey(const Key('keepPassword')), findsOneWidget);
+      expect(find.text('重置本机 Keep 登录信息'), findsNothing);
+    },
+  );
+
+  testWidgets('failed reset stays recoverable and never enables login', (
+    tester,
+  ) async {
+    failStatus = true;
+    failReset = true;
+    await mount(tester, FakeKeepSource());
+    await tester.tap(find.text('重置本机 Keep 登录信息'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '确认重置'));
+    await tester.pumpAndSettle();
+    expect(find.text('重置失败，登录信息尚未确认清除，请重试'), findsOneWidget);
+    expect(find.byKey(const Key('keepPassword')), findsNothing);
+    expect(find.text('重试读取登录状态'), findsOneWidget);
+    expect(find.text('重置本机 Keep 登录信息'), findsOneWidget);
+  });
 
   testWidgets('UTC Keep timestamps display in the device local day and time', (
     tester,
@@ -277,6 +355,8 @@ void main() {
       expect(find.textContaining('退出失败'), findsOneWidget);
       expect(find.byKey(const Key('keepAccount')), findsNothing);
       failClear = false;
+      failReset = false;
+      failStatus = false;
       final pending = Completer<List<WorkoutActivity>>();
       source.load = () => pending.future;
       await tester.tap(find.text('刷新'));

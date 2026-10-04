@@ -110,6 +110,13 @@ fn integer(value: Option<&Value>) -> Result<i64, KeepError> {
         .map(|v| v as i64)
         .ok_or(KeepError::InvalidResponse)
 }
+fn optional_sample_blob(value: Option<&Value>) -> Result<Option<&str>, KeepError> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(text)) => Ok((!text.is_empty()).then_some(text.as_str())),
+        Some(_) => Err(KeepError::InvalidResponse),
+    }
+}
 fn detail_to_fit(data: &Value, cancel: &StravaCancellation) -> Result<Vec<u8>, KeepError> {
     if cancel.is_cancelled() {
         return Err(KeepError::Cancelled);
@@ -117,12 +124,16 @@ fn detail_to_fit(data: &Value, cancel: &StravaCancellation) -> Result<Vec<u8>, K
     let run = parse_run(data)?;
     let start = integer(data.get("startTime"))?;
     let end = integer(data.get("endTime"))?;
+    // Missing samples are allowed; a changed or malformed schema must not silently lose them.
+    let geo_blob = optional_sample_blob(data.get("geoPoints"))?;
+    let hr_blob = match data.get("heartRate") {
+        None | Some(Value::Null) => None,
+        Some(Value::Object(heart_rate)) => optional_sample_blob(heart_rate.get("heartRates"))?,
+        Some(_) => return Err(KeepError::InvalidResponse),
+    };
     let mut route = Vec::new();
     if !run.indoor
-        && let Some(text) = data
-            .get("geoPoints")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
+        && let Some(text) = geo_blob
     {
         for point in decode_blob::<GeoPoint>(text, true, cancel)? {
             check_cancel(cancel)?;
@@ -146,11 +157,7 @@ fn detail_to_fit(data: &Value, cancel: &StravaCancellation) -> Result<Vec<u8>, K
         }
     }
     let mut hr = Vec::new();
-    if let Some(text) = data
-        .pointer("/heartRate/heartRates")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-    {
+    if let Some(text) = hr_blob {
         for point in decode_blob::<HeartRatePoint>(text, false, cancel)? {
             check_cancel(cancel)?;
             if point.beats_per_minute > 0.0 && point.beats_per_minute < 255.0 {
@@ -670,6 +677,96 @@ mod tests {
             decode_blob::<Value>(HR, false, &c),
             Err(KeepError::Cancelled)
         );
+    }
+
+    #[test]
+    fn non_string_geo_blobs_fail_closed_for_outdoor_and_indoor_runs() {
+        for indoor in [false, true] {
+            for value in [json!({}), json!([]), json!(42), json!(true)] {
+                let mut data = run(indoor);
+                data["geoPoints"] = value.clone();
+                assert_eq!(
+                    detail_to_fit(&data, &StravaCancellation::new()),
+                    Err(KeepError::InvalidResponse),
+                    "indoor={indoor}, geoPoints={value}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn non_string_heart_rate_blobs_fail_closed_for_outdoor_and_indoor_runs() {
+        for indoor in [false, true] {
+            for value in [
+                json!({}),
+                json!([]),
+                json!([{ "timestamp": 10, "beatsPerMinute": 140 }]),
+                json!(42),
+                json!(true),
+            ] {
+                let mut data = run(indoor);
+                data["heartRate"] = json!({"heartRates": value});
+                assert_eq!(
+                    detail_to_fit(&data, &StravaCancellation::new()),
+                    Err(KeepError::InvalidResponse),
+                    "indoor={indoor}, heartRates={value}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn non_object_heart_rate_containers_fail_closed_for_outdoor_and_indoor_runs() {
+        for indoor in [false, true] {
+            for value in [json!([]), json!(42), json!(true), json!(""), json!(HR)] {
+                let mut data = run(indoor);
+                data["heartRate"] = value.clone();
+                assert_eq!(
+                    detail_to_fit(&data, &StravaCancellation::new()),
+                    Err(KeepError::InvalidResponse),
+                    "indoor={indoor}, heartRate={value}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn absent_and_empty_sample_blobs_preserve_summaries_without_inventing_samples() {
+        for indoor in [false, true] {
+            for geo in [None, Some(Value::Null), Some(json!(""))] {
+                for heart_rate in [
+                    None,
+                    Some(Value::Null),
+                    Some(json!({})),
+                    Some(json!({"heartRates": null})),
+                    Some(json!({"heartRates": ""})),
+                ] {
+                    let mut data = run(indoor);
+                    let fields = data.as_object_mut().unwrap();
+                    fields.remove("geoPoints");
+                    fields.remove("heartRate");
+                    if let Some(value) = &geo {
+                        fields.insert("geoPoints".to_owned(), value.clone());
+                    }
+                    if let Some(value) = &heart_rate {
+                        fields.insert("heartRate".to_owned(), value.clone());
+                    }
+                    let fit = detail_to_fit(&data, &StravaCancellation::new()).unwrap();
+                    let summary = crate::fit::decode_fit(&fit).unwrap();
+                    assert_eq!(summary.gps_point_count, 0);
+                    assert_eq!(summary.heart_rate_point_count, 0);
+                    let document = crate::fit::FitDocument::parse(&fit).unwrap();
+                    let session = document
+                        .messages()
+                        .iter()
+                        .position(|message| message.global_number() == 18)
+                        .unwrap();
+                    assert_eq!(document.read_u8(session, 6), Some(u8::from(indoor)));
+                    assert_eq!(document.read_u32(session, 8), Some(540_000));
+                    assert_eq!(document.read_u32(session, 9), Some(160_000));
+                }
+            }
+        }
     }
 
     #[test]
