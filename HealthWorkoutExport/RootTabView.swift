@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 根 Tab：健康 / 行者 / 顽鹿；重复决策由 SyncSession UIKit 置顶弹窗处理。
+/// 根 Tab：健康 / 行者 / 顽鹿 / Keep；重复决策由 SyncSession UIKit 置顶弹窗处理。
 struct RootTabView: View {
     @Environment(SyncSession.self) private var session
 
@@ -20,6 +20,9 @@ struct RootTabView: View {
                 .tabItem {
                     Label("顽鹿", systemImage: "flag.checkered")
                 }
+
+            ThirdPartySourceListView(sourceId: KeepDataSource.sourceId)
+                .tabItem { Label("Keep", systemImage: "figure.run") }
         }
         .overlay(alignment: .top) {
             if session.isRunning {

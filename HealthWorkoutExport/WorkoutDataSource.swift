@@ -7,7 +7,7 @@ struct SourceCredentials: Sendable, Equatable {
 }
 
 /// 跨数据源统一的活动摘要，供列表展示与同步匹配。
-struct SourceActivity: Identifiable, Hashable, Sendable {
+struct SourceActivity: Identifiable, Hashable, Sendable, Codable {
     /// 稳定业务 ID（健康用 UUID，行者/顽鹿用平台 ID）。
     let id: String
     let sourceId: String
@@ -77,14 +77,16 @@ final class DataSourceRegistry {
     let healthKit: HealthKitDataSource
     let xingzhe: XingzheDataSource
     let onelap: OnelapDataSource
+    let keep: KeepDataSource
 
-    var all: [any WorkoutDataSource] { [healthKit, xingzhe, onelap] }
+    var all: [any WorkoutDataSource] { [healthKit, xingzhe, onelap, keep] }
 
     private init() {
         let health = HealthKitService()
         healthKit = HealthKitDataSource(healthKit: health)
         xingzhe = XingzheDataSource()
         onelap = OnelapDataSource()
+        keep = KeepDataSource()
     }
 
     func source(id: String) -> (any WorkoutDataSource)? {
@@ -144,4 +146,30 @@ enum SyncDayRange {
         let end = calendar.date(byAdding: .day, value: 1, to: start) ?? now
         return (start, end)
     }
+}
+
+/// 列表「全部」的本机摘要缓存；同步引擎不使用，强制刷新成功后覆盖。
+enum ActivityListCache {
+    private struct Entry<T: Codable>: Codable {
+        let savedAt: Date
+        let items: [T]
+    }
+    private static func file(_ key: String) -> URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("activity-list-\(key).json")
+    }
+    static func read<T: Codable>(_ key: String, now: Date = Date()) -> [T]? {
+        guard let data = try? Data(contentsOf: file(key)),
+              let entry = try? JSONDecoder().decode(Entry<T>.self, from: data),
+              now >= entry.savedAt, now.timeIntervalSince(entry.savedAt) < 86400 else {
+            clear(key)
+            return nil
+        }
+        return entry.items
+    }
+    static func write<T: Codable>(_ items: [T], key: String, now: Date = Date()) {
+        guard let data = try? JSONEncoder().encode(Entry(savedAt: now, items: items)) else { return }
+        try? data.write(to: file(key), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+    }
+    static func clear(_ key: String) { try? FileManager.default.removeItem(at: file(key)) }
 }

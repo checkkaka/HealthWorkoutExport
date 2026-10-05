@@ -70,6 +70,8 @@
 		B00100000000000000000041 /* HealthWorkoutDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000041 /* HealthWorkoutDraft.swift */; };
 		B00100000000000000000042 /* AppleHealthImportPass.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000042 /* AppleHealthImportPass.swift */; };
 		B00100000000000000000043 /* AppleHealthImportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000043 /* AppleHealthImportTests.swift */; };
+		B00100000000000000000091 /* KeepDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000091 /* KeepDataSource.swift */; };
+		B00100000000000000000092 /* KeepDataSourceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000092 /* KeepDataSourceTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -149,6 +151,8 @@
 		F00100000000000000000041 /* HealthWorkoutDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthWorkoutDraft.swift; sourceTree = "<group>"; };
 		F00100000000000000000042 /* AppleHealthImportPass.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleHealthImportPass.swift; sourceTree = "<group>"; };
 		F00100000000000000000043 /* AppleHealthImportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleHealthImportTests.swift; sourceTree = "<group>"; };
+		F00100000000000000000091 /* KeepDataSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepDataSource.swift; sourceTree = "<group>"; };
+		F00100000000000000000092 /* KeepDataSourceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepDataSourceTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -197,6 +201,7 @@
 				F00100000000000000000008 /* DateRangeAndExportViews.swift */,
 				F00100000000000000000011 /* KeychainStore.swift */,
 				F00100000000000000000012 /* WorkoutDataSource.swift */,
+				F00100000000000000000091 /* KeepDataSource.swift */,
 				F00100000000000000000013 /* HealthKitDataSource.swift */,
 				F00100000000000000000014 /* OnelapClient.swift */,
 				F00100000000000000000015 /* OnelapDataSource.swift */,
@@ -252,6 +257,7 @@
 			children = (
 				F0010000000000000000000D /* FitActivityEncoderTests.swift */,
 				F00100000000000000000026 /* ActivityMatcherTests.swift */,
+				F00100000000000000000092 /* KeepDataSourceTests.swift */,
 				F00100000000000000000027 /* SyncFingerprintTests.swift */,
 				F00100000000000000000028 /* CommuteClassifierTests.swift */,
 				F0010000000000000000002B /* StravaActivityLookupTests.swift */,
@@ -380,6 +386,7 @@
 				B00100000000000000000008 /* DateRangeAndExportViews.swift in Sources */,
 				B00100000000000000000011 /* KeychainStore.swift in Sources */,
 				B00100000000000000000012 /* WorkoutDataSource.swift in Sources */,
+				B00100000000000000000091 /* KeepDataSource.swift in Sources */,
 				B00100000000000000000013 /* HealthKitDataSource.swift in Sources */,
 				B00100000000000000000014 /* OnelapClient.swift in Sources */,
 				B00100000000000000000015 /* OnelapDataSource.swift in Sources */,
@@ -424,6 +431,7 @@
 			files = (
 				B0010000000000000000000B /* FitActivityEncoderTests.swift in Sources */,
 				B00100000000000000000026 /* ActivityMatcherTests.swift in Sources */,
+				B00100000000000000000092 /* KeepDataSourceTests.swift in Sources */,
 				B00100000000000000000027 /* SyncFingerprintTests.swift in Sources */,
 				B00100000000000000000028 /* CommuteClassifierTests.swift in Sources */,
 				B0010000000000000000002B /* StravaActivityLookupTests.swift in Sources */,

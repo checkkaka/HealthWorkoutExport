@@ -135,6 +135,20 @@ final class StravaUploadApi {
     );
   }
 
+  Future<void> hideActivityFromHome({
+    required String accessToken,
+    required String activityId,
+  }) {
+    _validateText(accessToken, 'accessToken', _maxTextBytes);
+    if (activityId.isEmpty || !RegExp(r'^\d+$').hasMatch(activityId)) {
+      throw ArgumentError.value(activityId, 'activityId', '必须是 Strava 活动 ID');
+    }
+    return raw.stravaHideActivityFromHome(
+      accessToken: accessToken,
+      activityId: activityId,
+    );
+  }
+
   /// 可在启动前或异步 Future 运行期间调用；只取消这一代精确 handle。
   bool cancel(StravaUploadHandle handle) =>
       raw.stravaCancelUpload(operationHandle: handle._value);
@@ -198,11 +212,13 @@ final class StravaUploadSession {
     this.vault = const StravaVaultChannel(),
     this.api = const StravaUploadApi(),
     this.refreshToken = raw.stravaRefreshToken,
+    this.preferences = const PreferencesChannel(),
   });
 
   final StravaVaultChannel vault;
   final StravaUploadApi api;
   final StravaTokenRefresh refreshToken;
+  final PreferencesChannel preferences;
   Future<String>? _refreshInFlight;
 
   StravaUploadTask start({
@@ -244,10 +260,10 @@ final class StravaUploadSession {
     String? name,
   }) async {
     try {
-      final token = await accessToken();
+      final activeToken = await accessToken();
       final first = await api.upload(
         handle: handle,
-        accessToken: token,
+        accessToken: activeToken,
         fit: fit,
         externalId: externalId,
         filename: filename,
@@ -256,7 +272,7 @@ final class StravaUploadSession {
         name: name,
       );
       if (first.status != raw.StravaUploadFfiStatus.needsRefresh) {
-        return await _finalizeMetadata(
+        return await _finalizeUpload(
           first,
           name: name,
           commute: commute,
@@ -290,7 +306,7 @@ final class StravaUploadSession {
               (throw const FormatException('Strava 轮询续传缺少 attempt')),
         ),
       };
-      return await _finalizeMetadata(
+      return await _finalizeUpload(
         response,
         name: name,
         commute: commute,
@@ -368,6 +384,57 @@ final class StravaUploadSession {
       },
     );
   }
+
+  Future<raw.StravaUploadFfiResponse> _finalizeUpload(
+    raw.StravaUploadFfiResponse response, {
+    required String? name,
+    required bool commute,
+    required String? description,
+    required _StravaOperationState operation,
+  }) async {
+    final finalized = await _finalizeMetadata(
+      response,
+      name: name,
+      commute: commute,
+      description: description,
+      operation: operation,
+    );
+    if (operation.cancelled ||
+        finalized.status != raw.StravaUploadFfiStatus.completed ||
+        finalized.remoteId == null ||
+        finalized.isDuplicate) {
+      return finalized;
+    }
+    try {
+      if (await _hideFromHomeEnabled()) {
+        final token = await accessToken();
+        if (!operation.cancelled) {
+          await api.hideActivityFromHome(
+            accessToken: token,
+            activityId: finalized.remoteId!,
+          );
+        }
+      }
+    } catch (_) {
+      // 活动已经创建，后续设置失败只提示警告，避免被当成上传失败重复提交。
+      return raw.StravaUploadFfiResponse(
+        status: finalized.status,
+        remoteId: finalized.remoteId,
+        isDuplicate: finalized.isDuplicate,
+        error: raw.StravaUploadFfiError(
+          code: raw.StravaUploadFfiErrorCode.transport,
+          message: [
+            if (finalized.error != null) finalized.error!.message,
+            '上传已完成，隐藏主页动态失败，可在 Strava 修改',
+          ].join('；'),
+        ),
+      );
+    }
+    return finalized;
+  }
+
+  Future<bool> _hideFromHomeEnabled() async =>
+      await preferences.read('strava.hideFromHomeEnabled') == true;
 
   /// 仅供同一受控同步链路租用短期 token，调用方不得缓存或写入日志。
   Future<String> accessToken() async {

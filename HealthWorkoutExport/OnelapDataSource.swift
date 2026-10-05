@@ -42,6 +42,7 @@ final class OnelapDataSource: WorkoutDataSource, @unchecked Sendable {
     }
 
     func login(credentials: SourceCredentials) async throws {
+        ActivityListCache.clear(id)
         // 调用 OnelapClient.login：完成顽鹿签名登录。
         try await client.login(account: credentials.account, password: credentials.password)
         KeychainStore.set(credentials.account, account: accountKey)
@@ -50,6 +51,8 @@ final class OnelapDataSource: WorkoutDataSource, @unchecked Sendable {
     }
 
     func logout() async {
+        ActivityListCache.clear(id)
+
         await client.clearSession()
         KeychainStore.delete(account: accountKey)
         KeychainStore.delete(account: passwordKey)

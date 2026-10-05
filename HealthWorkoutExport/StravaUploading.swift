@@ -16,6 +16,8 @@ enum StravaUploadMode: String, CaseIterable, Identifiable, Codable {
 struct StravaUploadResult: Sendable {
     var remoteId: String?
     var isDuplicate: Bool
+    /// 活动已上传，但可选后处理失败；不得据此将上传记为失败。
+    var warning: String? = nil
 }
 
 /// API 上传处理轮询节奏：先立刻查，再指数退避；单次间隔不少于 Strava 建议的 1 秒。
@@ -84,6 +86,8 @@ enum StravaSettings {
     private static let webCookieKey = "strava.webCookie"
     /// 上传前是否把 FIT 轨迹从 GCJ-02 转为 WGS-84（默认关，HealthKit 多半已是 WGS）。
     private static let gcjCorrectionKey = "strava.gcjCorrectionEnabled"
+    /// API 上传成功后是否从 Strava 主页动态隐藏（默认关，不改变活动可见性）。
+    private static let hideFromHomeKey = "strava.hideFromHomeEnabled"
 
     static var mode: StravaUploadMode {
         get {
@@ -145,5 +149,10 @@ enum StravaSettings {
     static var gcjCorrectionEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: gcjCorrectionKey) }
         set { UserDefaults.standard.set(newValue, forKey: gcjCorrectionKey) }
+    }
+
+    static var hideFromHomeEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: hideFromHomeKey) }
+        set { UserDefaults.standard.set(newValue, forKey: hideFromHomeKey) }
     }
 }

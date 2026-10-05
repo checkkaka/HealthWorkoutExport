@@ -2,6 +2,107 @@ import XCTest
 @testable import HealthWorkoutExport
 
 final class ActivityMatcherTests: XCTestCase {
+    @MainActor
+    func testKeepIsRegisteredInNativeApp() {
+        XCTAssertNotNil(DataSourceRegistry.shared.source(id: "keep"))
+    }
+
+    func testKeepDoesNotMatchCyclingSupplement() {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let run = SourceActivity(id: "run", sourceId: "keep", title: "Keep 跑步", startDate: start,
+            endDate: start.addingTimeInterval(1200), duration: 1200, distanceMeters: 4000)
+        let ride = SourceActivity(id: "ride", sourceId: "onelap", title: "骑行", startDate: start,
+            endDate: start.addingTimeInterval(1200), duration: 1200, distanceMeters: 4000)
+        XCTAssertNil(ActivityMatcher.score(primary: run, candidate: ride))
+        XCTAssertTrue(ActivityMatcher.rankedCandidates(primary: run, candidates: [ride]).isEmpty)
+    }
+
+    func testActivitySortBreaksTiesByDateAndKeepsMissingMetricsLast() {
+        let items: [(id: String, metric: Double?, date: Date)] = [
+            ("old", 10, Date(timeIntervalSince1970: 1)),
+            ("missingOld", nil, Date(timeIntervalSince1970: 1)),
+            ("new", 10, Date(timeIntervalSince1970: 2)),
+            ("larger", 20, Date(timeIntervalSince1970: 0)),
+            ("missingNew", nil, Date(timeIntervalSince1970: 3))
+        ]
+        for key in [ActivitySortKey.distance, .averageSpeed] {
+            for ascending in [false, true] {
+                let sorted = ActivitySortOrder(key: key, ascending: ascending).sorted(
+                    items, metric: { $0.metric }, date: { $0.date }
+                )
+                XCTAssertEqual(sorted.map { $0.id }, ascending
+                    ? ["old", "new", "larger", "missingOld", "missingNew"]
+                    : ["larger", "new", "old", "missingNew", "missingOld"])
+            }
+        }
+    }
+
+    @MainActor
+    func testHideFailurePreservesUploadedActivity() async {
+        for error in [StravaUploadError.rateLimited, .unauthorized, .uploadFailed("HTTP 500")] {
+            var requestedID: String?
+            let result = await StravaAPIUploader.finishUpload(
+                StravaUploadResult(remoteId: "123", isDuplicate: false),
+                hideFromHome: true
+            ) { id in
+                requestedID = id
+                throw error
+            }
+            XCTAssertEqual(requestedID, "123")
+            XCTAssertEqual(result.remoteId, "123")
+            XCTAssertFalse(result.isDuplicate)
+            XCTAssertTrue(result.warning?.contains(error.localizedDescription) == true)
+        }
+    }
+
+    @MainActor
+    func testHideSkipsDuplicateDisabledAndMissingID() async {
+        for (input, enabled) in [
+            (StravaUploadResult(remoteId: "123", isDuplicate: true), true),
+            (StravaUploadResult(remoteId: "123", isDuplicate: false), false),
+            (StravaUploadResult(remoteId: nil, isDuplicate: false), true)
+        ] {
+            let result = await StravaAPIUploader.finishUpload(input, hideFromHome: enabled) { _ in
+                XCTFail("不应发出隐藏请求")
+            }
+            XCTAssertEqual(result.remoteId, input.remoteId)
+            XCTAssertEqual(result.isDuplicate, input.isDuplicate)
+            XCTAssertNil(result.warning)
+        }
+    }
+
+    @MainActor
+    func testHideSuccessPreservesUploadedActivity() async {
+        var requestedIDs: [String] = []
+        let result = await StravaAPIUploader.finishUpload(
+            StravaUploadResult(remoteId: "123", isDuplicate: false),
+            hideFromHome: true
+        ) { requestedIDs.append($0) }
+        XCTAssertEqual(requestedIDs, ["123"])
+        XCTAssertEqual(result.remoteId, "123")
+        XCTAssertFalse(result.isDuplicate)
+        XCTAssertNil(result.warning)
+    }
+
+    func testActivityListFilterCombinesInclusiveDistanceAndAverageSpeed() {
+        let filter = ActivityListFilter(minimumDistanceText: "20", minimumAverageSpeedText: "20")
+        XCTAssertTrue(filter.matches(distanceMeters: 20_000, duration: 3_600))
+        XCTAssertFalse(filter.matches(distanceMeters: 19_999, duration: 3_600))
+        XCTAssertFalse(filter.matches(distanceMeters: 20_000, duration: 3_601))
+        XCTAssertTrue(ActivityListFilter(minimumDistanceText: "20").matches(distanceMeters: 20_000, duration: 0))
+        XCTAssertFalse(ActivityListFilter(minimumDistanceText: "20").matches(distanceMeters: 19_999, duration: 0))
+        XCTAssertTrue(ActivityListFilter(minimumAverageSpeedText: "20").matches(distanceMeters: 20_000, duration: 3_600))
+        XCTAssertFalse(ActivityListFilter(minimumAverageSpeedText: "20").matches(distanceMeters: 20_000, duration: 3_601))
+        XCTAssertFalse(filter.matches(distanceMeters: nil, duration: 3_600))
+        XCTAssertFalse(filter.matches(distanceMeters: 20_000, duration: 0))
+        XCTAssertTrue(ActivityListFilter().matches(distanceMeters: nil, duration: 0))
+        // 非法/零值输入等价于未启用筛选。
+        XCTAssertTrue(ActivityListFilter(minimumDistanceText: "abc").matches(distanceMeters: nil, duration: 0))
+        XCTAssertTrue(ActivityListFilter(minimumDistanceText: "0").matches(distanceMeters: 1, duration: 1))
+        XCTAssertTrue(filter.isEnabled)
+        XCTAssertFalse(ActivityListFilter().isEnabled)
+    }
+
     func testOnelapCredentialsOnlyUseTrustedHTTPSHosts() {
         XCTAssertTrue(OnelapClient.isTrustedAuthenticatedURL(URL(string: "https://otm.onelap.cn/api")!))
         XCTAssertFalse(OnelapClient.isTrustedAuthenticatedURL(URL(string: "http://otm.onelap.cn/api")!))

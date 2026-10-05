@@ -295,7 +295,7 @@ final class StravaWebUploader: NSObject, StravaUploading, @unchecked Sendable {
 
     /// 网页 Cookie 拉训练列表做上传前区间预检（不占官方 API 配额）。
     /// after/before 按开始时间过滤；缺时长的条目跳过（无法算区间）。
-    func fetchActivities(after: Date, before: Date, maxPages: Int = 50) async throws -> [StravaActivityLookup.RemoteActivity] {
+    func fetchActivities(after: Date, before: Date, maxPages: Int = 50, requireComplete: Bool = false) async throws -> [StravaActivityLookup.RemoteActivity] {
         let cookie = normalizedCookieHeader()
         guard !cookie.isEmpty else { throw StravaUploadError.notConfigured }
 
@@ -361,7 +361,8 @@ final class StravaWebUploader: NSObject, StravaUploading, @unchecked Sendable {
                     id: id,
                     startDate: start,
                     endDate: start.addingTimeInterval(elapsed),
-                    distanceMeters: (distance ?? 0) > 0 ? distance : nil
+                    distanceMeters: distance,
+                    sportType: StravaSpeedAnomaly.sportType(from: item)
                 ))
             }
             // 列表通常新→旧：整页都早于 after 则可停。
@@ -369,6 +370,9 @@ final class StravaWebUploader: NSObject, StravaUploading, @unchecked Sendable {
             if models.count < 10 { break }
             page += 1
             try await Task.sleep(nanoseconds: 150_000_000)
+        }
+        if requireComplete, page > maxPages {
+            throw StravaUploadError.uploadFailed("网页活动列表超过扫描页数上限，请使用 API 或缩小范围后重试；本次未保存扫描结果")
         }
         return result
     }

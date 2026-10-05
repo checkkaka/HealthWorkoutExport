@@ -193,7 +193,10 @@ struct ActivityDetailSheet: View {
     }
 
     private var originalUsesGCJCoordinates: Bool {
-        latestSyncRecord == nil ? StravaSettings.gcjCorrectionEnabled : syncAppliedGCJConversion
+        latestSyncRecord == nil
+            // 健康和 Keep 原始导出都已使用 WGS-84，与上传路径保持一致。
+            ? sourceId != HealthKitDataSource.sourceId && sourceId != KeepDataSource.sourceId && StravaSettings.gcjCorrectionEnabled
+            : syncAppliedGCJConversion
     }
 
     private func qualitySection(_ inspection: FITInspection) -> some View {

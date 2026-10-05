@@ -18,7 +18,9 @@ struct SourceLoginView: View {
                     .autocorrectionDisabled()
                 SecureField("密码", text: $password)
             } footer: {
-                Text("凭证仅保存在本机 Keychain；登录时仅直接提交给对应平台，不会上传到作者服务器。")
+                Text(sourceName == "Keep"
+                    ? "Keep 使用非官方接口。密码只用于本次登录且不保存；账号和令牌保存在本机 Keychain。登录失效后需手动重登。"
+                    : "凭证仅保存在本机 Keychain；登录时仅直接提交给对应平台，不会上传到作者服务器。")
             }
 
             if let errorMessage {
@@ -47,7 +49,7 @@ struct SourceLoginView: View {
     private func login() async {
         isBusy = true
         errorMessage = nil
-        defer { isBusy = false }
+        defer { isBusy = false; password = "" }
         do {
             try await onLogin(SourceCredentials(account: account, password: password))
             dismiss()

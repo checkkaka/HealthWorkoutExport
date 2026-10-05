@@ -34,6 +34,7 @@ inline bool IsHealthPreparedFitMethod(std::string_view method) {
 }
 inline bool IsPreferenceKey(std::string_view key) {
   return key == "strava.uploadMode" || key == "strava.gcjCorrectionEnabled" ||
+         key == "strava.hideFromHomeEnabled" ||
          key == "virtualPower.enabled" || key == "virtualPower.includeInertia" ||
          key == "virtualPower.riderMassKg" || key == "virtualPower.bikeMassKg" ||
          key == "virtualPower.cda" || key == "sync_preview_policy" ||

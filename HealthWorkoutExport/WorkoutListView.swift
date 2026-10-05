@@ -2,16 +2,49 @@ import SwiftUI
 import HealthKit
 
 struct WorkoutListView: View {
+    @Environment(SyncSession.self) private var session
     @State private var viewModel = ExportViewModel()
     @State private var showFitMerge = false
     @State private var showAutoSync = false
     @State private var showStravaSettings = false
+    @State private var showRefreshConfirmation = false
     @State private var showSyncHistory = false
     @State private var uploadedKeys: Set<String> = []
     @State private var virtualPowerKeys: Set<String> = []
     @State private var syncedFITKeys: Set<String> = []
     @State private var localRemoteIds: [String: String] = [:]
     @State private var detailWorkout: WorkoutSummary?
+    @State private var filter = ActivityListFilter()
+    @State private var sortOrder = ActivitySortOrder()
+    @State private var showStravaScan = false
+    @State private var scanActivities: [SourceActivity] = []
+    @State private var stravaScans: [String: StravaScanResult] = [:]
+
+    private var filteredWorkouts: [WorkoutSummary] {
+        sortOrder.sorted(
+            viewModel.workouts.filter {
+                filter.matches(distanceMeters: $0.totalDistanceMeters, duration: $0.duration)
+            },
+            metric: { workout in
+                switch sortOrder.key {
+                case .date:
+                    workout.startDate.timeIntervalSince1970
+                case .distance:
+                    workout.totalDistanceMeters
+                case .averageSpeed:
+                    ActivitySortOrder.averageSpeedKmh(
+                        distanceMeters: workout.totalDistanceMeters,
+                        duration: workout.duration
+                    )
+                }
+            },
+            date: \.startDate
+        )
+    }
+
+    private var requiresSelectionForFilteredAutoSync: Bool {
+        filter.isEnabled && viewModel.selectedIDs.isEmpty
+    }
 
     var body: some View {
         NavigationStack {
@@ -43,6 +76,11 @@ struct WorkoutListView: View {
             }
             .sheet(isPresented: $showStravaSettings) {
                 NavigationStack { StravaSettingsView() }
+            }
+            .sheet(isPresented: $showStravaScan, onDismiss: {
+                Task { await refreshSyncState() }
+            }) {
+                StravaScanSheet(activities: scanActivities)
             }
             .sheet(isPresented: $showSyncHistory, onDismiss: {
                 Task { await refreshSyncState() }
@@ -83,6 +121,9 @@ struct WorkoutListView: View {
                 guard viewModel.preset == .custom else { return }
                 Task { await viewModel.reload(); await refreshSyncState() }
             }
+            .onChange(of: filter) { _, _ in
+                viewModel.selectedIDs.formIntersection(Set(filteredWorkouts.map(\.id)))
+            }
         }
     }
 
@@ -90,6 +131,13 @@ struct WorkoutListView: View {
         List {
             Section {
                 DateRangePickerView(preset: $viewModel.preset, customStart: $viewModel.customStart, customEnd: $viewModel.customEnd)
+            }
+            Section {
+                ActivityListFilterView(filter: $filter)
+            } header: {
+                Text("筛选条件")
+            } footer: {
+                Text("与日期同时生效；距离和平均速度均为大于等于，留空或 0 表示不限。启用筛选后请勾选记录再自动同步。")
             }
 
             if viewModel.isLoading {
@@ -108,9 +156,17 @@ struct WorkoutListView: View {
                         description: Text("换一个时间范围再试试")
                     )
                 }
+            } else if filteredWorkouts.isEmpty {
+                Section {
+                    ContentUnavailableView(
+                        "没有符合筛选的训练",
+                        systemImage: "line.3.horizontal.decrease.circle",
+                        description: Text("试试降低最短距离或最低平均速度")
+                    )
+                }
             } else {
                 Section {
-                    ForEach(viewModel.workouts) { workout in
+                    ForEach(filteredWorkouts) { workout in
                         let synced = uploadedKeys.contains(
                             SyncStateStore.primaryKey(
                                 sourceId: HealthKitDataSource.sourceId,
@@ -140,12 +196,13 @@ struct WorkoutListView: View {
                                 )
                             ),
                             remoteId: remoteId,
+                            scanResult: stravaScans[SyncStateStore.primaryKey(sourceId: HealthKitDataSource.sourceId, activityId: workout.id.uuidString)],
                             onToggle: { viewModel.toggleSelection(workout.id) },
                             onOpenDetail: { detailWorkout = workout }
                         )
                     }
                 } header: {
-                    Text("\(viewModel.selectedIDs.count)/\(viewModel.workouts.count) 已选")
+                    Text("\(viewModel.selectedIDs.count)/\(filteredWorkouts.count) 已选")
                 }
             }
 
@@ -158,9 +215,17 @@ struct WorkoutListView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .refreshable {
-            await viewModel.reload()
-            await refreshSyncState()
+        .refreshable { showRefreshConfirmation = true }
+        .confirmationDialog("重新获取活动记录？", isPresented: $showRefreshConfirmation, titleVisibility: .visible) {
+            Button("确认刷新") {
+                Task {
+                    await viewModel.reload(forceRefresh: true)
+                    await refreshSyncState()
+                }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将跳过缓存重新读取当前范围，全部历史可能耗时较长。")
         }
     }
 
@@ -184,8 +249,20 @@ struct WorkoutListView: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
             Menu {
-                Button("全选") { viewModel.selectAll() }
+                Button("全选") { viewModel.selectedIDs = Set(filteredWorkouts.map(\.id)) }
                 Button("取消全选") { viewModel.deselectAll() }
+                Button("扫描 Strava 匹配并补全 ID") {
+                    scanActivities = filteredWorkouts
+                        .filter { viewModel.selectedIDs.isEmpty || viewModel.selectedIDs.contains($0.id) }
+                        .map { workout in
+                            SourceActivity(id: workout.id.uuidString, sourceId: HealthKitDataSource.sourceId,
+                                title: workout.activityName, startDate: workout.startDate, endDate: workout.endDate,
+                                duration: workout.duration, distanceMeters: workout.totalDistanceMeters,
+                                metadata: ["sportType": workout.activityName])
+                        }
+                    showStravaScan = true
+                }
+                .disabled(viewModel.isLoading || filteredWorkouts.isEmpty || session.isRunning)
                 Divider()
                 Button {
                     showFitMerge = true
@@ -198,6 +275,7 @@ struct WorkoutListView: View {
                 } label: {
                     Label("自动同步", systemImage: "arrow.triangle.2.circlepath")
                 }
+                .disabled(requiresSelectionForFilteredAutoSync)
                 Button {
                     showSyncHistory = true
                 } label: {
@@ -213,6 +291,9 @@ struct WorkoutListView: View {
             }
         }
         ToolbarItem(placement: .topBarTrailing) {
+            ActivitySortMenu(sortOrder: $sortOrder)
+        }
+        ToolbarItem(placement: .topBarTrailing) {
             Button {
                 viewModel.prepareExport(syncedFITKeys: syncedFITKeys)
             } label: {
@@ -223,11 +304,12 @@ struct WorkoutListView: View {
     }
 
     private func refreshSyncState() async {
-        // 从本地同步记录同时刷新同步、虚拟功率、同步 FIT 徽标与 Strava 远端 ID。
+        // 刷新同步徽标、运动列表扫描标记和关联的 Strava ID。
         uploadedKeys = await SyncStateStore.shared.uploadedPrimaryKeys()
         virtualPowerKeys = await SyncStateStore.shared.virtualPowerPrimaryKeys()
         syncedFITKeys = await SyncStateStore.shared.syncedFITPrimaryKeys()
         localRemoteIds = await SyncStateStore.shared.localRemoteIdsByPrimaryKey()
+        stravaScans = await SyncStateStore.shared.stravaScansByPrimaryKey()
     }
 }
 
@@ -238,6 +320,7 @@ struct WorkoutRowView: View {
     let hasVirtualPower: Bool
     let hasSyncedFIT: Bool
     let remoteId: String?
+    var scanResult: StravaScanResult? = nil
     let onToggle: () -> Void
     let onOpenDetail: () -> Void
 
@@ -312,6 +395,7 @@ struct WorkoutRowView: View {
                 .buttonStyle(.plain)
 
                 StravaRemoteIDLine(remoteId: remoteId)
+                StravaScanResultLine(result: scanResult)
             }
         }
     }

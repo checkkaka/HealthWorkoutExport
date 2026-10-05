@@ -3,6 +3,35 @@ import XCTest
 @testable import HealthWorkoutExport
 
 final class FITInspectionTests: XCTestCase {
+    func testActivityListCacheExpiresAndCanBeCleared() {
+        let key = "test-" + UUID().uuidString
+        defer { ActivityListCache.clear(key) }
+        let now = Date()
+        ActivityListCache.write(["record"], key: key, now: now)
+        let fresh: [String]? = ActivityListCache.read(key, now: now.addingTimeInterval(86399))
+        XCTAssertEqual(fresh, ["record"])
+        let expired: [String]? = ActivityListCache.read(key, now: now.addingTimeInterval(86400))
+        XCTAssertNil(expired)
+        ActivityListCache.write(["new"], key: key, now: now)
+        ActivityListCache.clear(key)
+        let cleared: [String]? = ActivityListCache.read(key, now: now)
+        XCTAssertNil(cleared)
+    }
+
+    @MainActor
+    func testMissingHeartRateAndPowerRemainInformationalWithoutPrompting() throws {
+        let inspection = FITInspector.inspect(try makeFIT(recordCount: 8, speedMPS: 5, gpsStep: 0.00001, includeHeartRate: false))
+        XCTAssertTrue(inspection.issues.contains { $0.id == "missing-heart-rate" && $0.severity == .info })
+        XCTAssertTrue(inspection.issues.contains { $0.id == "missing-power" && $0.severity == .info })
+        XCTAssertFalse(AutoSyncEngine.shouldPresentPreview(
+            policy: .issuesOnly,
+            hasErrors: inspection.hasErrors,
+            hasWarnings: inspection.hasWarnings,
+            hasAmbiguity: false,
+            force: false
+        ))
+    }
+
     func testInvalidFITAndMissingTimestampAreBlockingErrors() throws {
         let invalid = FITInspector.inspect(Data("not-fit".utf8))
         XCTAssertTrue(invalid.issues.contains { $0.id == "invalid-fit" && $0.severity == .error })

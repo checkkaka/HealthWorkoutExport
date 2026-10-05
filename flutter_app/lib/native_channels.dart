@@ -351,6 +351,7 @@ final class StravaSettingsSnapshot {
     required this.expiresAtSeconds,
     required this.hasWebCookie,
     required this.gcjCorrectionEnabled,
+    required this.hideFromHomeEnabled,
   });
 
   final StravaUploadMode mode;
@@ -361,6 +362,7 @@ final class StravaSettingsSnapshot {
   final double expiresAtSeconds;
   final bool hasWebCookie;
   final bool gcjCorrectionEnabled;
+  final bool hideFromHomeEnabled;
 
   bool get isApiReady =>
       clientId.isNotEmpty &&
@@ -388,6 +390,7 @@ final class StravaSettingsStore {
     final hasWebCookie = await web.hasCookie();
     final modeValue = await preferences.read(_modeKey);
     final correctionValue = await preferences.read(_gcjCorrectionKey);
+    final hideFromHomeValue = await preferences.read(_hideFromHomeKey);
 
     final mode = switch (modeValue) {
       'web' => StravaUploadMode.web,
@@ -395,6 +398,9 @@ final class StravaSettingsStore {
     };
     if (correctionValue != null && correctionValue is! bool) {
       throw const FormatException('Strava 坐标纠偏设置无效');
+    }
+    if (hideFromHomeValue != null && hideFromHomeValue is! bool) {
+      throw const FormatException('Strava 主页动态设置无效');
     }
     return StravaSettingsSnapshot(
       mode: mode,
@@ -405,6 +411,7 @@ final class StravaSettingsStore {
       expiresAtSeconds: vaultStatus.expiresAtSeconds,
       hasWebCookie: hasWebCookie,
       gcjCorrectionEnabled: correctionValue as bool? ?? false,
+      hideFromHomeEnabled: hideFromHomeValue as bool? ?? false,
     );
   }
 
@@ -443,10 +450,14 @@ final class StravaSettingsStore {
   Future<void> setGcjCorrectionEnabled(bool enabled) =>
       preferences.write(_gcjCorrectionKey, enabled);
 
+  Future<void> setHideFromHomeEnabled(bool enabled) =>
+      preferences.write(_hideFromHomeKey, enabled);
+
   Future<void> clearAuthorization() => vault.clearAuthorization();
 
   static const _modeKey = 'strava.uploadMode';
   static const _gcjCorrectionKey = 'strava.gcjCorrectionEnabled';
+  static const _hideFromHomeKey = 'strava.hideFromHomeEnabled';
 }
 
 const _allowedPreferenceKeys = <String>{
@@ -454,6 +465,7 @@ const _allowedPreferenceKeys = <String>{
   'write_to_apple_health',
   'strava.uploadMode',
   'strava.gcjCorrectionEnabled',
+  'strava.hideFromHomeEnabled',
   'virtualPower.enabled',
   'virtualPower.includeInertia',
   'virtualPower.riderMassKg',

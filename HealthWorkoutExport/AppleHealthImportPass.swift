@@ -358,7 +358,7 @@ final class AppleHealthImportPass {
             primaryData: primaryFit,
             primaryName: primary.displayName,
             supplements: selected,
-            gcjEnabled: StravaSettings.gcjCorrectionEnabled
+            gcjEnabled: primary.id != KeepDataSource.sourceId && StravaSettings.gcjCorrectionEnabled
         )
         return prepared.data
     }
