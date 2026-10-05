@@ -1,0 +1,393 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:integration_test/integration_test.dart';
+import 'package:health_workout_export/activity_detail_page.dart';
+import 'package:health_workout_export/auto_sync_session.dart';
+import 'package:health_workout_export/fit_merge_page.dart';
+import 'package:health_workout_export/main.dart';
+import 'package:health_workout_export/native_channels.dart';
+import 'package:health_workout_export/recovery_batch_checkpoint.dart';
+import 'package:health_workout_export/src/rust/api/simple.dart' as rust;
+import 'package:health_workout_export/src/rust/frb_generated.dart';
+import 'package:health_workout_export/sync_preview_models.dart';
+import 'package:health_workout_export/sync_state_store.dart';
+import 'package:health_workout_export/workout_export.dart';
+
+import 'runtime_callback_completion.dart';
+import 'runtime_fixture.dart';
+
+const phase = String.fromEnvironment('HWE_RUNTIME_PHASE');
+// Software Android emulation is slow; retain a hard, reported test-only budget.
+final phaseBudget = Duration(minutes: Platform.isAndroid ? 12 : 4);
+final fingerprint = 'b' * 64;
+final syntheticMacHealth =
+    Platform.isMacOS &&
+    const bool.fromEnvironment('HWE_SYNTHETIC_HEALTH_RUNTIME');
+const nativeFiles = SyncFilesChannel();
+const healthChannel = MethodChannel('health_workout_export/healthkit');
+final captureKey = GlobalKey();
+final checks = <String>[];
+final screenshots = <Map<String, String>>[];
+
+// This is an on-device integration test, not a host widget test. The production
+// app, engine, Rust library, preferences and sync file plugins are real. Only
+// external health data/authorization, file-picker selection and OS sharing are
+// synthetic boundaries. No native permission grants or remote account actions.
+void main() {
+  final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  testWidgets('runtime $phase: real Flutter, Rust and platform storage', (
+    tester,
+  ) async {
+    expect(['startup', 'seed', 'verify'], contains(phase));
+    binding.reportData = {
+      'phase': phase,
+      'phaseBudgetSeconds': phaseBudget.inSeconds,
+      'pid': pid,
+      'runtimeProfile': syntheticMacHealth
+          ? 'macos-synthetic-health-debug'
+          : 'instrumented-native-root',
+      'checks': checks,
+      'screenshots': screenshots,
+    };
+    await WorkoutCoreRustLib.init();
+    final fit = await fixtureFit();
+    expect(rust.isValidFit(data: fit), isTrue);
+    final inspected =
+        jsonDecode(await rust.inspectFitPreview(data: fit)) as Map;
+    expect(inspected['summary']['recordCount'], 2);
+    checks.add('bundled-rust-ffi-encode-and-preview');
+
+    // Availability does not request authorization or read personal health data.
+    if (!Platform.isWindows && !syntheticMacHealth) {
+      expect(await const HealthKitChannel().isAvailable(), isA<bool>());
+    }
+    final writable = await const HealthKitChannel().canWriteWorkouts();
+    if (Platform.isAndroid || Platform.isWindows) expect(writable, isFalse);
+    checks.add(
+      syntheticMacHealth
+          ? 'health-capability-excluded-by-synthetic-test-profile'
+          : 'native-health-capability-probe-no-authorization',
+    );
+
+    const preferences = PreferencesChannel();
+    if (phase == 'verify') {
+      expect(await preferences.read('sync_preview_policy'), 'everyActivity');
+      expect(await nativeFiles.readSyncedFit(fingerprint), fit);
+      final checkpoint = RecoveryBatchCheckpoint.decode(
+        await nativeFiles.readBatchSession(),
+      );
+      expect(checkpoint.generationId, 'c' * 64);
+      expect(checkpoint.fingerprints, [fingerprint]);
+      expect(checkpoint.needsStrava(fingerprint), isTrue);
+      final record = await SyncStateStore().recordFor(fingerprint);
+      expect(record?['primaryActivityId'], 'runtime-synthetic-activity');
+      expect(record?['status'], 'pending');
+      final restored = AutoSyncSession();
+      await restored.restore();
+      expect(restored.restoreError, isNull);
+      expect(restored.progress.total, 1);
+      expect(restored.progress.processed, 0);
+      expect(restored.progress.message, contains('恢复'));
+      expect(restored.isRunning, isFalse);
+      restored.cancel();
+      expect(restored.cancelled, isTrue);
+      restored.dispose();
+      checks.add(
+        'new-process-native-files-preferences-and-production-session-restoration',
+      );
+    } else {
+      await preferences.write('sync_preview_policy', 'everyActivity');
+      expect(await preferences.read('sync_preview_policy'), 'everyActivity');
+      checks.add('native-preferences-roundtrip');
+    }
+
+    // Explicit synthetic health boundary prevents automatic system permission
+    // UI. Native availability above was called before installing this adapter.
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      healthChannel,
+      (call) async => switch (call.method) {
+        'isAvailable' => false,
+        'canWriteWorkouts' => false,
+        _ => throw StateError(
+          'Unexpected synthetic health call: ${call.method}',
+        ),
+      },
+    );
+    addTearDown(() => messenger.setMockMethodCallHandler(healthChannel, null));
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: captureKey,
+        child: Directionality(
+          textDirection: TextDirection.ltr,
+          child: Banner(
+            message: syntheticMacHealth
+                ? 'SYNTHETIC HEALTH TEST'
+                : 'SYNTHETIC DATA',
+            location: BannerLocation.topEnd,
+            child: const HealthWorkoutExportApp(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('健康训练'), findsOneWidget);
+    for (final label in ['行者', '顽鹿', '健康']) {
+      await tester.tap(find.widgetWithText(NavigationDestination, label));
+      await tester.pumpAndSettle();
+    }
+    await tester.tap(find.byTooltip('合并 FIT'));
+    await tester.pumpAndSettle();
+    expect(find.byType(FitMergePage), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('健康训练'), findsOneWidget);
+    checks.add('production-root-tabs-navigation-and-back');
+    await screenshot(tester, 'root-$phase');
+
+    if (phase == 'seed') {
+      await functionalFlow(tester, fit);
+      // Fail closed if these tests were accidentally pointed at a used account.
+      expect(await SyncStateStore().allRecords(), isEmpty);
+      await SyncStateStore().savePendingFit(
+        record: SyncPendingRecord(
+          fingerprint: fingerprint,
+          primarySourceId: 'onelap',
+          primaryActivityId: 'runtime-synthetic-activity',
+          updatedAt: DateTime.utc(2024),
+          title: 'Synthetic runtime fixture',
+        ),
+        fit: fit,
+      );
+      await nativeFiles.writeBatchSession(
+        RecoveryBatchCheckpoint(
+          fingerprints: [fingerprint],
+          replaceExisting: false,
+          generationId: 'c' * 64,
+          uploadToStrava: true,
+          writeToHealth: false,
+        ).encode(),
+      );
+      expect(await nativeFiles.readSyncedFit(fingerprint), fit);
+      checks.add('durable-recovery-seed-before-host-process-termination');
+      await screenshot(tester, 'durable-seed');
+    }
+    if (phase == 'verify') {
+      // Only our reserved synthetic records are removed, after proving recovery.
+      await SyncStateStore().remove(fingerprint);
+      await nativeFiles.deleteBatchSession();
+      checks.add('synthetic-runtime-data-cleanup');
+    }
+    expect(tester.takeException(), isNull);
+    binding.reportData = {
+      'phase': phase,
+      'phaseCompleted': true,
+      'phaseBudgetSeconds': phaseBudget.inSeconds,
+      'pid': pid,
+      'runtimeProfile': syntheticMacHealth
+          ? 'macos-synthetic-health-debug'
+          : 'instrumented-native-root',
+      'checks': List<String>.of(checks),
+      'screenshots': List<Map<String, String>>.of(screenshots),
+      'boundaries': [
+        if (syntheticMacHealth)
+          'macOS reduced-entitlement Debug test artifact; production HealthKit signed launch unverified',
+        'synthetic health availability for UI only',
+        'synthetic file selection',
+        'share callback validates file, no OS share sheet',
+        'no OAuth, remote uploads or health writes',
+      ],
+    };
+  }, timeout: Timeout(phaseBudget));
+}
+
+Future<void> screenshot(WidgetTester tester, String name) async {
+  await tester.pumpAndSettle();
+  final boundary =
+      captureKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  final image = await boundary.toImage(pixelRatio: 1);
+  try {
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    expect(bytes, isNotNull);
+    screenshots.add({
+      'name': name,
+      'pngBase64': base64Encode(bytes!.buffer.asUint8List()),
+    });
+  } finally {
+    image.dispose();
+  }
+}
+
+Future<void> showPage(WidgetTester tester, Widget page) async {
+  final nav = tester.state<NavigatorState>(find.byType(Navigator).first);
+  nav.push(MaterialPageRoute<void>(builder: (_) => page));
+  await tester.pumpAndSettle();
+}
+
+Future<void> tapVisible(
+  WidgetTester tester,
+  Finder finder, {
+  double scrollDelta = 200,
+}) async {
+  if (finder.evaluate().isEmpty) {
+    await tester.scrollUntilVisible(
+      finder,
+      scrollDelta,
+      scrollable: find.byType(Scrollable).last,
+    );
+  } else {
+    await tester.ensureVisible(finder);
+  }
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
+Future<void> functionalFlow(WidgetTester tester, Uint8List fit) async {
+  final directory = await Directory.systemTemp.createTemp(
+    'hwe-runtime-fixtures-',
+  );
+  final first = File('${directory.path}/synthetic-primary.fit');
+  final second = File('${directory.path}/synthetic-sensors.fit');
+  await first.writeAsBytes(await fixtureFit(sensors: false), flush: true);
+  await second.writeAsBytes(fit, flush: true);
+  WorkoutExportResult? exported;
+  var selections = 0;
+  final selectionGate = Completer<List<String>>();
+  try {
+    await showPage(
+      tester,
+      FitMergePage(
+        // First selection is cancelled; subsequent selection imports two real
+        // local files. Rust validation and merge use production implementations.
+        pickFits: () async => ++selections == 1 ? [] : selectionGate.future,
+        shareResult: (result) async {
+          expect(await result.file.exists(), isTrue);
+          expect(
+            rust.isValidFit(data: await result.file.readAsBytes()),
+            isTrue,
+          );
+          exported = result;
+        },
+      ),
+    );
+    await tapVisible(tester, find.text('从文件加入'));
+    expect(find.byKey(const ValueKey('mergeFile-0')), findsNothing);
+    await tapVisible(tester, find.text('从文件加入'));
+    // A second click while selection is pending must not create another request.
+    await tapVisible(tester, find.text('从文件加入'));
+    expect(selections, 2);
+    selectionGate.complete([first.path, second.path]);
+    for (
+      var i = 0;
+      i < 100 && find.byKey(const ValueKey('mergeFile-1')).evaluate().isEmpty;
+      i++
+    ) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('mergeFile-1')), findsOneWidget);
+    final primaryTile = find.byKey(const ValueKey('mergeFile-0'));
+    expect(tester.widget<ListTile>(primaryTile).onTap, isNotNull);
+    await tapVisible(tester, primaryTile);
+    expect(tester.widget<ListTile>(primaryTile).selected, isTrue);
+    await tapVisible(tester, find.widgetWithText(FilledButton, '合并 FIT'));
+    // Wait for native I/O to re-enable the merge action, then materialize the
+    // lazy result section below the current viewport before asserting its text.
+    for (
+      var i = 0;
+      i < 100 && find.widgetWithText(FilledButton, '合并 FIT').evaluate().isEmpty;
+      i++
+    ) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    // Two samples cannot meet automatic-alignment reliability thresholds.
+    // Assert the real rejection, then choose the explicit same-clock mode.
+    expect(find.text('FIT 合并失败，请检查文件是否属于同一次活动及时间对齐设置'), findsOneWidget);
+    await expectLater(
+      rust.mergeFitFilesDetailed(
+        primary: await first.readAsBytes(),
+        supplements: [fit],
+        sensorsOnly: false,
+        alignment: 'auto',
+        manualOffsetSeconds: 0,
+      ),
+      throwsA(
+        predicate<Object>(
+          (error) => error.toString().contains('InsufficientReliableData'),
+        ),
+      ),
+    );
+    checks.add('automatic-alignment-rejects-underconstrained-fixture');
+    await screenshot(tester, 'automatic-alignment-rejection');
+    await tapVisible(tester, find.text('绝对时间'), scrollDelta: -200);
+    await tapVisible(tester, find.widgetWithText(FilledButton, '合并 FIT'));
+    for (
+      var i = 0;
+      i < 100 && find.widgetWithText(FilledButton, '合并 FIT').evaluate().isEmpty;
+      i++
+    ) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await screenshot(tester, 'absolute-merge-after-click');
+    await tapVisible(tester, find.text('分享结果'));
+    expect(find.text('结果已生成'), findsOneWidget);
+    expect(exported, isNotNull);
+    final merged = await exported!.file.readAsBytes();
+    final inspection = FitPreviewInspection.decode(
+      await rust.inspectFitPreview(data: merged),
+    );
+    expect(inspection.summary['heartRateCount'], 2);
+    checks.add(
+      'synthetic-file-selection-cancel-real-fit-import-rust-merge-export',
+    );
+    await screenshot(tester, 'merged-export');
+    // Cancel the destructive dialog, proving the real generated file survives.
+    await tapVisible(tester, find.text('删除结果'));
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(await exported!.file.exists(), isTrue);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    final detailExport = RuntimeCallbackCompletion();
+    await showPage(
+      tester,
+      WorkoutActivityDetailPage(
+        title: 'Synthetic runtime ride',
+        sourceTitle: 'Synthetic FIT',
+        loadOriginal: () async => merged,
+        inspect: (bytes) async => FitPreviewInspection.decode(
+          await rust.inspectFitPreview(data: bytes),
+        ),
+        onExport: (_, bytes, synced) => detailExport.run(() async {
+          expect(bytes, merged);
+          expect(synced, isFalse);
+          final output = File('${directory.path}/detail-export.fit');
+          await output.writeAsBytes(bytes, flush: true);
+          expect(await output.readAsBytes(), merged);
+        }),
+      ),
+    );
+    expect(find.text('概览'), findsOneWidget);
+    await screenshot(tester, 'fit-preview');
+    await tapVisible(tester, find.text('导出原始 FIT'));
+    // pumpAndSettle waits for frames, not the callback's native file I/O.
+    // Preserve byte-exact assertions and surface errors the page catches for UI.
+    await detailExport.wait(timeout: phaseBudget);
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    checks.add('real-detail-preview-export-cancel-and-return');
+  } finally {
+    if (exported != null) await exported!.directory.delete(recursive: true);
+    await directory.delete(recursive: true);
+  }
+}

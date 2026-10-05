@@ -1,0 +1,26 @@
+{
+  "upstream_crate": "flutter_rust_bridge_codegen",
+  "version": "2.12.0",
+  "archive_sha256": "13823e8157bada9dc828d67cd23e4bcebcfffa9313175dacad0325fc3188940c",
+  "upstream_git_commit": "62b9330ed2f900535e34d8443ff82dc54070579a",
+  "patch_sha256": "f8882adbe94ab1508179bf1af68c2114a0378242bf29ad7d6df18c35b734b27e",
+  "modified_files": {
+    "Cargo.lock": "21de4f5e17fafa71000093bc7ad22b0e0c7b0d6ef90ddd79d05c6315e4a3a334",
+    "Cargo.toml": "d7c5d8b640b6d3c7d715fc821042e9194b7b5b96d0a9e528cbb7ceacc4055cfe",
+    "src/library/build_web/mod.rs": "7fb36bba1dfa5cac9fed0029ea018c04029dc52fa2fa7bf7d051e93039ff1c50",
+    "src/library/codegen/config/internal_config_parser/generator_parser.rs": "45424bfa015c053faf1fef96f6acdeea7d91efd72fb891b65e7fb59c85f39a78",
+    "src/library/codegen/config/internal_config_parser/mod.rs": "4415c8eec4b81f86925645896149598731fcb4d2aed407351fa00e76fac03004",
+    "src/library/codegen/mod.rs": "b5397b12bcc9fe07a0242ce4f490a7694823fc133da38a4f3e82a921a626adbe",
+    "src/library/commands/cargo_expand/mod.rs": "b61b41c893fec8c85ef71e2b95ce669764c435ae474b30711e72e88254c45797",
+    "src/library/commands/cargo_expand/real.rs": "0a17bc65043d5c6c4a323d60db2d26ef758568bd2d8e94788e37334653f0b3ca",
+    "src/library/commands/cargo_metadata.rs": "8f3400f3a74a9fedcfe2da0696ee42bd48790f23cd9b4f57691b6f2b45850be7",
+    "src/library/commands/command_runner.rs": "a2d06797f9a11553b1958d1b75bac021418814353ab3721c349c96bce62b2b98",
+    "src/library/commands/ensure_tools_available.rs": "2ef12d38cd5c2a0b1dc1fbaa12e6a0620f1cca232704c8d8cc416c7b3913ef2b",
+    "src/library/mod.rs": "b57bbe9881efd3dd1e515d4040d45db717f05e0a82c9f874567e9e6643b84b11",
+    "src/library/offline.rs": "b6af5ebf74b4efd67435873b5d3d5ca3399091a1be6cd94b2fd649dbf37b3f0e",
+    "src/library/offline_policy.rs": "b691f028f891c8e96ca082c6b5cdb4d1af4790614dd62e6eeaa85c9d5c3b50dd",
+    "src/library/utils/dart_repository/dart_repo.rs": "e3cdbab79021e87016dabea0f245a5110ff7eba93e6c4940d98b9a6f1e7bccd7",
+    "src/library/utils/dart_repository/dart_toolchain.rs": "7fdb2f054bf6ad1e51ccb672325a76791cd8677f2381c12fc6a4a7c5f553a8bd",
+    "src/main.rs": "d0a451dec3a1f9b41ca6497a431b0d4acfdd1c70a8d181f01ac27d6cfec03ac4"
+  }
+}

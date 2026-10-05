@@ -1,0 +1,1104 @@
+import 'package:flutter/services.dart';
+
+enum StravaLeasePurpose { refresh, upload }
+
+/// 一次 Strava 原生凭据租约；不得写入日志、UI 或长期状态。
+final class StravaLease {
+  const StravaLease._({
+    required this.purpose,
+    required this.clientId,
+    required this.clientSecret,
+    required this.accessToken,
+    required this.refreshToken,
+    required this.expiresAtSeconds,
+  });
+
+  factory StravaLease.fromObject(StravaLeasePurpose purpose, Object? value) {
+    final map = _objectMap(value, 'Strava 凭据租约');
+    final expiresAt = _requiredFiniteDouble(map, 'expiresAtSeconds');
+    return switch (purpose) {
+      StravaLeasePurpose.refresh => StravaLease._(
+        purpose: purpose,
+        clientId: _requiredText(map, 'clientId'),
+        clientSecret: _requiredText(map, 'clientSecret'),
+        accessToken: null,
+        refreshToken: _requiredText(map, 'refreshToken'),
+        expiresAtSeconds: expiresAt,
+      ),
+      StravaLeasePurpose.upload => StravaLease._(
+        purpose: purpose,
+        clientId: null,
+        clientSecret: null,
+        accessToken: _requiredText(map, 'accessToken'),
+        refreshToken: null,
+        expiresAtSeconds: expiresAt,
+      ),
+    };
+  }
+
+  final StravaLeasePurpose purpose;
+  final String? clientId;
+  final String? clientSecret;
+  final String? accessToken;
+  final String? refreshToken;
+  final double expiresAtSeconds;
+
+  @override
+  String toString() =>
+      'StravaLease(purpose: ${purpose.name}, expiresAtSeconds: $expiresAtSeconds, credentials: <redacted>)';
+}
+
+final class StravaVaultStatus {
+  const StravaVaultStatus({
+    required this.clientId,
+    required this.hasClientSecret,
+    required this.hasAccessToken,
+    required this.hasRefreshToken,
+    required this.expiresAtSeconds,
+  });
+
+  factory StravaVaultStatus.fromObject(Object? value) {
+    final map = _objectMap(value, 'Strava 凭据状态');
+    final clientId = map['clientId'];
+    if (clientId is! String) {
+      throw const FormatException('Strava clientId 状态无效');
+    }
+    return StravaVaultStatus(
+      clientId: clientId,
+      hasClientSecret: _requiredBool(map, 'hasClientSecret'),
+      hasAccessToken: _requiredBool(map, 'hasAccessToken'),
+      hasRefreshToken: _requiredBool(map, 'hasRefreshToken'),
+      expiresAtSeconds: _requiredFiniteDouble(map, 'expiresAtSeconds'),
+    );
+  }
+
+  final String clientId;
+  final bool hasClientSecret;
+  final bool hasAccessToken;
+  final bool hasRefreshToken;
+  final double expiresAtSeconds;
+}
+
+/// 固定用途的 Strava Keychain vault；不提供任意 account 读写能力。
+final class StravaVaultChannel {
+  const StravaVaultChannel()
+    : _channel = const MethodChannel('health_workout_export/keychain');
+
+  final MethodChannel _channel;
+
+  Future<StravaVaultStatus> status() async {
+    final value = await _channel.invokeMethod<Object?>('stravaStatus');
+    return StravaVaultStatus.fromObject(value);
+  }
+
+  Future<StravaLease> lease(StravaLeasePurpose purpose) async {
+    final value = await _channel.invokeMethod<Object?>('stravaLease', {
+      'purpose': purpose.name,
+    });
+    return StravaLease.fromObject(purpose, value);
+  }
+
+  Future<void> commitAuthorization({
+    required String clientId,
+    required String clientSecret,
+    required String accessToken,
+    required String refreshToken,
+    required double expiresAtSeconds,
+  }) async {
+    _requireText(clientId, 'clientId');
+    _requireSecret(clientSecret, 'clientSecret');
+    _requireSecret(accessToken, 'accessToken');
+    _requireSecret(refreshToken, 'refreshToken');
+    if (!expiresAtSeconds.isFinite || expiresAtSeconds <= 0) {
+      throw ArgumentError.value(
+        expiresAtSeconds,
+        'expiresAtSeconds',
+        '必须是正的有限数值',
+      );
+    }
+    await _channel.invokeMethod<Object?>('writeStravaAuthorization', {
+      'clientId': clientId,
+      'clientSecret': clientSecret,
+      'accessToken': accessToken,
+      'refreshToken': refreshToken,
+      'expiresAtSeconds': expiresAtSeconds,
+    });
+  }
+
+  Future<void> clearAuthorization() async {
+    await _channel.invokeMethod<Object?>('clearStravaAuthorization');
+  }
+}
+
+/// 行者会话租约；仅短暂用于恢复会话或重新登录，字符串表示不会泄漏凭据。
+final class XingzheVaultLease {
+  const XingzheVaultLease({
+    required this.account,
+    required this.password,
+    required this.sessionId,
+  });
+
+  factory XingzheVaultLease.fromObject(Object? value) {
+    final map = _objectMap(value, '行者凭据租约');
+    return XingzheVaultLease(
+      account: _requiredText(map, 'account'),
+      password: _requiredText(map, 'password'),
+      sessionId: _optionalText(map, 'sessionId'),
+    );
+  }
+
+  final String account;
+  final String password;
+  final String? sessionId;
+
+  @override
+  String toString() => 'XingzheVaultLease(credentials: <redacted>)';
+}
+
+final class OnelapVaultLease {
+  const OnelapVaultLease({
+    required this.account,
+    required this.password,
+    required this.token,
+    required this.uid,
+    this.refreshToken,
+  });
+
+  factory OnelapVaultLease.fromObject(Object? value) {
+    final map = _objectMap(value, '顽鹿凭据租约');
+    return OnelapVaultLease(
+      account: _requiredText(map, 'account'),
+      password: _requiredText(map, 'password'),
+      token: _optionalText(map, 'token'),
+      uid: _optionalText(map, 'uid'),
+      refreshToken: _optionalText(map, 'refreshToken'),
+    );
+  }
+
+  final String account;
+  final String password;
+  final String? token;
+  final String? uid;
+  final String? refreshToken;
+
+  @override
+  String toString() => 'OnelapVaultLease(credentials: <redacted>)';
+}
+
+final class XingzheVaultStatus {
+  const XingzheVaultStatus({
+    required this.hasAccount,
+    required this.hasPassword,
+    required this.hasSessionId,
+  });
+
+  factory XingzheVaultStatus.fromObject(Object? value) {
+    final map = _objectMap(value, '行者凭据状态');
+    return XingzheVaultStatus(
+      hasAccount: _requiredBool(map, 'hasAccount'),
+      hasPassword: _requiredBool(map, 'hasPassword'),
+      hasSessionId: _requiredBool(map, 'hasSessionId'),
+    );
+  }
+
+  final bool hasAccount;
+  final bool hasPassword;
+  final bool hasSessionId;
+  bool get isConfigured => hasAccount && hasPassword && hasSessionId;
+}
+
+final class OnelapVaultStatus {
+  const OnelapVaultStatus({
+    required this.hasAccount,
+    required this.hasPassword,
+    required this.hasToken,
+    required this.hasUid,
+  });
+
+  factory OnelapVaultStatus.fromObject(Object? value) {
+    final map = _objectMap(value, '顽鹿凭据状态');
+    return OnelapVaultStatus(
+      hasAccount: _requiredBool(map, 'hasAccount'),
+      hasPassword: _requiredBool(map, 'hasPassword'),
+      hasToken: _requiredBool(map, 'hasToken'),
+      hasUid: _requiredBool(map, 'hasUid'),
+    );
+  }
+
+  final bool hasAccount;
+  final bool hasPassword;
+  final bool hasToken;
+  final bool hasUid;
+  bool get isConfigured => hasAccount && hasPassword && hasToken && hasUid;
+}
+
+/// 固定用途的行者 Keychain vault；没有任意账户读写 API。
+final class XingzheVaultChannel {
+  const XingzheVaultChannel()
+    : _channel = const MethodChannel('health_workout_export/third_party_vault');
+
+  final MethodChannel _channel;
+
+  Future<XingzheVaultStatus> status() async => XingzheVaultStatus.fromObject(
+    await _channel.invokeMethod<Object?>('xingzheStatus'),
+  );
+
+  Future<XingzheVaultLease> lease() async => XingzheVaultLease.fromObject(
+    await _channel.invokeMethod<Object?>('xingzheLease'),
+  );
+
+  Future<void> commitAuthorization({
+    required String account,
+    required String password,
+    required String sessionId,
+  }) async {
+    _requireText(account, 'account');
+    _requireSecret(password, 'password');
+    _requireSecret(sessionId, 'sessionId');
+    await _channel.invokeMethod<Object?>('writeXingzheAuthorization', {
+      'account': account,
+      'password': password,
+      'sessionId': sessionId,
+    });
+  }
+
+  Future<void> clearAuthorization() =>
+      _channel.invokeMethod<Object?>('clearXingzheAuthorization');
+}
+
+/// 固定用途的顽鹿 Keychain vault；没有任意账户读写 API。
+final class OnelapVaultChannel {
+  const OnelapVaultChannel()
+    : _channel = const MethodChannel('health_workout_export/third_party_vault');
+
+  final MethodChannel _channel;
+
+  Future<OnelapVaultStatus> status() async => OnelapVaultStatus.fromObject(
+    await _channel.invokeMethod<Object?>('onelapStatus'),
+  );
+
+  Future<OnelapVaultLease> lease() async => OnelapVaultLease.fromObject(
+    await _channel.invokeMethod<Object?>('onelapLease'),
+  );
+
+  Future<void> commitAuthorization({
+    required String account,
+    required String password,
+    required String token,
+    required String uid,
+    String? refreshToken,
+  }) async {
+    _requireText(account, 'account');
+    _requireSecret(password, 'password');
+    _requireSecret(token, 'token');
+    _requireSecret(uid, 'uid');
+    if (refreshToken != null) _requireSecret(refreshToken, 'refreshToken');
+    await _channel.invokeMethod<Object?>('writeOnelapAuthorization', {
+      'account': account,
+      'password': password,
+      'token': token,
+      'uid': uid,
+      'refreshToken': ?refreshToken,
+    });
+  }
+
+  Future<void> clearAuthorization() =>
+      _channel.invokeMethod<Object?>('clearOnelapAuthorization');
+}
+
+/// 复用旧应用 UserDefaults 键的最小 Flutter 通道。
+final class PreferencesChannel {
+  const PreferencesChannel()
+    : _channel = const MethodChannel('health_workout_export/preferences');
+
+  final MethodChannel _channel;
+
+  Future<Object?> read(String key) {
+    _requirePreferenceKey(key);
+    return _channel.invokeMethod<Object?>('read', {'key': key});
+  }
+
+  Future<void> write(String key, Object value) async {
+    _requirePreferenceKey(key);
+    if (value is! String &&
+        value is! bool &&
+        value is! int &&
+        value is! double) {
+      throw ArgumentError.value(value, 'value', '必须是 UserDefaults 标量');
+    }
+    if (value is double && !value.isFinite) {
+      throw ArgumentError.value(value, 'value', '必须是有限数值');
+    }
+    await _channel.invokeMethod<Object?>('write', {'key': key, 'value': value});
+  }
+
+  Future<void> delete(String key) async {
+    _requirePreferenceKey(key);
+    await _channel.invokeMethod<Object?>('delete', {'key': key});
+  }
+}
+
+enum StravaUploadMode { api, web }
+
+/// 旧 SwiftUI 与 Flutter 共用的 Strava 设置快照。
+final class StravaSettingsSnapshot {
+  const StravaSettingsSnapshot({
+    required this.mode,
+    required this.clientId,
+    required this.hasClientSecret,
+    required this.hasAccessToken,
+    required this.hasRefreshToken,
+    required this.expiresAtSeconds,
+    required this.hasWebCookie,
+    required this.gcjCorrectionEnabled,
+  });
+
+  final StravaUploadMode mode;
+  final String clientId;
+  final bool hasClientSecret;
+  final bool hasAccessToken;
+  final bool hasRefreshToken;
+  final double expiresAtSeconds;
+  final bool hasWebCookie;
+  final bool gcjCorrectionEnabled;
+
+  bool get isApiReady =>
+      clientId.isNotEmpty &&
+      hasClientSecret &&
+      hasAccessToken &&
+      hasRefreshToken;
+
+  bool get isWebReady => hasWebCookie;
+}
+
+/// 通过专用 vault 读取 Strava 安全状态，并用旧 UserDefaults 键保留非敏感设置。
+final class StravaSettingsStore {
+  const StravaSettingsStore({
+    this.vault = const StravaVaultChannel(),
+    this.preferences = const PreferencesChannel(),
+    this.web = const StravaWebChannel(),
+  });
+
+  final StravaVaultChannel vault;
+  final PreferencesChannel preferences;
+  final StravaWebChannel web;
+
+  Future<StravaSettingsSnapshot> load() async {
+    final vaultStatus = await vault.status();
+    final hasWebCookie = await web.hasCookie();
+    final modeValue = await preferences.read(_modeKey);
+    final correctionValue = await preferences.read(_gcjCorrectionKey);
+
+    final mode = switch (modeValue) {
+      'web' => StravaUploadMode.web,
+      _ => StravaUploadMode.api,
+    };
+    if (correctionValue != null && correctionValue is! bool) {
+      throw const FormatException('Strava 坐标纠偏设置无效');
+    }
+    return StravaSettingsSnapshot(
+      mode: mode,
+      clientId: vaultStatus.clientId,
+      hasClientSecret: vaultStatus.hasClientSecret,
+      hasAccessToken: vaultStatus.hasAccessToken,
+      hasRefreshToken: vaultStatus.hasRefreshToken,
+      expiresAtSeconds: vaultStatus.expiresAtSeconds,
+      hasWebCookie: hasWebCookie,
+      gcjCorrectionEnabled: correctionValue as bool? ?? false,
+    );
+  }
+
+  Future<void> saveAuthorization({
+    required String clientId,
+    required String clientSecret,
+    required String accessToken,
+    required String refreshToken,
+    required double expiresAtSeconds,
+  }) async {
+    final normalizedId = clientId.trim();
+    final normalizedSecret = clientSecret.trim();
+    _requireText(normalizedId, 'clientId');
+    _requireSecret(normalizedSecret, 'clientSecret');
+    _requireSecret(accessToken, 'accessToken');
+    _requireSecret(refreshToken, 'refreshToken');
+    if (!expiresAtSeconds.isFinite || expiresAtSeconds <= 0) {
+      throw ArgumentError.value(
+        expiresAtSeconds,
+        'expiresAtSeconds',
+        '必须是正的有限数值',
+      );
+    }
+    await vault.commitAuthorization(
+      clientId: normalizedId,
+      clientSecret: normalizedSecret,
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+      expiresAtSeconds: expiresAtSeconds,
+    );
+  }
+
+  Future<void> setMode(StravaUploadMode mode) =>
+      preferences.write(_modeKey, mode.name);
+
+  Future<void> setGcjCorrectionEnabled(bool enabled) =>
+      preferences.write(_gcjCorrectionKey, enabled);
+
+  Future<void> clearAuthorization() => vault.clearAuthorization();
+
+  static const _modeKey = 'strava.uploadMode';
+  static const _gcjCorrectionKey = 'strava.gcjCorrectionEnabled';
+}
+
+const _allowedPreferenceKeys = <String>{
+  'sync_preview_policy',
+  'write_to_apple_health',
+  'strava.uploadMode',
+  'strava.gcjCorrectionEnabled',
+  'virtualPower.enabled',
+  'virtualPower.includeInertia',
+  'virtualPower.riderMassKg',
+  'virtualPower.bikeMassKg',
+  'virtualPower.cda',
+};
+
+void _requirePreferenceKey(String key) {
+  if (!_allowedPreferenceKeys.contains(key)) {
+    throw ArgumentError.value(key, 'key', '不是允许的应用设置键');
+  }
+}
+
+/// iOS 系统浏览器中的 Strava OAuth 授权边界；token 交换由 Rust 负责。
+final class StravaOAuthChannel {
+  const StravaOAuthChannel()
+    : _channel = const MethodChannel('health_workout_export/strava_oauth');
+
+  final MethodChannel _channel;
+
+  static Uri authorizationUri(String clientId) {
+    final normalizedId = clientId.trim();
+    _requireText(normalizedId, 'clientId');
+    return Uri.https('www.strava.com', '/oauth/mobile/authorize', {
+      'client_id': normalizedId,
+      'redirect_uri': 'healthworkoutexport://localhost/callback',
+      'response_type': 'code',
+      'approval_prompt': 'auto',
+      'scope': 'activity:read_all,activity:write,read',
+    });
+  }
+
+  Future<void> cancel() => _channel.invokeMethod<void>('cancelAuthorization');
+
+  Future<String> authorize(Uri authorizationUrl) async {
+    if (authorizationUrl.scheme != 'https' ||
+        authorizationUrl.host != 'www.strava.com' ||
+        authorizationUrl.userInfo.isNotEmpty ||
+        authorizationUrl.hasPort ||
+        authorizationUrl.hasFragment ||
+        authorizationUrl.path != '/oauth/mobile/authorize') {
+      throw ArgumentError.value(
+        authorizationUrl,
+        'authorizationUrl',
+        '必须是 Strava 授权地址',
+      );
+    }
+    final code = await _channel.invokeMethod<String>('authorize', {
+      'authorizationUrl': authorizationUrl.toString(),
+      'callbackScheme': 'healthworkoutexport',
+    });
+    if (code == null || code.isEmpty) {
+      throw const FormatException('Strava OAuth 未返回授权码');
+    }
+    return code;
+  }
+}
+
+/// Strava 网页登录与系统 Cookie 清理边界；界面只使用 readiness，不展示凭据。
+final class StravaWebChannel {
+  const StravaWebChannel()
+    : _channel = const MethodChannel('health_workout_export/strava_web');
+
+  final MethodChannel _channel;
+
+  Future<void> openActivity(String remoteId) async {
+    if (!isValidStravaActivityId(remoteId)) {
+      throw ArgumentError.value(remoteId, 'remoteId', '必须为 1 至 32 位数字');
+    }
+    await _channel.invokeMethod<void>('openActivity', {'remoteId': remoteId});
+  }
+
+  Future<void> deleteActivity(String remoteId) async {
+    if (!isValidStravaActivityId(remoteId)) {
+      throw ArgumentError.value(remoteId, 'remoteId', '必须为 1 至 32 位数字');
+    }
+    await _channel.invokeMethod<void>('deleteActivity', {'remoteId': remoteId});
+  }
+
+  Future<String> listActivityPage({
+    required int page,
+    required DateTime after,
+    required DateTime before,
+  }) async {
+    if (page < 1 ||
+        page > 200 ||
+        !after.isBefore(before) ||
+        after.year < 1900 ||
+        before.year > 2200) {
+      throw ArgumentError('网页活动列表范围无效');
+    }
+    final value = await _channel.invokeMethod<String>('listActivityPage', {
+      'page': page,
+      'afterMs': after.millisecondsSinceEpoch,
+      'beforeMs': before.millisecondsSinceEpoch,
+    });
+    if (value == null || value.length > 4 * 1024 * 1024) {
+      throw const FormatException('网页活动列表为空或过大');
+    }
+    return value;
+  }
+
+  Future<({String pageHtml, String? streamsJson})?> readActivitySpeedData(
+    String remoteId,
+  ) async {
+    if (!isValidStravaActivityId(remoteId)) {
+      throw ArgumentError.value(remoteId, 'remoteId', '必须为 1 至 32 位数字');
+    }
+    final value = await _channel.invokeMethod<Object?>(
+      'readActivitySpeedData',
+      {'remoteId': remoteId},
+    );
+    if (value == null) return null;
+    final map = _objectMap(value, '网页速度详情');
+    final html = _requiredText(map, 'pageHtml');
+    final streams = _optionalText(map, 'streamsJson');
+    if (html.length > 4 * 1024 * 1024 ||
+        (streams != null && streams.length > 4 * 1024 * 1024)) {
+      throw const FormatException('网页速度详情过大');
+    }
+    return (pageHtml: html, streamsJson: streams);
+  }
+
+  Future<bool> login() async {
+    final ready = await _channel.invokeMethod<bool>('login');
+    if (ready == null) {
+      throw const FormatException('Strava 网页登录未返回状态');
+    }
+    return ready;
+  }
+
+  Future<bool> hasCookie() async {
+    final ready = await _channel.invokeMethod<bool>('hasCookie');
+    if (ready == null) {
+      throw const FormatException('Strava 网页登录状态为空');
+    }
+    return ready;
+  }
+
+  Future<void> clearCookies() async {
+    await _channel.invokeMethod<Object?>('clearCookies');
+  }
+
+  Future<({String? remoteId, bool isDuplicate})> uploadFit({
+    required Uint8List data,
+    required String filename,
+    required String externalId,
+  }) async {
+    _requireText(filename, 'filename');
+    _requireText(externalId, 'externalId');
+    if (data.isEmpty) {
+      throw ArgumentError.value(data, 'data', 'FIT 不能为空');
+    }
+    final value = await _channel.invokeMethod<Object?>('uploadFit', {
+      'data': data,
+      'filename': filename,
+      'externalId': externalId,
+    });
+    final map = _objectMap(value, 'Strava 网页上传结果');
+    return (
+      remoteId: _optionalText(map, 'remoteId'),
+      isDuplicate: _requiredBool(map, 'isDuplicate'),
+    );
+  }
+}
+
+/// 系统文件选择；仅返回用户选中的 FIT 路径。
+final class FilesChannel {
+  const FilesChannel()
+    : _channel = const MethodChannel('health_workout_export/files');
+
+  final MethodChannel _channel;
+
+  Future<List<String>> pickFits() async {
+    final value = await _channel.invokeMethod<List<Object?>>('pickFits');
+    if (value == null) return const [];
+    return [
+      for (final item in value)
+        if (item is String && item.isNotEmpty) item,
+    ];
+  }
+}
+
+/// iOS HealthKit 的可用性、授权与轻量训练摘要通道。
+final class HealthKitChannel {
+  const HealthKitChannel()
+    : _channel = const MethodChannel('health_workout_export/healthkit');
+
+  final MethodChannel _channel;
+
+  Future<bool> canWriteWorkouts() async {
+    try {
+      return await _channel.invokeMethod<bool>('canWriteWorkouts') ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException catch (error) {
+      if (error.code == 'unsupported_platform') return false;
+      rethrow;
+    }
+  }
+
+  Future<void> requestWriteAuthorization() =>
+      _channel.invokeMethod<void>('requestWriteAuthorization');
+  Future<List<Map<String, Object?>>> findNearbyWorkouts({
+    required int startMs,
+    required int endMs,
+  }) async {
+    if (startMs >= endMs) throw ArgumentError('健康查重时间范围无效');
+    final result = await _channel.invokeMethod<List<Object?>>(
+      'findNearbyWorkouts',
+      {'startMs': startMs, 'endMs': endMs},
+    );
+    if (result == null || result.length > 10000) {
+      throw const FormatException('健康查重响应无效');
+    }
+    return [
+      for (final value in result)
+        Map<String, Object?>.from(_objectMap(value, '健康查重训练')),
+    ];
+  }
+
+  Future<String> writeWorkout({required Uint8List draftJson}) async {
+    if (draftJson.isEmpty || draftJson.length > 64 * 1024 * 1024) {
+      throw ArgumentError('健康草稿大小无效');
+    }
+    final result = await _channel.invokeMethod<String>('writeWorkout', {
+      'draftJson': draftJson,
+    });
+    if (result == null || !_uuidPattern.hasMatch(result)) {
+      throw const FormatException('健康写入未返回有效 UUID');
+    }
+    return result;
+  }
+
+  Future<bool> isAvailable() async {
+    final available = await _channel.invokeMethod<bool>('isAvailable');
+    if (available == null) {
+      throw const FormatException('HealthKit 可用性返回为空');
+    }
+    return available;
+  }
+
+  Future<void> requestAuthorization() async {
+    await _channel.invokeMethod<Object?>('requestAuthorization');
+  }
+
+  Future<void> openSettings() async {
+    await _channel.invokeMethod<Object?>('openSettings');
+  }
+
+  /// 返回 iOS 系统当前 IANA 时区标识，供导出保持旧 Swift JSON 契约。
+  Future<String> currentTimeZoneIdentifier() async {
+    final identifier = await _channel.invokeMethod<String>(
+      'currentTimeZoneIdentifier',
+    );
+    if (identifier == null || identifier.trim().isEmpty) {
+      throw const FormatException('系统时区标识为空');
+    }
+    return identifier;
+  }
+
+  /// 查询半开区间 [start, endExclusive) 内开始的训练。
+  Future<List<HealthWorkoutSummary>> listWorkouts({
+    required DateTime start,
+    required DateTime endExclusive,
+  }) async {
+    if (!start.isBefore(endExclusive)) {
+      throw ArgumentError.value(endExclusive, 'endExclusive', '必须晚于 start');
+    }
+    final result = await _channel.invokeMethod<List<Object?>>('listWorkouts', {
+      'startMs': start.millisecondsSinceEpoch,
+      'endMs': endExclusive.millisecondsSinceEpoch,
+    });
+    if (result == null) {
+      throw const FormatException('HealthKit 训练列表返回为空');
+    }
+    return result.map(HealthWorkoutSummary.fromObject).toList(growable: false);
+  }
+
+  /// 一次批量读取完整训练明细，返回顺序必须与 UUID 输入一致。
+  Future<List<HealthWorkoutBundle>> fetchWorkoutBundles(
+    List<String> uuids,
+  ) async {
+    if (uuids.isEmpty) throw ArgumentError.value(uuids, 'uuids', '不能为空');
+    final normalized = <String>{};
+    for (final uuid in uuids) {
+      if (!_uuidPattern.hasMatch(uuid) || !normalized.add(uuid.toLowerCase())) {
+        throw ArgumentError.value(uuids, 'uuids', '必须是无重复的 UUID');
+      }
+    }
+    // Health Connect caps a single detail call at 100 sessions. Validate the
+    // entire selection first, then preserve order across bounded native calls.
+    if (uuids.length > 100) {
+      final bundles = <HealthWorkoutBundle>[];
+      for (var start = 0; start < uuids.length; start += 100) {
+        final end = (start + 100).clamp(0, uuids.length);
+        bundles.addAll(await fetchWorkoutBundles(uuids.sublist(start, end)));
+      }
+      return List.unmodifiable(bundles);
+    }
+    final result = await _channel.invokeMethod<List<Object?>>(
+      'fetchWorkoutBundles',
+      {'uuids': uuids},
+    );
+    if (result == null || result.length != uuids.length) {
+      throw const FormatException('HealthKit 完整训练数量与请求不一致');
+    }
+    final bundles = result
+        .map(HealthWorkoutBundle.fromObject)
+        .toList(growable: false);
+    for (var index = 0; index < bundles.length; index++) {
+      if (bundles[index].summary.uuid.toLowerCase() !=
+          uuids[index].toLowerCase()) {
+        throw const FormatException('HealthKit 完整训练顺序与请求不一致');
+      }
+    }
+    return bundles;
+  }
+}
+
+final _uuidPattern = RegExp(
+  r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+);
+
+/// HealthKit 完整训练包；FIT 编码直接消费这一批量模型。
+final class HealthWorkoutBundle {
+  const HealthWorkoutBundle({
+    required this.summary,
+    required this.metadata,
+    required this.events,
+    required this.series,
+    required this.route,
+  });
+
+  factory HealthWorkoutBundle.fromObject(Object? value) {
+    if (value is! Map<Object?, Object?>) {
+      throw const FormatException('HealthKit 完整训练必须是对象');
+    }
+    final metadata = _requiredMap(value, 'metadata').map((key, item) {
+      if (key is! String || item is! String) {
+        throw const FormatException('metadata 必须是字符串对象');
+      }
+      return MapEntry(key, item);
+    });
+    final events = _requiredList(
+      value,
+      'events',
+    ).map(HealthWorkoutEvent.fromObject).toList(growable: false);
+    final series = _requiredMap(value, 'series').map((key, item) {
+      if (key is! String || item is! List<Object?>) {
+        throw const FormatException('series 必须是样本数组对象');
+      }
+      return MapEntry(
+        key,
+        item.map(HealthQuantitySample.fromObject).toList(growable: false),
+      );
+    });
+    final route = _requiredList(
+      value,
+      'route',
+    ).map(HealthRoutePoint.fromObject).toList(growable: false);
+    return HealthWorkoutBundle(
+      summary: HealthWorkoutSummary.fromObject(value),
+      metadata: Map.unmodifiable(metadata),
+      events: List.unmodifiable(events),
+      series: Map.unmodifiable(series),
+      route: List.unmodifiable(route),
+    );
+  }
+
+  final HealthWorkoutSummary summary;
+  final Map<String, String> metadata;
+  final List<HealthWorkoutEvent> events;
+  final Map<String, List<HealthQuantitySample>> series;
+  final List<HealthRoutePoint> route;
+}
+
+final class HealthWorkoutEvent {
+  const HealthWorkoutEvent({required this.type, required this.dateMs});
+
+  factory HealthWorkoutEvent.fromObject(Object? value) {
+    final map = _objectMap(value, 'HealthKit 训练事件');
+    return HealthWorkoutEvent(
+      type: _requiredText(map, 'type'),
+      dateMs: _requiredInt(map, 'dateMs'),
+    );
+  }
+
+  final String type;
+  final int dateMs;
+
+  @override
+  bool operator ==(Object other) =>
+      other is HealthWorkoutEvent &&
+      other.type == type &&
+      other.dateMs == dateMs;
+
+  @override
+  int get hashCode => Object.hash(type, dateMs);
+}
+
+final class HealthQuantitySample {
+  const HealthQuantitySample({
+    required this.dateMs,
+    required this.value,
+    required this.unit,
+  });
+
+  factory HealthQuantitySample.fromObject(Object? value) {
+    final map = _objectMap(value, 'HealthKit quantity 样本');
+    return HealthQuantitySample(
+      dateMs: _requiredInt(map, 'dateMs'),
+      value: _requiredFiniteDouble(map, 'value'),
+      unit: _requiredText(map, 'unit'),
+    );
+  }
+
+  final int dateMs;
+  final double value;
+  final String unit;
+
+  @override
+  bool operator ==(Object other) =>
+      other is HealthQuantitySample &&
+      other.dateMs == dateMs &&
+      other.value == value &&
+      other.unit == unit;
+
+  @override
+  int get hashCode => Object.hash(dateMs, value, unit);
+}
+
+final class HealthRoutePoint {
+  const HealthRoutePoint({
+    required this.latitude,
+    required this.longitude,
+    required this.altitudeMeters,
+    required this.timestampMs,
+    required this.speedMetersPerSecond,
+  });
+
+  factory HealthRoutePoint.fromObject(Object? value) {
+    final map = _objectMap(value, 'HealthKit 路线点');
+    final latitude = _requiredFiniteDouble(map, 'latitude');
+    final longitude = _requiredFiniteDouble(map, 'longitude');
+    final speed = _optionalFiniteDouble(map, 'speedMetersPerSecond');
+    if (latitude < -90 ||
+        latitude > 90 ||
+        longitude < -180 ||
+        longitude > 180 ||
+        (speed != null && speed < 0)) {
+      throw const FormatException('HealthKit 路线点坐标或速度无效');
+    }
+    return HealthRoutePoint(
+      latitude: latitude,
+      longitude: longitude,
+      altitudeMeters: _optionalFiniteDouble(map, 'altitudeMeters'),
+      timestampMs: _optionalInt(map, 'timestampMs'),
+      speedMetersPerSecond: speed,
+    );
+  }
+
+  final double latitude;
+  final double longitude;
+  final double? altitudeMeters;
+  final int? timestampMs;
+  final double? speedMetersPerSecond;
+
+  @override
+  bool operator ==(Object other) =>
+      other is HealthRoutePoint &&
+      other.latitude == latitude &&
+      other.longitude == longitude &&
+      other.altitudeMeters == altitudeMeters &&
+      other.timestampMs == timestampMs &&
+      other.speedMetersPerSecond == speedMetersPerSecond;
+
+  @override
+  int get hashCode => Object.hash(
+    latitude,
+    longitude,
+    altitudeMeters,
+    timestampMs,
+    speedMetersPerSecond,
+  );
+}
+
+/// HealthKit 列表所需的轻量训练摘要。
+final class HealthWorkoutSummary {
+  const HealthWorkoutSummary({
+    required this.uuid,
+    required this.startMs,
+    required this.endMs,
+    required this.durationSeconds,
+    required this.activityType,
+    required this.activityName,
+    required this.sourceName,
+    required this.sourceBundleId,
+    required this.totalEnergyKcal,
+    required this.totalDistanceMeters,
+  });
+
+  factory HealthWorkoutSummary.fromObject(Object? value) {
+    if (value is! Map<Object?, Object?>) {
+      throw const FormatException('HealthKit 训练摘要必须是对象');
+    }
+    return HealthWorkoutSummary(
+      uuid: _requiredText(value, 'uuid'),
+      startMs: _requiredInt(value, 'startMs'),
+      endMs: _requiredInt(value, 'endMs'),
+      durationSeconds: _requiredDouble(value, 'durationSeconds'),
+      activityType: _requiredInt(value, 'activityType'),
+      activityName: _requiredText(value, 'activityName'),
+      sourceName: _optionalText(value, 'sourceName'),
+      sourceBundleId: _optionalText(value, 'sourceBundleId'),
+      totalEnergyKcal: _optionalDouble(value, 'totalEnergyKcal'),
+      totalDistanceMeters: _optionalDouble(value, 'totalDistanceMeters'),
+    );
+  }
+
+  final String uuid;
+  final int startMs;
+  final int endMs;
+  final double durationSeconds;
+  final int activityType;
+  final String activityName;
+  final String? sourceName;
+  final String? sourceBundleId;
+  final double? totalEnergyKcal;
+  final double? totalDistanceMeters;
+
+  @override
+  bool operator ==(Object other) =>
+      other is HealthWorkoutSummary &&
+      other.uuid == uuid &&
+      other.startMs == startMs &&
+      other.endMs == endMs &&
+      other.durationSeconds == durationSeconds &&
+      other.activityType == activityType &&
+      other.activityName == activityName &&
+      other.sourceName == sourceName &&
+      other.sourceBundleId == sourceBundleId &&
+      other.totalEnergyKcal == totalEnergyKcal &&
+      other.totalDistanceMeters == totalDistanceMeters;
+
+  @override
+  int get hashCode => Object.hash(
+    uuid,
+    startMs,
+    endMs,
+    durationSeconds,
+    activityType,
+    activityName,
+    sourceName,
+    sourceBundleId,
+    totalEnergyKcal,
+    totalDistanceMeters,
+  );
+}
+
+void _requireText(String value, String name) {
+  if (value.trim().isEmpty) {
+    throw ArgumentError.value(value, name, '不能为空');
+  }
+}
+
+void _requireSecret(String value, String name) {
+  if (value.trim().isEmpty) throw ArgumentError('不能为空', name);
+}
+
+String _requiredText(Map<Object?, Object?> map, String key) {
+  final value = map[key];
+  if (value is! String || value.trim().isEmpty) {
+    throw FormatException('$key 必须是非空字符串');
+  }
+  return value;
+}
+
+String? _optionalText(Map<Object?, Object?> map, String key) {
+  final value = map[key];
+  if (value == null) return null;
+  if (value is! String) throw FormatException('$key 必须是字符串或空值');
+  return value;
+}
+
+int _requiredInt(Map<Object?, Object?> map, String key) {
+  final value = map[key];
+  if (value is! int) throw FormatException('$key 必须是整数');
+  return value;
+}
+
+double _requiredDouble(Map<Object?, Object?> map, String key) {
+  final value = map[key];
+  if (value is! num) throw FormatException('$key 必须是数字');
+  return value.toDouble();
+}
+
+bool _requiredBool(Map<Object?, Object?> map, String key) {
+  final value = map[key];
+  if (value is! bool) throw FormatException('$key 必须是布尔值');
+  return value;
+}
+
+double? _optionalDouble(Map<Object?, Object?> map, String key) {
+  final value = map[key];
+  if (value == null) return null;
+  if (value is! num) throw FormatException('$key 必须是数字或空值');
+  return value.toDouble();
+}
+
+Map<Object?, Object?> _objectMap(Object? value, String name) {
+  if (value is! Map<Object?, Object?>) throw FormatException('$name 必须是对象');
+  return value;
+}
+
+Map<Object?, Object?> _requiredMap(Map<Object?, Object?> map, String key) =>
+    _objectMap(map[key], key);
+
+List<Object?> _requiredList(Map<Object?, Object?> map, String key) {
+  final value = map[key];
+  if (value is! List<Object?>) throw FormatException('$key 必须是数组');
+  return value;
+}
+
+int? _optionalInt(Map<Object?, Object?> map, String key) {
+  final value = map[key];
+  if (value == null) return null;
+  if (value is! int) throw FormatException('$key 必须是整数或空值');
+  return value;
+}
+
+double _requiredFiniteDouble(Map<Object?, Object?> map, String key) {
+  final value = _requiredDouble(map, key);
+  if (!value.isFinite) throw FormatException('$key 必须是有限数字');
+  return value;
+}
+
+double? _optionalFiniteDouble(Map<Object?, Object?> map, String key) {
+  final value = _optionalDouble(map, key);
+  if (value != null && !value.isFinite) {
+    throw FormatException('$key 必须是有限数字或空值');
+  }
+  return value;
+}
+
+/// 远端 ID 只允许纯数字，绝不把不可信字符串拼成外部 URL。
+bool isValidStravaActivityId(String remoteId) =>
+    RegExp(r'^[0-9]{1,32}$').hasMatch(remoteId);

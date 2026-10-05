@@ -32,6 +32,12 @@ struct SyncStateRecord: Codable, Equatable, Identifiable {
     var uploadChannel: StravaUploadMode?
     /// 实际上传成功的 FIT 是否包含虚拟功率标记；旧记录/去重跳过可能为空。
     var hasVirtualPower: Bool?
+    /// 本 App 写入苹果健康后的训练 UUID；与 Strava 状态独立。
+    var appleHealthUUID: String? = nil
+    /// 用户在接近确认里选择跳过健康写入。
+    var appleHealthSkipped: Bool? = nil
+    /// 最近一次健康写入失败原因；不影响 Strava status。
+    var appleHealthError: String? = nil
 
     var id: String { fingerprint }
 
@@ -267,6 +273,12 @@ actor SyncStateStore {
     /// 单条记录；勾选重传 / 补全用。
     func record(for fingerprint: String) -> SyncStateRecord? {
         records[fingerprint]
+    }
+
+    func syncedFITData(fingerprint: String) -> Data? {
+        guard let url = try? fitURL(fingerprint: fingerprint),
+              FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return try? Data(contentsOf: url)
     }
 
     /// 最近一次实际上传成功且仍有本地文件的 Strava 同步版 FIT。
@@ -506,6 +518,33 @@ actor SyncStateStore {
         }
         record.status = .failed
         record.message = message
+        record.updatedAt = Date()
+        records[fingerprint] = record
+        save()
+    }
+
+    func markAppleHealthWritten(fingerprint: String, uuid: String) {
+        guard var record = records[fingerprint] else { return }
+        record.appleHealthUUID = uuid
+        record.appleHealthSkipped = nil
+        record.appleHealthError = nil
+        record.updatedAt = Date()
+        records[fingerprint] = record
+        save()
+    }
+
+    func markAppleHealthSkipped(fingerprint: String) {
+        guard var record = records[fingerprint] else { return }
+        record.appleHealthSkipped = true
+        record.appleHealthError = nil
+        record.updatedAt = Date()
+        records[fingerprint] = record
+        save()
+    }
+
+    func markAppleHealthFailed(fingerprint: String, message: String) {
+        guard var record = records[fingerprint] else { return }
+        record.appleHealthError = message
         record.updatedAt = Date()
         records[fingerprint] = record
         save()

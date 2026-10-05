@@ -1,0 +1,111 @@
+name: Native platform adapters
+
+"on":
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-adapters-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+  BOT: "true"
+  DASH__SUPPRESS_ANALYTICS: "true"
+  FLUTTER_SUPPRESS_ANALYTICS: "true"
+
+jobs:
+  android-native:
+    name: Android native compilation and unit tests (no Dart or FFI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Read pinned Flutter embedding revision without running Flutter
+        uses: actions/checkout@v4
+        with:
+          repository: flutter/flutter
+          ref: '3.47.5'
+          path: .native-flutter
+          sparse-checkout: bin/internal
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          overwrite-settings: false
+      - name: Use hosted SDK and install only required components without accepting terms
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" 'platforms;android-36' 'build-tools;36.0.0' </dev/null
+          test -f "$ANDROID_HOME/platforms/android-36/android.jar"
+          test -x "$ANDROID_HOME/build-tools/36.0.0/aapt2"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.1.0'
+          build-scan-publish: false
+          dependency-graph: disabled
+          develocity-injection-enabled: false
+          add-job-summary-as-pr-comment: never
+      - name: Compile actual native adapters and run deterministic tests
+        run: gradle --no-daemon -p flutter_app/android/native_validation -PflutterSdk="$GITHUB_WORKSPACE/.native-flutter" testDebugUnitTest assembleDebug
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-native-test-results
+          path: flutter_app/android/native_validation/build/test-results/
+          retention-days: 7
+  windows-native:
+    name: Windows native adapters and protocol tests (no Dart or FFI)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: flutter/flutter
+          ref: '3.47.5'
+          path: .native-flutter
+          sparse-checkout: engine/src/flutter/shell/platform/common
+          persist-credentials: false
+      - name: Configure production adapters against MSVC and the Windows SDK
+        shell: pwsh
+        run: cmake -S flutter_app/windows/tests -B build/windows-native -A x64 -DHWE_FLUTTER_SOURCE_DIR="$env:GITHUB_WORKSPACE/.native-flutter" -DHWE_COMPILE_WINDOWS_ADAPTERS=ON
+      - run: cmake --build build/windows-native --config Release
+      - run: ctest --test-dir build/windows-native -C Release --output-on-failure
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-native-test-results
+          path: build/windows-native/Testing/Temporary/
+          retention-days: 7
+  apple-native:
+    name: iOS Swift type-check and macOS native XCTest (no app execution)
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: flutter/flutter
+          ref: '3.47.5'
+          path: .native-flutter
+          sparse-checkout: bin/internal
+          persist-credentials: false
+      - name: Type-check actual Swift sources against official Flutter and Apple SDKs
+        env:
+          FLUTTER_ROOT: ${{ github.workspace }}/.native-flutter
+          RUN_MACOS_NATIVE_TESTS: "1"
+        run: bash scripts/typecheck-apple-native.sh

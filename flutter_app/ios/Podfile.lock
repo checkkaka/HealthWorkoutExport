@@ -1,0 +1,22 @@
+PODS:
+  - Flutter (1.0.0)
+  - rust_lib_health_workout_export (0.0.1):
+    - Flutter
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - rust_lib_health_workout_export (from `.symlinks/plugins/rust_lib_health_workout_export/ios`)
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  rust_lib_health_workout_export:
+    :path: ".symlinks/plugins/rust_lib_health_workout_export/ios"
+
+SPEC CHECKSUMS:
+  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  rust_lib_health_workout_export: 23090bdeea19d9eadbbb8b5913ae407c10b09c53
+
+PODFILE CHECKSUM: 912e34f102da91123e38965ab4e5b3fb21e195f0
+
+COCOAPODS: 1.17.0

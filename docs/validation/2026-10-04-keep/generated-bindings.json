@@ -1,0 +1,14 @@
+{
+  "generator": "official FRB2.12.0 with repository audited offline adapter",
+  "contentHash": -17790808,
+  "stagedCargoCheck": "passed",
+  "stagedFlutterTests": 8,
+  "outputs": {
+    "rust/workout_core/src/frb_generated.rs": "ea1044b49a0c17eb4a3a6c3b9a2e1d1c327df067281803adbf15c72d1bddfae1",
+    "flutter_app/lib/src/rust/frb_generated.dart": "76d8c2c215815bfdc7376999179e69891ec630789b85f3f5781b1e86a2917a4a",
+    "flutter_app/lib/src/rust/frb_generated.io.dart": "32b6e009e385f6d7183b0dcb9d92444250242aeac1a229e56a463722f35e7710",
+    "flutter_app/lib/src/rust/frb_generated.web.dart": "0674e3918ddd4184cc69e4780377b5bed7f4b5d12905f739eba81e54054484e9",
+    "flutter_app/lib/src/rust/api/simple.dart": "dd7efb108fd265ae18ea3322b7068b04cdc2335863bd82a3d1b1f5b43e7eb874",
+    "flutter_app/lib/src/rust/api/keep.dart": "45a2049af5f4fb04ee99c6dd797d2f2c3cb1cb7f10e2ba782b2e63a4f2f2bc72"
+  }
+}

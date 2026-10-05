@@ -758,6 +758,28 @@ struct SyncHistoryView: View {
                                     .padding(.vertical, 2)
                                     .background(Color.accentColor.opacity(0.12), in: Capsule())
                             }
+                            if record.appleHealthUUID != nil {
+                                Text("健康")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.green)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.green.opacity(0.15), in: Capsule())
+                            } else if record.appleHealthSkipped == true {
+                                Text("健康跳过")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.secondary.opacity(0.12), in: Capsule())
+                            } else if record.appleHealthError != nil {
+                                Text("健康失败")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.red)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.red.opacity(0.12), in: Capsule())
+                            }
                         }
                         Text(statusLine(record))
                             .font(.caption)
@@ -830,6 +852,13 @@ struct SyncHistoryView: View {
             }
             if let channel = record.uploadChannel {
                 parts.append(channel == .api ? "API" : "网页")
+            }
+            if record.appleHealthUUID != nil {
+                parts.append("健康已写入")
+            } else if record.appleHealthSkipped == true {
+                parts.append("健康已跳过")
+            } else if let error = record.appleHealthError {
+                parts.append("健康失败：\(error)")
             }
             return parts.joined(separator: " · ")
         }

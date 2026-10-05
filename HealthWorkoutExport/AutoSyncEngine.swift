@@ -1122,15 +1122,6 @@ final class AutoSyncEngine {
                 onProgress(progress)
                 continue
             }
-            guard let primary = registry.source(id: record.primarySourceId) else {
-                progress.failed += 1
-                progress.processed += 1
-                await stateStore.markFailed(fingerprint: fingerprint, message: "未知主数据源")
-                notes.append("未知主源：\(record.title ?? record.primaryActivityId)")
-                onProgress(progress)
-                continue
-            }
-
             let title = record.title ?? record.primaryActivityId
             progress.message = "重传：\(title)"
             onProgress(progress)
@@ -1156,98 +1147,29 @@ final class AutoSyncEngine {
                 if let recoveredUpload {
                     prepared = recoveredUpload
                     notes.append("使用上次保留的重传文件：\(title)")
-                } else {
-                    let anchor = record.startDate ?? Date()
-                    let windowStart = anchor.addingTimeInterval(-36 * 3600)
-                    let windowEnd = anchor.addingTimeInterval(36 * 3600)
-                    // 调用 listActivities：在时间窗内找回源活动。
-                    let listed = try await primary.listActivities(from: windowStart, to: windowEnd)
-                    guard let activity = listed.first(where: { $0.id == record.primaryActivityId }) else {
-                        throw WorkoutDataSourceError.fetchFailed("源站找不到活动 \(record.primaryActivityId)")
-                    }
-
-                    let supplementIds = record.supplementSourceIds ?? []
-                    let supplements = supplementIds
-                        .filter { $0 != primary.id }
-                        .compactMap { registry.source(id: $0) }
-                    var supplementLists: [String: [SourceActivity]] = [:]
-                    for source in supplements {
-                        // 调用 listActivities：预取补源同窗活动。
-                        supplementLists[source.id] = (try? await source.listActivities(from: windowStart, to: windowEnd)) ?? []
-                    }
-
-                    // 调用 fetchFitData：拉主源 FIT。
-                    let primaryFit = try await primary.fetchFitData(for: activity)
-                    var selectedSupplements: [PreparedSupplement] = []
-                    for source in supplements {
-                        let candidates = supplementLists[source.id] ?? []
-                        let ranked = ActivityMatcher.rankedCandidates(primary: activity, candidates: candidates)
-                        guard let candidate = ranked.first(where: \.isEligible) else {
-                            continue
-                        }
-                        do {
-                            let data = try await source.fetchFitData(for: candidate.activity)
-                            selectedSupplements.append(.init(
-                                sourceId: source.id,
-                                sourceName: source.displayName,
-                                candidate: candidate,
-                                data: data
-                            ))
-                        } catch {
-                            notes.append("补源 \(source.displayName) 拉取失败，已跳过：\(error.localizedDescription)")
-                        }
-                    }
-
-                    let finalFIT = try await PreparedFITBuilder.build(
-                        primaryData: primaryFit,
-                        primaryName: primary.displayName,
-                        supplements: selectedSupplements,
-                        gcjEnabled: StravaSettings.gcjCorrectionEnabled,
-                        reuploadMetadata: .init(
-                            fingerprint: fingerprint,
-                            remoteId: remoteIdToReplace,
-                            filename: "\(primary.id)-\(activity.id).fit"
-                        ),
-                        virtualPowerProcessor: { [self] data in
-                            var powerNotes: [String] = []
-                            let result = try await applyVirtualPowerIfNeeded(
-                                data,
-                                activityTitle: activity.title,
-                                notes: &powerNotes
-                            )
-                            return PreparedVirtualPowerResult(
-                                data: result.data,
-                                filledCount: result.virtualPowerCount,
-                                activityDescription: result.activityDescription,
-                                notes: powerNotes
-                            )
-                        }
-                    )
-                    guard !finalFIT.hasErrors else {
-                        throw WorkoutDataSourceError.fetchFailed("质量体检存在不可强传错误")
-                    }
-                    notes.append(contentsOf: finalFIT.report.notes.map { "\($0)：\(activity.title)" })
-
+                } else if let fitData = await stateStore.syncedFITData(fingerprint: fingerprint), !fitData.isEmpty {
+                    let start = record.startDate ?? Date()
+                    let duration = record.durationSeconds ?? 0
                     prepared = PendingResyncUpload(
-                        primarySourceId: primary.id,
-                        primaryActivityId: activity.id,
-                        title: activity.title,
-                        startDate: activity.startDate,
-                        endDate: activity.endDate,
-                        supplementSourceIds: supplementIds,
-                        distanceMeters: activity.distanceMeters,
-                        durationSeconds: activity.duration,
-                        uploadData: finalFIT.data,
-                        uploadMessage: finalFIT.report.convertedCoordinateCount > 0
-                            ? "已转换 \(finalFIT.report.convertedCoordinateCount) 个 GCJ 坐标点"
-                            : nil,
-                        filename: "\(primary.id)-\(activity.id).fit",
+                        primarySourceId: record.primarySourceId,
+                        primaryActivityId: record.primaryActivityId,
+                        title: title,
+                        startDate: start,
+                        endDate: start.addingTimeInterval(duration),
+                        supplementSourceIds: record.supplementSourceIds ?? [],
+                        distanceMeters: record.distanceMeters,
+                        durationSeconds: duration,
+                        uploadData: fitData,
+                        uploadMessage: nil,
+                        filename: "\(record.primarySourceId)-\(record.primaryActivityId).fit",
                         commute: CommuteClassifier.isCommute(
-                            distanceMeters: activity.distanceMeters,
-                            durationSeconds: activity.duration
-                        ),
-                        activityDescription: finalFIT.activityDescription
+                            distanceMeters: record.distanceMeters,
+                            durationSeconds: duration
+                        )
                     )
+                    notes.append("使用本地已保存 FIT：\(title)")
+                } else {
+                    throw WorkoutDataSourceError.fetchFailed("本地没有已保存 FIT，无法勾选同步")
                 }
 
                 // 上传前统一原子保存最终字节：覆盖任一路径删远端后失败，都能再次勾选恢复。

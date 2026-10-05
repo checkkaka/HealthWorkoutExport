@@ -67,6 +67,9 @@
 		B0010000000000000000003D /* SyncPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000003D /* SyncPreviewView.swift */; };
 		B0010000000000000000003E /* FITInspectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000003E /* FITInspectionTests.swift */; };
 		B0010000000000000000003F /* TrackMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000003F /* TrackMapView.swift */; };
+		B00100000000000000000041 /* HealthWorkoutDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000041 /* HealthWorkoutDraft.swift */; };
+		B00100000000000000000042 /* AppleHealthImportPass.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000042 /* AppleHealthImportPass.swift */; };
+		B00100000000000000000043 /* AppleHealthImportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000043 /* AppleHealthImportTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -143,6 +146,9 @@
 		F0010000000000000000003E /* FITInspectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FITInspectionTests.swift; sourceTree = "<group>"; };
 		F0010000000000000000003F /* TrackMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackMapView.swift; sourceTree = "<group>"; };
 		F00100000000000000000040 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
+		F00100000000000000000041 /* HealthWorkoutDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthWorkoutDraft.swift; sourceTree = "<group>"; };
+		F00100000000000000000042 /* AppleHealthImportPass.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleHealthImportPass.swift; sourceTree = "<group>"; };
+		F00100000000000000000043 /* AppleHealthImportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleHealthImportTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -223,6 +229,8 @@
 				F0010000000000000000003C /* PreparedFITBuilder.swift */,
 				F0010000000000000000003D /* SyncPreviewView.swift */,
 				F0010000000000000000003F /* TrackMapView.swift */,
+				F00100000000000000000041 /* HealthWorkoutDraft.swift */,
+				F00100000000000000000042 /* AppleHealthImportPass.swift */,
 				F00100000000000000000009 /* Assets.xcassets */,
 				F0010000000000000000000A /* Info.plist */,
 				F0010000000000000000000B /* HealthWorkoutExport.entitlements */,
@@ -254,6 +262,7 @@
 				F00100000000000000000039 /* VirtualPowerSocialCopyTests.swift */,
 				F0010000000000000000003A /* OpenMeteoWeatherClientTests.swift */,
 				F0010000000000000000003E /* FITInspectionTests.swift */,
+				F00100000000000000000043 /* AppleHealthImportTests.swift */,
 			);
 			path = HealthWorkoutExportTests;
 			sourceTree = "<group>";
@@ -404,6 +413,8 @@
 				B0010000000000000000003C /* PreparedFITBuilder.swift in Sources */,
 				B0010000000000000000003D /* SyncPreviewView.swift in Sources */,
 				B0010000000000000000003F /* TrackMapView.swift in Sources */,
+				B00100000000000000000041 /* HealthWorkoutDraft.swift in Sources */,
+				B00100000000000000000042 /* AppleHealthImportPass.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -423,6 +434,7 @@
 				B00100000000000000000039 /* VirtualPowerSocialCopyTests.swift in Sources */,
 				B0010000000000000000003A /* OpenMeteoWeatherClientTests.swift in Sources */,
 				B0010000000000000000003E /* FITInspectionTests.swift in Sources */,
+				B00100000000000000000043 /* AppleHealthImportTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

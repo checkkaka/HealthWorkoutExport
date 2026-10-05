@@ -1,0 +1,31 @@
+   Compiling flutter_rust_bridge_codegen v2.12.0 (/workspace/shared/frb-offline-codegen-2.12.0)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.89s
+     Running unittests src/lib.rs (/workspace/shared/frb-offline-codegen-2.12.0/target/debug/deps/lib_flutter_rust_bridge_codegen-5bd070d6bb8ddb4e)
+
+running 23 tests
+test library::build_web::offline_guard_tests::build_web_entry_never_dispatches_dart ... ok
+test library::commands::cargo_expand::real::offline_guard_tests::rejects_empty_successful_expansion ... ok
+test library::commands::cargo_expand::real::offline_guard_tests::preserves_successful_expansion_text_and_header_handling ... ok
+test library::commands::cargo_expand::real::offline_guard_tests::rejects_failed_expansion_even_with_nonempty_stdout ... ok
+test library::offline::offline_guard_tests::defaults_disable_all_external_polish_and_preserve_web ... ok
+test library::offline::offline_guard_tests::explicit_external_tool_requests_fail_before_configuration_resolution ... ok
+test library::offline::offline_guard_tests::cargo_configuration_overrides_are_rejected ... ok
+test library::offline::offline_guard_tests::pin_verification_rejects_relative_path ... ok
+test library::offline::offline_guard_tests::guarded_process_plan_pins_tools_and_removes_inherited_environment ... ok
+test library::offline::offline_guard_tests::watch_and_additional_output_are_rejected ... ok
+test library::offline_policy::offline_guard_tests::accepts_locked_offline_full_graph_metadata ... ok
+test library::offline_policy::offline_guard_tests::permits_plain_generated_output ... ok
+test library::offline_policy::offline_guard_tests::accepts_only_expected_expand_shape ... ok
+test library::offline::offline_guard_tests::pin_verification_checks_real_file_contents ... ok
+test library::offline_policy::offline_guard_tests::rejects_cargo_install_and_unaudited_commands ... ok
+test library::offline_policy::offline_guard_tests::rejects_freezed_before_generated_writes ... ok
+test library::offline_policy::offline_guard_tests::rejects_expand_option_injection ... ok
+test library::offline::offline_guard_tests::subprocess_extra_environment_is_restricted_to_frb_expansion_cfg ... ok
+test library::offline::offline_guard_tests::pin_verification_rejects_symlink_with_valid_target_and_hash ... ok
+test library::offline_policy::offline_guard_tests::rejects_json_serializable_before_generated_writes ... ok
+test library::offline_policy::offline_guard_tests::rejects_all_dart_flutter_fvm_and_shell_commands ... ok
+test library::offline_policy::offline_guard_tests::unsupported_config_fails_closed ... ok
+test library::offline_policy::offline_guard_tests::rejects_metadata_without_offline_and_locked ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 97 filtered out; finished in 0.00s
+

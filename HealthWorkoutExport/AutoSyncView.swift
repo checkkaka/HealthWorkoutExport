@@ -21,6 +21,8 @@ struct AutoSyncView: View {
     @State private var customStart = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
     @State private var customEnd = Date()
     @State private var skipIfHistoryExists = false
+    @State private var uploadToStrava = true
+    @State private var writeToAppleHealth = WriteToAppleHealthSetting.enabled
     @State private var customTitle = ""
     @State private var authFlags: [String: Bool] = [:]
     @State private var showStravaSettings = false
@@ -34,8 +36,76 @@ struct AutoSyncView: View {
 
     private var isResync: Bool { !resyncFingerprints.isEmpty }
     private var isSelectedSync: Bool { !selectedActivityIds.isEmpty }
+    private var canWriteAppleHealth: Bool {
+        (isResync ? entrySourceId : primarySourceId) != HealthKitDataSource.sourceId
+    }
+    private var hasSyncTarget: Bool { uploadToStrava || (canWriteAppleHealth && writeToAppleHealth) }
+    private var syncTargetFooter: String {
+        isResync
+            ? "勾选记录只使用本地已保存的 FIT；可分别传 Strava、写入健康，或同时执行。"
+            : "可只写入苹果健康，或同时上传 Strava；健康里已有接近训练时会询问。"
+    }
 
     private var sources: [any WorkoutDataSource] { DataSourceRegistry.shared.all }
+
+    private var primarySourcePicker: some View {
+        Picker("主源", selection: $primarySourceId) {
+            ForEach(sources, id: \.id) { source in
+                Text(label(for: source)).tag(source.id)
+            }
+        }
+        .disabled(session.isRunning)
+        .onChange(of: primarySourceId) { _, _ in
+            applySupplementLinkage()
+        }
+    }
+
+    private var supplementSourceSection: some View {
+        Section {
+            ForEach(sources, id: \.id) { source in
+                if source.id != primarySourceId {
+                    let sourceLabel = label(for: source)
+                    Toggle(isOn: Binding(
+                        get: { supplementIds.contains(source.id) },
+                        set: { on in
+                            if on { supplementIds.insert(source.id) }
+                            else { supplementIds.remove(source.id) }
+                        }
+                    )) {
+                        Text(sourceLabel)
+                    }
+                    .disabled(session.isRunning || (!(authFlags[source.id] ?? false) && source.requiresLogin))
+                }
+            }
+        } header: {
+            Text("补充数据源（随主源联动）")
+        } footer: {
+            Text("切换主源后，会自动勾选其余已登录源。未登录的源不可勾选。开「跳过历史」时改补源也不会重传已有记录（远端速度异常除外）。")
+        }
+    }
+
+    private var syncTargetSection: some View {
+        Section {
+            Toggle("上传到 Strava", isOn: $uploadToStrava)
+                .disabled(session.isRunning || !canWriteAppleHealth)
+            if canWriteAppleHealth {
+                Toggle("写入苹果健康", isOn: $writeToAppleHealth)
+                    .disabled(session.isRunning)
+                    .onChange(of: writeToAppleHealth) { _, on in
+                        WriteToAppleHealthSetting.enabled = on
+                        guard on else { return }
+                        Task {
+                            try? await DataSourceRegistry.shared.healthKit.underlyingHealthKit
+                                .requestAuthorization(writeWorkouts: true)
+                        }
+                    }
+            }
+        } header: {
+            Text("同步目标")
+        } footer: {
+            Text(syncTargetFooter)
+        }
+    }
 
     init(
         entrySourceId: String,
@@ -79,13 +149,15 @@ struct AutoSyncView: View {
                     }
                 }
 
-                Section {
-                    TextField("自定义标题（可选）", text: $customTitle)
-                        .disabled(session.isRunning)
-                } header: {
-                    Text("Strava 标题")
-                } footer: {
-                    Text("填写则本批全部用这个标题。留空：通勤自动改成「通勤🚲」，其它用数据源原名。虚拟功率说明会接到活动描述末尾（需 API）。")
+                if uploadToStrava {
+                    Section {
+                        TextField("自定义标题（可选）", text: $customTitle)
+                            .disabled(session.isRunning)
+                    } header: {
+                        Text("Strava 标题")
+                    } footer: {
+                        Text("填写则本批全部用这个标题。留空：通勤自动改成「通勤🚲」，其它用数据源原名。虚拟功率说明会接到活动描述末尾（需 API）。")
+                    }
                 }
 
                 if isSelectedSync, !isResync {
@@ -98,38 +170,11 @@ struct AutoSyncView: View {
                 if !isResync {
                 if !isSelectedSync {
                 Section("主数据源") {
-                    Picker("主源", selection: $primarySourceId) {
-                        ForEach(sources, id: \.id) { source in
-                            Text(label(for: source)).tag(source.id)
-                        }
-                    }
-                    .disabled(session.isRunning)
-                    .onChange(of: primarySourceId) { _, _ in
-                        applySupplementLinkage()
-                    }
+                    primarySourcePicker
                 }
                 }
 
-                Section {
-                    ForEach(sources, id: \.id) { source in
-                        if source.id != primarySourceId {
-                            Toggle(isOn: Binding(
-                                get: { supplementIds.contains(source.id) },
-                                set: { on in
-                                    if on { supplementIds.insert(source.id) }
-                                    else { supplementIds.remove(source.id) }
-                                }
-                            )) {
-                                Text(label(for: source))
-                            }
-                            .disabled(session.isRunning || (!(authFlags[source.id] ?? false) && source.requiresLogin))
-                        }
-                    }
-                } header: {
-                    Text("补充数据源（随主源联动）")
-                } footer: {
-                    Text("切换主源后，会自动勾选其余已登录源。未登录的源不可勾选。开「跳过历史」时改补源也不会重传已有记录（远端速度异常除外）。")
-                }
+                supplementSourceSection
 
                 Section {
                     Toggle("自动跳过已有同步记录的活动", isOn: $skipIfHistoryExists)
@@ -153,7 +198,7 @@ struct AutoSyncView: View {
                 if !isSelectedSync {
                 Section("同步模式") {
                     Picker("模式", selection: $mode) {
-                        ForEach(AutoSyncMode.allCases) { m in
+                        ForEach(AutoSyncMode.allCases, id: \.rawValue) { m in
                             Text(m.title).tag(m)
                         }
                     }
@@ -176,6 +221,8 @@ struct AutoSyncView: View {
                 }
 
                 }
+
+                syncTargetSection
 
                 Section("Strava") {
                     Text("当前模式：\(StravaSettings.mode.title)")
@@ -255,7 +302,7 @@ struct AutoSyncView: View {
                     Button("开始同步") {
                         startSync()
                     }
-                    .disabled(session.isRunning || !(authFlags[primarySourceId] ?? false))
+                    .disabled(session.isRunning || !hasSyncTarget || (!isResync && !(authFlags[primarySourceId] ?? false)))
                 }
             }
             .navigationTitle(isResync ? "勾选重传" : "自动同步")
@@ -318,10 +365,16 @@ struct AutoSyncView: View {
 
     private func startSync() {
         persistVirtualPowerSettings()
+        WriteToAppleHealthSetting.enabled = writeToAppleHealth
         let trimmed = customTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = trimmed.isEmpty ? nil : trimmed
         if isResync {
-            session.startResync(fingerprints: resyncFingerprints, customTitle: title)
+            session.startResync(
+                fingerprints: resyncFingerprints,
+                customTitle: title,
+                uploadToStrava: uploadToStrava,
+                writeToAppleHealth: canWriteAppleHealth && writeToAppleHealth
+            )
             return
         }
         let job = SyncJobConfig(
@@ -336,7 +389,9 @@ struct AutoSyncView: View {
             selectedStart: selectedStart,
             selectedEnd: selectedEnd,
             customTitle: title,
-            previewPolicy: previewPolicy
+            previewPolicy: previewPolicy,
+            uploadToStrava: uploadToStrava,
+            writeToAppleHealth: primarySourceId != HealthKitDataSource.sourceId && writeToAppleHealth
         )
         // 调用 SyncSession.start：App 级会话执行同步。
         session.start(job)

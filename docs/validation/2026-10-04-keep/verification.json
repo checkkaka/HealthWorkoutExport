@@ -1,0 +1,110 @@
+{
+  "base_commit": "76a62abfda5b8267acb415bfb49b79b1f344d4e6",
+  "base_branch": "codex/flutter-rust-migration",
+  "feature_branch": "codex/keep-running-strava-20261004",
+  "toolchains": {
+    "rust": "1.98.1",
+    "flutter": "3.47.5",
+    "dart": "3.13.4",
+    "frb": "2.12.0 audited offline adapter"
+  },
+  "checks": {
+    "rust_tests": {
+      "command": "cargo test --manifest-path rust/workout_core/Cargo.toml --offline --locked",
+      "passed": 207,
+      "failed": 0,
+      "log_sha256": "13dd57ec12583971294e3ce333ab4430514f3a7249a43eb96d77638510415168"
+    },
+    "rust_clippy": {
+      "command": "cargo clippy --manifest-path rust/workout_core/Cargo.toml --offline --locked --all-targets -- -D warnings",
+      "result": "clean",
+      "log_sha256": "8a2933ae25e59188be988ea6218274cb341f13d8bc4b533f57b12ececd4be8b3"
+    },
+    "rust_format": {
+      "command": "cargo fmt --manifest-path rust/workout_core/Cargo.toml -- --check",
+      "result": "clean",
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "flutter_analyze": {
+      "command": "env BOT=true CI=true DASH__SUPPRESS_ANALYTICS=true FLUTTER_SUPPRESS_ANALYTICS=true flutter --suppress-analytics analyze --no-pub",
+      "result": "no issues",
+      "log_sha256": "80b0105bc8841755a0ec03995d9c20a2069f6fc95579d6c6f87092a1e9b3b20d"
+    },
+    "flutter_tests": {
+      "command": "env BOT=true CI=true DASH__SUPPRESS_ANALYTICS=true FLUTTER_SUPPRESS_ANALYTICS=true flutter --suppress-analytics test --no-pub",
+      "passed": 310,
+      "failed": 0,
+      "log_sha256": "8bbe601cae01ed24a41dc684e902a2319d7d333d077b7a2132c8271d6af59afb"
+    },
+    "timezone": {
+      "command": "env BOT=true CI=true DASH__SUPPRESS_ANALYTICS=true FLUTTER_SUPPRESS_ANALYTICS=true TZ=Asia/Shanghai flutter --suppress-analytics test --no-pub test/keep_source_page_test.dart --plain-name \"UTC Keep timestamps display in the device local day and time\"",
+      "passed": 1,
+      "failed": 0,
+      "log_sha256": "df9095ac43fcbdab0414c7b6281afd2c1555b7ebc2258ada3cf6bf6de6296e84"
+    },
+    "android_vault_jvm": {
+      "command": "python3 flutter_app/android/native_validation/run_keep_vault_jvm_tests.py --jars <prepared-official-test-jars>",
+      "passed": 17,
+      "failed": 0,
+      "log_sha256": "a4759f5cd09793a5218a2a127c278fcce674f27613136503f4ad6dbd82f66818"
+    },
+    "android_vault_contract": {
+      "command": "python3 flutter_app/android/native_validation/test_keep_vault_contract.py",
+      "passed": 3,
+      "failed": 0,
+      "log_sha256": "921b60a7fd52e978fbb551cacd29df2d6708879400278e1fcc70fceeb0c6f8e0"
+    },
+    "windows_portable": {
+      "command": "Compile native_channel_validation, strava_web and oauth_validation portable tests with g++ -std=c++17 -Wall -Wextra -Werror -pedantic -O2; run each binary",
+      "assertions_passed": 277,
+      "log_sha256": "3250d86b77764a5d44ed835f682a1a3f28c5c153ac41431f53770f3ca68f31f0"
+    },
+    "windows_keep_dispatch": {
+      "command": "python3 flutter_app/windows/tests/keep_vault_dispatch_test.py",
+      "passed": 1,
+      "failed": 0,
+      "log_sha256": "d589a420267652009fdea6f848aaa2320a41bb705f5111a6b6735cf8487f4031"
+    },
+    "windows_contract": {
+      "command": "python3 flutter_app/windows/tests/check_native_contract.py",
+      "result": "passed",
+      "log_sha256": "d589a420267652009fdea6f848aaa2320a41bb705f5111a6b6735cf8487f4031"
+    },
+    "repository_scripts": {
+      "command": "python3 -m unittest discover -s scripts -p '*test*.py'",
+      "passed": 35,
+      "failed": 0,
+      "log_sha256": "4b959a48a282312accebea4172b794d95d4e3c8b84e4f1bf903e54f2c31ae167"
+    }
+  },
+  "independent_review": {
+    "rounds": 2,
+    "findings_fixed": 7,
+    "remaining_actionable": 0,
+    "latest_fixes": [
+      "Preserve the legacy cycling commute candidate when synthesizing missing recovery state; suppress explicit Run final bytes",
+      "Provide confirmed fixed-key credential reset without decoding corrupt state or journals",
+      "Reject malformed non-null GPS/heart-rate blob fields and heartRate containers"
+    ]
+  },
+  "not_verified": [
+    "Apple native compilation/Keychain runtime (requires macOS/Xcode)",
+    "Android app/device Keystore runtime",
+    "Windows MSVC app/Credential Manager runtime",
+    "Real Keep login/API payloads and live Strava acceptance (no account/health upload performed)"
+  ],
+  "rulings": [
+    "Keep FIT absolute timestamps remain UTC; local FIT timestamp offset is zero rather than guessing historical IANA offsets",
+    "Legacy records with unknown sport do not authorize approximate cross-source duplicate association; exact identity/fingerprint remains valid",
+    "Keep token and account only are stored; passwords are not retained",
+    "CMake unavailable locally; documented direct g++ portable test route was used instead",
+    "Legacy absent-sport recovery keeps its prior commute candidate until saved final FIT is inspected; known Run bytes suppress both upload and metadata commute"
+  ],
+  "verification_environment": {
+    "BOT": "true",
+    "CI": "true",
+    "DASH__SUPPRESS_ANALYTICS": "true",
+    "FLUTTER_SUPPRESS_ANALYTICS": "true",
+    "note": "Official Flutter bot-detector environment branch short-circuits Azure metadata detection; no SDK, network, authentication or sandbox changes were made"
+  }
+}

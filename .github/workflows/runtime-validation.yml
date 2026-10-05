@@ -1,0 +1,75 @@
+name: Native app runtime validation
+
+"on":
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+  BOT: "true"
+  DASH__SUPPRESS_ANALYTICS: "true"
+  FLUTTER_SUPPRESS_ANALYTICS: "true"
+  COCOAPODS_DISABLE_STATS: "true"
+  CARGOKIT_RUST_TOOLCHAIN: "1.98.1"
+
+# Standard hosted runners only. Every target must launch before its functional
+# scenarios run. No real health records, service accounts, release signing, or
+# native permission-dialog automation are part of these synthetic-data tests.
+jobs:
+  runtime:
+    name: ${{ matrix.platform }} actual launch, workflows and process restart
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    concurrency:
+      group: runtime-validation-${{ github.ref }}-${{ matrix.platform }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: android
+            os: ubuntu-24.04
+          - platform: ios
+            os: macos-latest
+          - platform: macos
+            os: macos-latest
+          - platform: windows
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check runtime workflow guardrails
+        run: python scripts/runtime_validation_test.py
+      - uses: ./.github/actions/setup-flutter-rust
+      - uses: actions/setup-java@v4
+        if: matrix.platform == 'android'
+        with:
+          distribution: temurin
+          java-version: '17'
+          overwrite-settings: false
+      - name: Install official Ubuntu emulator runtime libraries
+        if: matrix.platform == 'android'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libpulse0
+      - name: Resolve committed dependencies explicitly
+        working-directory: flutter_app
+        run: flutter --suppress-analytics pub get --enforce-lockfile
+      - name: Launch app, run functional scenarios, stop and restart app
+        run: python scripts/runtime_validation.py --platform ${{ matrix.platform }}
+      - name: Verify validation did not change dependency locks
+        if: always()
+        run: git diff --exit-code -- flutter_app/pubspec.lock rust/workout_core/Cargo.lock
+      - name: Keep synthetic screenshots, test results and bounded logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: runtime-${{ matrix.platform }}-${{ github.run_attempt }}
+          path: flutter_app/build/runtime-evidence/${{ matrix.platform }}/
+          if-no-files-found: warn
+          retention-days: 7
