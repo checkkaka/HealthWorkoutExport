@@ -13,6 +13,7 @@ final class PreferencesPlugin: NSObject, FlutterPlugin {
     "sync_preview_policy",
     "write_to_apple_health",
     "strava.gcjCorrectionEnabled",
+    "strava.hideFromHomeEnabled",
     "virtualPower.enabled",
     "virtualPower.includeInertia",
     "virtualPower.riderMassKg",

@@ -1245,6 +1245,19 @@ pub async fn strava_resume_upload_poll_after_refresh(
     upload_ffi_response(result)
 }
 
+/// 上传完成后的可选后处理：从 Strava 主页动态隐藏活动，活动可见性不变。
+pub async fn strava_hide_activity_from_home(
+    access_token: String,
+    activity_id: String,
+) -> Result<(), String> {
+    let client =
+        crate::strava::StravaUploadClient::new().map_err(|_| "无法创建 Strava 请求".to_owned())?;
+    client
+        .hide_activity_from_home(&access_token, &activity_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 #[derive(Clone, Debug)]
 pub struct StravaUploadReservation {
     pub handle: String,

@@ -24,7 +24,7 @@ struct WorkoutEventDTO: Codable, Sendable, Hashable {
 }
 
 /// 列表用轻量摘要（不含大样本，保证列表秒开）。
-struct WorkoutSummary: Identifiable, Hashable, Sendable {
+struct WorkoutSummary: Identifiable, Hashable, Sendable, Codable {
     let id: UUID
     let uuid: UUID
     let activityType: HKWorkoutActivityType
@@ -180,5 +180,41 @@ enum DateRangePreset: String, CaseIterable, Identifiable {
             let endExclusive = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: endDay)) ?? endDay
             return (calendar.startOfDay(for: start), endExclusive)
         }
+    }
+}
+
+extension WorkoutSummary {
+    private enum CodingKeys: String, CodingKey {
+        case id, uuid, activityType, activityName, startDate, endDate, duration, totalDistanceMeters, totalEnergyKilocalories, sourceName
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        uuid = try c.decode(UUID.self, forKey: .uuid)
+        let raw = try c.decode(UInt.self, forKey: .activityType)
+        guard let type = HKWorkoutActivityType(rawValue: raw) else {
+            throw DecodingError.dataCorruptedError(forKey: .activityType, in: c, debugDescription: "无效运动类型")
+        }
+        activityType = type
+        activityName = try c.decode(String.self, forKey: .activityName)
+        startDate = try c.decode(Date.self, forKey: .startDate)
+        endDate = try c.decode(Date.self, forKey: .endDate)
+        duration = try c.decode(TimeInterval.self, forKey: .duration)
+        totalDistanceMeters = try c.decodeIfPresent(Double.self, forKey: .totalDistanceMeters)
+        totalEnergyKilocalories = try c.decodeIfPresent(Double.self, forKey: .totalEnergyKilocalories)
+        sourceName = try c.decodeIfPresent(String.self, forKey: .sourceName)
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(uuid, forKey: .uuid)
+        try c.encode(activityType.rawValue, forKey: .activityType)
+        try c.encode(activityName, forKey: .activityName)
+        try c.encode(startDate, forKey: .startDate)
+        try c.encode(endDate, forKey: .endDate)
+        try c.encode(duration, forKey: .duration)
+        try c.encodeIfPresent(totalDistanceMeters, forKey: .totalDistanceMeters)
+        try c.encodeIfPresent(totalEnergyKilocalories, forKey: .totalEnergyKilocalories)
+        try c.encodeIfPresent(sourceName, forKey: .sourceName)
     }
 }

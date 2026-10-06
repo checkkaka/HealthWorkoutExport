@@ -302,6 +302,7 @@ void main() {
         'strava.uploadMode': 'web',
         'strava.expiresAt': 42.0,
         'strava.gcjCorrectionEnabled': true,
+        'strava.hideFromHomeEnabled': true,
       };
       messenger.setMockMethodCallHandler(keychainChannel, (call) async {
         if (call.method == 'stravaStatus') {
@@ -347,6 +348,7 @@ void main() {
       expect(snapshot.expiresAtSeconds, 42);
       expect(snapshot.hasWebCookie, isTrue);
       expect(snapshot.gcjCorrectionEnabled, isTrue);
+      expect(snapshot.hideFromHomeEnabled, isTrue);
       expect(snapshot.isApiReady, isTrue);
 
       await store.saveAuthorization(
@@ -358,6 +360,7 @@ void main() {
       );
       await store.setMode(StravaUploadMode.api);
       await store.setGcjCorrectionEnabled(false);
+      await store.setHideFromHomeEnabled(false);
 
       expect(secrets['strava.clientId'], '456');
       expect(secrets['strava.clientSecret'], 'next');
@@ -367,6 +370,7 @@ void main() {
       expect(preferences['strava.expiresAt'], 84.0);
       expect(preferences['strava.uploadMode'], 'api');
       expect(preferences['strava.gcjCorrectionEnabled'], isFalse);
+      expect(preferences['strava.hideFromHomeEnabled'], isFalse);
     });
 
     test('拒绝空凭据和无效过期时间，非法旧模式回退 API', () async {

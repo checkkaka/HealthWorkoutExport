@@ -1226,6 +1226,7 @@ fn safe_activity_text(value: Option<&str>, fallback: &str, max_bytes: usize) -> 
 pub struct StravaUploadClient {
     client: Client,
     uploads_endpoint: Url,
+    activities_endpoint: Url,
     poll_delays: [Duration; UPLOAD_POLL_DELAYS_SECONDS.len()],
     max_fit_bytes: usize,
 }
@@ -1242,9 +1243,17 @@ impl StravaUploadClient {
             .build()
             .map_err(|_| StravaUploadError::ClientBuild)?;
         let uploads_endpoint = Url::parse(endpoint).map_err(|_| StravaUploadError::ClientBuild)?;
+        let mut activities_endpoint = uploads_endpoint.clone();
+        activities_endpoint
+            .path_segments_mut()
+            .map_err(|_| StravaUploadError::ClientBuild)?
+            .pop_if_empty()
+            .pop()
+            .push("activities");
         Ok(Self {
             client,
             uploads_endpoint,
+            activities_endpoint,
             poll_delays: UPLOAD_POLL_DELAYS_SECONDS.map(Duration::from_secs),
             max_fit_bytes,
         })
@@ -1500,6 +1509,42 @@ impl StravaUploadClient {
             true,
         )
         .await
+    }
+
+    /// 将已创建活动从 Strava 主页动态隐藏，活动本身的可见性不变。
+    pub async fn hide_activity_from_home(
+        &self,
+        access_token: &str,
+        activity_id: &str,
+    ) -> Result<(), StravaUploadError> {
+        let access_token = valid_upload_input("access_token", access_token)?;
+        let activity_id = valid_remote_activity_id(activity_id)
+            .map_err(|_| StravaUploadError::InvalidInput("activity_id"))?;
+        let mut url = self.activities_endpoint.clone();
+        url.path_segments_mut()
+            .map_err(|_| StravaUploadError::InvalidResponse)?
+            .push(activity_id);
+        let response = self
+            .client
+            .put(url)
+            .timeout(ACTIVITY_REQUEST_TIMEOUT)
+            .bearer_auth(access_token)
+            .header("content-type", "application/json")
+            .body(r#"{"hide_from_home":true}"#)
+            .send()
+            .await
+            .map_err(|_| StravaUploadError::Transport)?;
+        match response.status() {
+            StatusCode::OK => Ok(()),
+            StatusCode::TOO_MANY_REQUESTS => Err(StravaUploadError::RateLimited),
+            StatusCode::UNAUTHORIZED => Err(StravaUploadError::UploadFailed(
+                "隐藏主页动态时 Strava 未授权".to_owned(),
+            )),
+            status => Err(StravaUploadError::UploadFailed(format!(
+                "隐藏主页动态失败 HTTP {}",
+                status.as_u16()
+            ))),
+        }
     }
 
     async fn poll_upload(
@@ -2670,6 +2715,30 @@ mod tests {
             }
             server.join().unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn hides_completed_activity_from_home_without_changing_visibility() {
+        let (endpoint, server) = mock_upload_server(vec![(200, "{}")]);
+        let client = StravaUploadClient::for_test(endpoint, 1024).unwrap();
+
+        client
+            .hide_activity_from_home("test-access", "456")
+            .await
+            .unwrap();
+
+        let request = server.join().unwrap().remove(0);
+        assert!(
+            request
+                .head
+                .starts_with("PUT /api/v3/activities/456 HTTP/1.1\r\n")
+        );
+        assert!(
+            request
+                .head
+                .contains("authorization: Bearer test-access\r\n")
+        );
+        assert_eq!(request.body, br#"{"hide_from_home":true}"#);
     }
 
     #[tokio::test]

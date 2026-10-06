@@ -468,6 +468,15 @@ Future<StravaUploadFfiResponse> stravaResumeUploadPollAfterRefresh({
       pollAttempt: pollAttempt,
     );
 
+/// 上传完成后的可选后处理：从 Strava 主页动态隐藏活动，活动可见性不变。
+Future<void> stravaHideActivityFromHome({
+  required String accessToken,
+  required String activityId,
+}) => WorkoutCoreRustLib.instance.api.crateApiSimpleStravaHideActivityFromHome(
+  accessToken: accessToken,
+  activityId: activityId,
+);
+
 /// 拉取 Strava 远端活动列表。调用前先用 `strava_reserve_remote_read` 获取 handle，
 /// 运行中可通过 `strava_cancel_remote_read` 取消；handle 在 Future 结束后自动释放。
 Future<List<StravaRemoteActivityResult>> stravaListRemoteActivities({

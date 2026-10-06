@@ -38,7 +38,19 @@ struct StravaSettingsView: View {
                     set: { StravaSettings.gcjCorrectionEnabled = $0 }
                 ))
             } footer: {
-                Text("默认关闭。顽鹿等国内轨迹在 Strava 偏移时再打开。行者 / 健康一般已是 WGS、通常不必开；开关打开后对所有主源都会转换。")
+                Text("默认关闭。顽鹿等国内轨迹在 Strava 偏移时再打开。行者一般已是 WGS、通常不必开；开关打开后对行者/顽鹿等主源都会转换。主源为苹果健康时始终不转换（HealthKit 轨迹已是 WGS）。")
+            }
+
+            Section {
+                Toggle("上传后从主页隐藏", isOn: Binding(
+                    get: { StravaSettings.hideFromHomeEnabled },
+                    set: { StravaSettings.hideFromHomeEnabled = $0 }
+                ))
+                .disabled(mode != .api)
+            } footer: {
+                Text(mode == .api
+                     ? "活动仍按 Strava 的现有可见性设置保存，只是不显示在主页动态。"
+                     : "仅 API 上传模式支持；网页上传不会隐藏主页动态。")
             }
 
             if mode == .api {

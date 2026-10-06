@@ -15,6 +15,7 @@ final class ExportViewModel {
         pipeline = ExportPipeline(healthKit: healthKit)
     }
 
+    @ObservationIgnored private var loadGeneration = 0
     var authorizationGranted = false
     var isLoading = false
     var isExporting = false
@@ -64,19 +65,31 @@ final class ExportViewModel {
         }
     }
 
-    /// 按时间范围重新查询训练摘要。
-    func reload() async {
+    /// 按时间范围加载摘要；全部缓存一天，下拉强制查询。
+    func reload(forceRefresh: Bool = false) async {
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
         errorMessage = nil
-        defer { isLoading = false }
+        defer { if generation == loadGeneration { isLoading = false } }
         do {
             let range = currentRange
-            // 调用 fetchWorkoutSummaries：仅拉摘要保证列表秒开。
-            let list = try await healthKit.fetchWorkoutSummaries(from: range.start, to: range.end)
+            let requestedPreset = preset
+            let list: [WorkoutSummary]
+            if requestedPreset == .all, !forceRefresh,
+               let cached: [WorkoutSummary] = ActivityListCache.read("healthkit") {
+                list = cached
+            } else {
+                list = try await healthKit.fetchWorkoutSummaries(from: range.start, to: range.end)
+                guard generation == loadGeneration else { return }
+                if requestedPreset == .all { ActivityListCache.write(list, key: "healthkit") }
+            }
+            guard generation == loadGeneration else { return }
             workouts = list
             // 加载后默认不选，由用户手动勾选要导出的训练。
             selectedIDs = []
         } catch {
+            guard generation == loadGeneration else { return }
             errorMessage = error.localizedDescription
             workouts = []
             selectedIDs = []

@@ -2,6 +2,62 @@ import XCTest
 @testable import HealthWorkoutExport
 
 final class SyncFingerprintTests: XCTestCase {
+    func testListScanPersistsWithoutCreatingUploadHistoryAndBackfillsExistingRecords() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("state.json")
+        let store = SyncStateStore(fileURL: fileURL)
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let local = SourceActivity(id: "local", sourceId: "healthkit", title: "骑行",
+            startDate: start, endDate: start.addingTimeInterval(3600), duration: 3600, distanceMeters: 20_000)
+        let remote = StravaActivityLookup.RemoteActivity(id: "123", startDate: start,
+            endDate: local.endDate, distanceMeters: 20_000)
+        let key = SyncStateStore.primaryKey(sourceId: "healthkit", activityId: "local")
+        _ = try await store.applyStravaScan(activities: [local], remotes: [remote])
+        let emptyHistory = await store.allRecords()
+        XCTAssertTrue(emptyHistory.isEmpty)
+        let reopened = SyncStateStore(fileURL: fileURL)
+        let ids = await reopened.localRemoteIdsByPrimaryKey()
+        let scans = await reopened.stravaScansByPrimaryKey()
+        XCTAssertEqual(ids[key], "123")
+        XCTAssertEqual(scans[key]?.status, .complete)
+        await reopened.markPending(fingerprint: "abc", primarySourceId: "healthkit", primaryActivityId: "local")
+        await reopened.markFailed(fingerprint: "abc", message: "原始失败原因")
+        let before = await reopened.record(for: "abc")
+        _ = try await reopened.applyStravaScan(activities: [local], remotes: [remote])
+        let after = await reopened.record(for: "abc")
+        XCTAssertEqual(after?.remoteId, "123")
+        XCTAssertEqual(after?.status, .failed)
+        XCTAssertEqual(after?.message, "原始失败原因")
+        XCTAssertEqual(after?.updatedAt, before?.updatedAt)
+        var replacement = remote
+        replacement.id = "456"
+        let conflict = try await reopened.applyStravaScan(activities: [local], remotes: [replacement])
+        XCTAssertEqual(conflict[key]?.status, .ambiguous)
+        let preserved = await reopened.record(for: "abc")
+        XCTAssertEqual(preserved?.remoteId, "123")
+    }
+
+    func testListScanDoesNotAssignOneRemoteToTwoLocalActivities() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = SyncStateStore(fileURL: directory.appendingPathComponent("state.json"))
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let locals = ["first", "second"].map {
+            SourceActivity(id: $0, sourceId: "healthkit", title: "骑行", startDate: start,
+                endDate: start.addingTimeInterval(3600), duration: 3600, distanceMeters: 20_000)
+        }
+        let remote = StravaActivityLookup.RemoteActivity(id: "123", startDate: start,
+            endDate: locals[0].endDate, distanceMeters: 20_000)
+        let results = try await store.applyStravaScan(activities: locals, remotes: [remote])
+        XCTAssertEqual(results.count, 2)
+        XCTAssertTrue(results.values.allSatisfy { $0.status == .ambiguous && $0.remoteId == nil })
+        let ids = await store.localRemoteIdsByPrimaryKey()
+        XCTAssertTrue(ids.isEmpty)
+    }
+
     func testStableAndChangesWithSupplements() {
         let start = Date(timeIntervalSince1970: 1_700_000_000)
         let a = SyncFingerprint.make(

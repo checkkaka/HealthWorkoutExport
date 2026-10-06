@@ -2,12 +2,13 @@ import Foundation
 
 /// Strava 远端活动预检与 duplicate 文案解析（纯函数 + 列表匹配）。
 enum StravaActivityLookup {
-    struct RemoteActivity: Equatable {
+    struct RemoteActivity: Equatable, Sendable {
         var id: String
         var startDate: Date
         var endDate: Date
         /// 列表距离（米）；缺则只走时间判据。
         var distanceMeters: Double? = nil
+        var sportType: String? = nil
     }
 
     /// 判为同一条所需的最小时间区间重叠比例（交集/并集）。
@@ -130,6 +131,128 @@ enum StravaActivityLookup {
         let s = "\(value)"
         if s.isEmpty || s == "<null>" { return nil }
         return StravaSpeedAnomaly.isOpenableRemoteId(s) ? s : nil
+    }
+}
+
+/// 运动列表扫描结果独立于上传状态；相似项可关联 ID，但不能视为完整上传。
+struct StravaScanResult: Codable, Equatable, Sendable {
+    enum Status: String, Codable, CaseIterable {
+        case complete, incomplete, similar, ambiguous, notFound, insufficient
+
+        var title: String {
+            switch self {
+            case .complete: return "Strava 已存在"
+            case .incomplete: return "相似 · 远端活动缺失"
+            case .similar: return "相似 · 数据不一致"
+            case .ambiguous: return "多个候选 · 待确认"
+            case .notFound: return "未找到匹配"
+            case .insufficient: return "数据不足 · 待确认"
+            }
+        }
+    }
+
+    var status: Status
+    var remoteId: String?
+    var detail: String
+    var checkedAt = Date()
+}
+
+enum StravaActivityScan {
+    /// 完整匹配要求时间覆盖≥85%、时长差≤10%（至少容许60秒）、距离差≤5%（至少100米）。
+    /// 部分记录要求短区间至少80%重叠，且覆盖长区间至少10%，避免把相邻热身当同场。
+    static func match(_ local: SourceActivity, remotes: [StravaActivityLookup.RemoteActivity]) -> StravaScanResult {
+        let duration = local.endDate.timeIntervalSince(local.startDate)
+        guard duration.isFinite, duration > 0 else {
+            return .init(status: .insufficient, detail: "本地缺少有效起止时间")
+        }
+        var seen = Set<String>()
+        var candidates: [(score: Double, result: StravaScanResult)] = []
+        for remote in remotes {
+            guard StravaSpeedAnomaly.isOpenableRemoteId(remote.id), seen.insert(remote.id).inserted else { continue }
+            let remoteDuration = remote.endDate.timeIntervalSince(remote.startDate)
+            guard remoteDuration.isFinite, remoteDuration > 0 else { continue }
+            if let localSport = sportGroup(local.metadata["sportType"]),
+               let remoteSport = sportGroup(remote.sportType), localSport != remoteSport { continue }
+            let overlap = min(local.endDate, remote.endDate).timeIntervalSince(max(local.startDate, remote.startDate))
+            let shortCoverage = overlap / min(duration, remoteDuration)
+            let longCoverage = overlap / max(duration, remoteDuration)
+            let startDelta = abs(local.startDate.timeIntervalSince(remote.startDate))
+            guard overlap > 0,
+                  longCoverage >= 0.5 || (shortCoverage >= 0.8 && longCoverage >= 0.1 && overlap >= 60)
+                    || (startDelta <= 120 && shortCoverage >= 0.8) else { continue }
+            let timeTolerance = max(60, duration * 0.1)
+            let timeClose = abs(duration - remoteDuration) <= timeTolerance
+            let localDistance = local.distanceMeters.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+            let remoteDistance = remote.distanceMeters.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+            var differences: [String] = []
+            if !timeClose {
+                differences.append(String(format: "远端时长%@ %.1f 分钟（本地 %.1f / 远端 %.1f）",
+                    remoteDuration < duration ? "少" : "多", abs(duration - remoteDuration) / 60,
+                    duration / 60, remoteDuration / 60))
+            }
+            var distanceClose = false
+            var distanceMissing = false
+            if let localDistance, let remoteDistance {
+                let tolerance = max(100, localDistance * 0.05)
+                distanceClose = abs(localDistance - remoteDistance) <= tolerance
+                distanceMissing = localDistance - remoteDistance > tolerance
+                if !distanceClose {
+                    differences.append(String(format: "远端距离%@ %.2f km（本地 %.2f / 远端 %.2f）",
+                        remoteDistance < localDistance ? "少" : "多", abs(localDistance - remoteDistance) / 1000,
+                        localDistance / 1000, remoteDistance / 1000))
+                }
+            } else {
+                differences.append("距离数据不足，仅能核对时间")
+            }
+            let complete = timeClose && distanceClose && longCoverage >= 0.85
+            let incomplete = duration - remoteDuration > timeTolerance || distanceMissing
+            let status: StravaScanResult.Status = complete ? .complete : (incomplete ? .incomplete : .similar)
+            if differences.isEmpty { differences.append(complete ? "时间、时长和距离一致" : "时间区间存在偏移") }
+            let score = (complete ? 3.0 : 1.0) + longCoverage + (distanceClose ? 0.2 : 0)
+            candidates.append((score, .init(status: status, remoteId: remote.id, detail: differences.joined(separator: "；"))))
+        }
+        candidates.sort { $0.score == $1.score ? ($0.result.remoteId ?? "") < ($1.result.remoteId ?? "") : $0.score > $1.score }
+        guard let best = candidates.first else {
+            return .init(status: .notFound, detail: "本次查询范围内未找到时间重叠的匹配活动；不代表远端一定不存在")
+        }
+        if candidates.count > 1, best.score - candidates[1].score < 0.1 {
+            return .init(status: .ambiguous, detail: "候选 ID：" + candidates.prefix(3).compactMap { $0.result.remoteId }.joined(separator: "、") + "；未自动关联")
+        }
+        return best.result
+    }
+
+    private static func sportGroup(_ value: String?) -> String? {
+        guard let value = value?.lowercased() else { return nil }
+        for (group, words) in [("ride", ["ride", "cycling", "骑行", "骑车"]),
+                               ("run", ["run", "跑步"]), ("walk", ["walk", "hike", "步行", "健走", "徒步"]),
+                               ("swim", ["swim", "游泳"])] {
+            if words.contains(where: { value.contains($0) }) { return group }
+        }
+        return nil
+    }
+
+    @MainActor
+    static func scan(_ activities: [SourceActivity], store: SyncStateStore = .shared) async throws -> [String: StravaScanResult] {
+        guard let first = activities.map(\.startDate).min(), let last = activities.map(\.endDate).max() else { return [:] }
+        let after = first.addingTimeInterval(-StravaActivityLookup.fetchPadding)
+        let before = last.addingTimeInterval(StravaActivityLookup.fetchPadding)
+        let api = StravaAPIUploader()
+        let web = StravaWebUploader()
+        let listed: [StravaActivityLookup.RemoteActivity]
+        if await api.isReady() {
+            do {
+                listed = try await api.fetchActivities(after: after, before: before, requireComplete: true)
+            } catch {
+                try Task.checkCancellation()
+                guard await web.isReady() else { throw error }
+                listed = try await web.fetchActivities(after: after, before: before, requireComplete: true)
+            }
+        } else {
+            guard await web.isReady() else { throw StravaUploadError.notConfigured }
+            listed = try await web.fetchActivities(after: after, before: before, requireComplete: true)
+        }
+        try Task.checkCancellation()
+        return try await store.applyStravaScan(activities: activities, remotes: listed)
     }
 }
 

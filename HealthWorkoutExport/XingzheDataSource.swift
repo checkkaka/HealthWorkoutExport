@@ -33,6 +33,7 @@ final class XingzheDataSource: WorkoutDataSource, @unchecked Sendable {
     }
 
     func login(credentials: SourceCredentials) async throws {
+        ActivityListCache.clear(id)
         // 调用 XingzheClient.login：RSA 加密密码换 sessionid。
         try await client.login(account: credentials.account, password: credentials.password)
         KeychainStore.set(credentials.account, account: accountKey)
@@ -48,6 +49,8 @@ final class XingzheDataSource: WorkoutDataSource, @unchecked Sendable {
     }
 
     func logout() async {
+        ActivityListCache.clear(id)
+
         await client.clearSession()
         KeychainStore.delete(account: accountKey)
         KeychainStore.delete(account: passwordKey)

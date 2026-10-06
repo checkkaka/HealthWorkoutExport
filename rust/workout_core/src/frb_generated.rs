@@ -27,7 +27,7 @@
 // Section: imports
 
 use flutter_rust_bridge::for_generated::byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
-use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
+use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
 use flutter_rust_bridge::{Handler, IntoIntoDart};
 
 // Section: boilerplate
@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -17790808;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1643580150;
 
 // Section: executor
 
@@ -1426,6 +1426,47 @@ fn wire__crate__api__simple__strava_fetch_remote_activity_speed_impl(
                     (move || async move {
                         let output_ok = crate::api::simple::strava_fetch_remote_activity_speed(
                             api_operation_handle,
+                            api_access_token,
+                            api_activity_id,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__simple__strava_hide_activity_from_home_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "strava_hide_activity_from_home",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_access_token = <String>::sse_decode(&mut deserializer);
+            let api_activity_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, String>(
+                    (move || async move {
+                        let output_ok = crate::api::simple::strava_hide_activity_from_home(
                             api_access_token,
                             api_activity_id,
                         )
@@ -3136,41 +3177,47 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        38 => wire__crate__api__simple__strava_list_remote_activities_impl(
+        38 => wire__crate__api__simple__strava_hide_activity_from_home_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        43 => {
+        39 => wire__crate__api__simple__strava_list_remote_activities_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        44 => {
             wire__crate__api__simple__strava_refresh_token_impl(port, ptr, rust_vec_len, data_len)
         }
-        48 => wire__crate__api__simple__strava_resume_upload_poll_after_refresh_impl(
+        49 => wire__crate__api__simple__strava_resume_upload_poll_after_refresh_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        49 => wire__crate__api__simple__strava_retry_upload_after_refresh_impl(
+        50 => wire__crate__api__simple__strava_retry_upload_after_refresh_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        51 => wire__crate__api__simple__strava_update_activity_metadata_impl(
+        52 => wire__crate__api__simple__strava_update_activity_metadata_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        52 => wire__crate__api__simple__strava_upload_fit_impl(port, ptr, rust_vec_len, data_len),
-        58 => {
+        53 => wire__crate__api__simple__strava_upload_fit_impl(port, ptr, rust_vec_len, data_len),
+        59 => {
             wire__crate__api__simple__xingzhe_download_fit_impl(port, ptr, rust_vec_len, data_len)
         }
-        59 => {
+        60 => {
             wire__crate__api__simple__xingzhe_list_workouts_impl(port, ptr, rust_vec_len, data_len)
         }
-        60 => wire__crate__api__simple__xingzhe_login_impl(port, ptr, rust_vec_len, data_len),
+        61 => wire__crate__api__simple__xingzhe_login_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3208,40 +3255,40 @@ fn pde_ffi_dispatcher_sync_impl(
         ),
         33 => wire__crate__api__simple__strava_cancel_remote_read_impl(ptr, rust_vec_len, data_len),
         34 => wire__crate__api__simple__strava_cancel_upload_impl(ptr, rust_vec_len, data_len),
-        39 => wire__crate__api__simple__strava_parse_web_activity_speed_impl(
+        40 => wire__crate__api__simple__strava_parse_web_activity_speed_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        40 => wire__crate__api__simple__strava_parse_web_listed_activity_speeds_impl(
+        41 => wire__crate__api__simple__strava_parse_web_listed_activity_speeds_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        41 => wire__crate__api__simple__strava_parse_web_remote_activities_impl(
+        42 => wire__crate__api__simple__strava_parse_web_remote_activities_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        42 => {
+        43 => {
             wire__crate__api__simple__strava_rate_limit_snapshot_impl(ptr, rust_vec_len, data_len)
         }
-        44 => {
+        45 => {
             wire__crate__api__simple__strava_release_remote_read_impl(ptr, rust_vec_len, data_len)
         }
-        45 => wire__crate__api__simple__strava_release_upload_impl(ptr, rust_vec_len, data_len),
-        46 => {
+        46 => wire__crate__api__simple__strava_release_upload_impl(ptr, rust_vec_len, data_len),
+        47 => {
             wire__crate__api__simple__strava_reserve_remote_read_impl(ptr, rust_vec_len, data_len)
         }
-        47 => wire__crate__api__simple__strava_reserve_upload_impl(ptr, rust_vec_len, data_len),
-        50 => wire__crate__api__simple__strava_speed_is_anomalous_impl(ptr, rust_vec_len, data_len),
-        53 => wire__crate__api__simple__sync_fingerprint_impl(ptr, rust_vec_len, data_len),
-        54 => wire__crate__api__simple__sync_recovery_apply_impl(ptr, rust_vec_len, data_len),
-        55 => wire__crate__api__simple__sync_recovery_reencode_impl(ptr, rust_vec_len, data_len),
-        56 => wire__crate__api__simple__sync_state_apply_impl(ptr, rust_vec_len, data_len),
-        57 => wire__crate__api__simple__xingzhe_cancel_list_impl(ptr, rust_vec_len, data_len),
-        61 => wire__crate__api__simple__xingzhe_release_list_impl(ptr, rust_vec_len, data_len),
-        62 => wire__crate__api__simple__xingzhe_reserve_list_impl(ptr, rust_vec_len, data_len),
+        48 => wire__crate__api__simple__strava_reserve_upload_impl(ptr, rust_vec_len, data_len),
+        51 => wire__crate__api__simple__strava_speed_is_anomalous_impl(ptr, rust_vec_len, data_len),
+        54 => wire__crate__api__simple__sync_fingerprint_impl(ptr, rust_vec_len, data_len),
+        55 => wire__crate__api__simple__sync_recovery_apply_impl(ptr, rust_vec_len, data_len),
+        56 => wire__crate__api__simple__sync_recovery_reencode_impl(ptr, rust_vec_len, data_len),
+        57 => wire__crate__api__simple__sync_state_apply_impl(ptr, rust_vec_len, data_len),
+        58 => wire__crate__api__simple__xingzhe_cancel_list_impl(ptr, rust_vec_len, data_len),
+        62 => wire__crate__api__simple__xingzhe_release_list_impl(ptr, rust_vec_len, data_len),
+        63 => wire__crate__api__simple__xingzhe_reserve_list_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -4312,7 +4359,7 @@ mod io {
     use flutter_rust_bridge::for_generated::byteorder::{
         NativeEndian, ReadBytesExt, WriteBytesExt,
     };
-    use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
+    use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
 
     // Section: boilerplate
@@ -4336,7 +4383,7 @@ mod web {
     };
     use flutter_rust_bridge::for_generated::wasm_bindgen;
     use flutter_rust_bridge::for_generated::wasm_bindgen::prelude::*;
-    use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
+    use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
 
     // Section: boilerplate

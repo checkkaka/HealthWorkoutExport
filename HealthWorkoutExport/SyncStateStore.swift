@@ -148,7 +148,10 @@ actor SyncStateStore {
     static let shared = SyncStateStore()
 
     private var records: [String: SyncStateRecord] = [:]
+    /// 原始运动列表的扫描标记独立保存，不创建虚假的上传历史。
+    private var stravaScans: [String: StravaScanResult] = [:]
     private let fileURL: URL
+    private var scanFileURL: URL { fileURL.appendingPathExtension("strava-scans.json") }
     /// 实际上传成功的最终 FIT；按指纹独立保存，避免塞入 JSON/Base64 膨胀。
     private let fitDirectoryURL: URL
 
@@ -175,6 +178,10 @@ actor SyncStateStore {
         if let data = try? Data(contentsOf: resolvedFileURL),
            let decoded = try? JSONDecoder().decode([String: SyncStateRecord].self, from: data) {
             records = decoded
+        }
+        if let data = try? Data(contentsOf: resolvedFileURL.appendingPathExtension("strava-scans.json")),
+           let decoded = try? JSONDecoder().decode([String: StravaScanResult].self, from: data) {
+            stravaScans = decoded
         }
     }
 
@@ -225,7 +232,7 @@ actor SyncStateStore {
         return keys
     }
 
-    /// 每个本地主活动最近写入的数字远端 ID；不限制状态，列表以本地记录为准展示。
+    /// 优先使用最近的同步记录 ID；缺失时使用运动列表扫描关联的 ID，不限制上传状态。
     func localRemoteIdsByPrimaryKey() -> [String: String] {
         var result: [String: String] = [:]
         for record in records.values.sorted(by: { $0.updatedAt > $1.updatedAt }) {
@@ -235,7 +242,70 @@ actor SyncStateStore {
                   StravaSpeedAnomaly.isOpenableRemoteId(remoteId) else { continue }
             result[key] = remoteId
         }
+        for (key, scan) in stravaScans where result[key] == nil {
+            if let id = scan.remoteId { result[key] = id }
+        }
         return result
+    }
+
+    func stravaScansByPrimaryKey() -> [String: StravaScanResult] { stravaScans }
+
+    /// 完整读取远端后批量保存；只补缺失 ID，保留原有上传状态、FIT、健康写入信息和更新时间。
+    func applyStravaScan(
+        activities: [SourceActivity],
+        remotes: [StravaActivityLookup.RemoteActivity]
+    ) throws -> [String: StravaScanResult] {
+        try Task.checkCancellation()
+        var results: [String: StravaScanResult] = [:]
+        var sourceByKey: [String: String] = [:]
+        // ponytail: 当前列表逐条匹配远端摘要；超大历史扫描变慢时再按时间区间建立索引。
+        for activity in activities {
+            try Task.checkCancellation()
+            let key = Self.primaryKey(sourceId: activity.sourceId, activityId: activity.id)
+            results[key] = StravaActivityScan.match(activity, remotes: remotes)
+            sourceByKey[key] = activity.sourceId
+        }
+        var owners: [String: Set<String>] = [:]
+        for record in records.values where record.hasOpenableRemoteId {
+            let key = Self.primaryKey(sourceId: record.primarySourceId, activityId: record.primaryActivityId)
+            owners[record.primarySourceId + "|" + record.remoteId!, default: []].insert(key)
+        }
+        for (key, scan) in stravaScans where results[key] == nil {
+            if let id = scan.remoteId, let source = key.split(separator: "|", maxSplits: 1).first {
+                owners[String(source) + "|" + id, default: []].insert(key)
+            }
+        }
+        for (key, scan) in results {
+            if let id = scan.remoteId { owners[sourceByKey[key]! + "|" + id, default: []].insert(key) }
+        }
+        let existingIds = localRemoteIdsByPrimaryKey()
+        for (key, scan) in results {
+            guard let id = scan.remoteId else { continue }
+            if let existing = existingIds[key], existing != id {
+                results[key] = .init(status: .ambiguous, remoteId: existing, detail: "已有 ID \(existing)，新候选 \(id)；保留原关联，请核对")
+            } else if owners[sourceByKey[key]! + "|" + id, default: []].count > 1 {
+                results[key] = .init(status: .ambiguous, remoteId: existingIds[key], detail: "远端 \(id) 同时匹配本数据源多条活动；保留原关联，不填入新 ID")
+            }
+        }
+        var updatedRecords = records
+        for (fingerprint, var record) in updatedRecords where !record.hasOpenableRemoteId {
+            let key = Self.primaryKey(sourceId: record.primarySourceId, activityId: record.primaryActivityId)
+            if let scan = results[key], scan.status != .ambiguous, let id = scan.remoteId {
+                record.remoteId = id
+                updatedRecords[fingerprint] = record
+            }
+        }
+        var updatedScans = stravaScans
+        updatedScans.merge(results) { _, new in new }
+        try Task.checkCancellation()
+        // 原子替换各自文件；扫描结果本身也携带 ID，重启后仍能展示已确认关联。
+        try JSONEncoder().encode(updatedScans).write(to: scanFileURL, options: .atomic)
+        stravaScans = updatedScans
+        if updatedRecords != records {
+            try JSONEncoder().encode(updatedRecords).write(to: fileURL, options: .atomic)
+            records = updatedRecords
+        }
+        return results
     }
 
     func hasUploadedHistory(primarySourceId: String, primaryActivityId: String) -> Bool {
@@ -477,7 +547,8 @@ actor SyncStateStore {
         durationSeconds: TimeInterval? = nil
     ) -> SyncStateRecord? {
         guard distanceMeters > 0 else { return nil }
-        for record in records.values where record.status == .uploaded {
+        // Keep 跑步仅用同源 ID/精确指纹去重，不供缺少运动类型的旧记录近似匹配。
+        for record in records.values where record.status == .uploaded && record.primarySourceId != KeepDataSource.sourceId {
             guard let otherStart = record.startDate,
                   let otherDistance = record.distanceMeters,
                   SyncStableDedupe.matches(

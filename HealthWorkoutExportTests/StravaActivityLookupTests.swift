@@ -2,6 +2,66 @@ import XCTest
 @testable import HealthWorkoutExport
 
 final class StravaActivityLookupTests: XCTestCase {
+    func testListScanDetectsCompleteMissingTimeAndMissingDistance() {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let local = SourceActivity(id: "local", sourceId: "healthkit", title: "骑行",
+            startDate: start, endDate: start.addingTimeInterval(7200), duration: 6000,
+            distanceMeters: 40_000, metadata: ["sportType": "骑行"])
+        let full = StravaActivityLookup.RemoteActivity(id: "123", startDate: start,
+            endDate: start.addingTimeInterval(7200), distanceMeters: 40_000, sportType: "Ride")
+        XCTAssertEqual(StravaActivityScan.match(local, remotes: [full]).status, .complete)
+        // 区间时长与实际运动时长不同（有暂停）时，不误判为远端多了一段。
+        var halfTime = full
+        halfTime.endDate = start.addingTimeInterval(3600)
+        let timeResult = StravaActivityScan.match(local, remotes: [halfTime])
+        XCTAssertEqual(timeResult.status, .incomplete)
+        XCTAssertEqual(timeResult.remoteId, "123")
+        XCTAssertTrue(timeResult.detail.contains("少 60.0 分钟"))
+        var halfDistance = full
+        halfDistance.distanceMeters = 20_000
+        let distanceResult = StravaActivityScan.match(local, remotes: [halfDistance])
+        XCTAssertEqual(distanceResult.status, .incomplete)
+        XCTAssertTrue(distanceResult.detail.contains("少 20.00 km"))
+        var zeroDistance = full
+        zeroDistance.distanceMeters = 0
+        XCTAssertEqual(StravaActivityScan.match(local, remotes: [zeroDistance]).status, .incomplete)
+        var missingDistance = full
+        missingDistance.distanceMeters = nil
+        XCTAssertEqual(StravaActivityScan.match(local, remotes: [missingDistance]).status, .similar)
+        var secondHalf = halfTime
+        secondHalf.startDate = start.addingTimeInterval(3600)
+        secondHalf.endDate = full.endDate
+        XCTAssertEqual(StravaActivityScan.match(local, remotes: [secondHalf]).status, .incomplete)
+    }
+
+    func testListScanRejectsAdjacentDifferentSportAndAmbiguousCandidates() {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let local = SourceActivity(id: "local", sourceId: "healthkit", title: "骑行",
+            startDate: start, endDate: start.addingTimeInterval(3600), duration: 3600,
+            distanceMeters: 20_000, metadata: ["sportType": "骑行"])
+        let full = StravaActivityLookup.RemoteActivity(id: "123", startDate: start,
+            endDate: local.endDate, distanceMeters: 20_000, sportType: "Ride")
+        var adjacent = full
+        adjacent.startDate = local.endDate
+        adjacent.endDate = local.endDate.addingTimeInterval(3600)
+        XCTAssertEqual(StravaActivityScan.match(local, remotes: [adjacent]).status, .notFound)
+        var run = full
+        run.sportType = "Run"
+        XCTAssertEqual(StravaActivityScan.match(local, remotes: [run]).status, .notFound)
+        var second = full
+        second.id = "456"
+        let ambiguous = StravaActivityScan.match(local, remotes: [full, second])
+        XCTAssertEqual(ambiguous.status, .ambiguous)
+        XCTAssertNil(ambiguous.remoteId)
+        XCTAssertEqual(StravaActivityScan.match(local, remotes: [full, full]).status, .complete)
+        second.endDate = start.addingTimeInterval(1800)
+        XCTAssertEqual(StravaActivityScan.match(local, remotes: [second, full]).remoteId, "123")
+        XCTAssertEqual(StravaActivityScan.match(local, remotes: []).status, .notFound)
+        let invalid = SourceActivity(id: "bad", sourceId: "healthkit", title: "无时长",
+            startDate: start, endDate: start, duration: 0)
+        XCTAssertEqual(StravaActivityScan.match(invalid, remotes: [full]).status, .insufficient)
+    }
+
     private let base = Date(timeIntervalSince1970: 1_700_000_000)
 
     private func remote(_ id: String, startOffset: TimeInterval, minutes: Double) -> StravaActivityLookup.RemoteActivity {

@@ -96,6 +96,19 @@ class _StravaSettingsPageState extends State<StravaSettingsPage> {
                   value: settings.gcjCorrectionEnabled,
                   onChanged: _busy ? null : _setGcjCorrection,
                 ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('上传后从主页隐藏'),
+                  subtitle: Text(
+                    settings.mode == StravaUploadMode.api
+                        ? '活动仍可访问，仅不显示在 Strava 主页动态。'
+                        : '仅 API 上传模式支持；网页模式不会隐藏动态。',
+                  ),
+                  value: settings.hideFromHomeEnabled,
+                  onChanged: _busy || settings.mode != StravaUploadMode.api
+                      ? null
+                      : _setHideFromHome,
+                ),
                 const Divider(height: 32),
                 if (settings.mode == StravaUploadMode.api)
                   ..._apiSettings(settings)
@@ -411,6 +424,19 @@ class _StravaSettingsPageState extends State<StravaSettingsPage> {
     setState(() => _busy = true);
     try {
       await widget.store.setGcjCorrectionEnabled(enabled);
+      final settings = await widget.store.load();
+      if (mounted) setState(() => _settings = settings);
+    } catch (error) {
+      if (mounted) setState(() => _message = _safeErrorMessage(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _setHideFromHome(bool enabled) async {
+    setState(() => _busy = true);
+    try {
+      await widget.store.setHideFromHomeEnabled(enabled);
       final settings = await widget.store.load();
       if (mounted) setState(() => _settings = settings);
     } catch (error) {

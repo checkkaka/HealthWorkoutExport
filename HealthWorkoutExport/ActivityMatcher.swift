@@ -54,6 +54,7 @@ enum ActivityMatcher {
         candidates: [SourceActivity]
     ) -> [ActivityMatchCandidate] {
         candidates.compactMap { candidate in
+            guard keepCompatible(primary, candidate) else { return nil }
             let eligibleScore = score(primary: primary, candidate: candidate)
             guard eligibleScore != nil || isManualCandidate(primary: primary, candidate: candidate) else {
                 return nil
@@ -94,6 +95,7 @@ enum ActivityMatcher {
 
     /// 分数越高越好；不匹配返回 nil。
     static func score(primary: SourceActivity, candidate: SourceActivity) -> Double? {
+        guard keepCompatible(primary, candidate) else { return nil }
         let pStart = primary.startDate
         let pEnd = primary.endDate
         let cStart = candidate.startDate
@@ -117,6 +119,11 @@ enum ActivityMatcher {
         guard ratio <= maxDurationRatio else { return nil }
         // 无重叠或低重叠时，用开始与时长容差兜底；越近分数越高。
         return max(0, 1 - startDelta / maxStartDelta) * (1 - ratio)
+    }
+
+    /// 旧数据源缺少可靠运动类型；Keep 跑步不与这些记录自动或手工补源匹配。
+    private static func keepCompatible(_ a: SourceActivity, _ b: SourceActivity) -> Bool {
+        (a.sourceId != "keep" && b.sourceId != "keep") || a.sourceId == b.sourceId
     }
 
     private static func isManualCandidate(primary: SourceActivity, candidate: SourceActivity) -> Bool {

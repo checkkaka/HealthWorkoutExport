@@ -1,6 +1,7 @@
 import Foundation
 import AuthenticationServices
 import UIKit
+import FITSwiftSDK
 
 /// Strava 响应头返回的当前 API 用量与限额。
 struct StravaRateLimitUsage: Equatable, Sendable {
@@ -158,6 +159,11 @@ final class StravaAPIUploader: NSObject, StravaUploading {
         }
         appendField("data_type", "fit")
         appendField("external_id", externalId)
+        if let messages = try? FitMerger.decode(data, name: "upload-sport"),
+           let session = messages.sessionMesgs.first, session.getSport() == .running {
+            appendField("sport_type", "Run")
+            if session.getSubSport() == .treadmill { appendField("trainer", "1") }
+        }
         if let name, !name.isEmpty { appendField("name", name) }
         // Strava Uploads API：commute 为表单字段，标记结果活动为通勤。
         if commute { appendField("commute", "1") }
@@ -196,14 +202,60 @@ final class StravaAPIUploader: NSObject, StravaUploading {
         let json = (try? JSONSerialization.jsonObject(with: respData)) as? [String: Any]
         // 调用 jsonActivityId：POST 响应偶发已带 activity_id，有则直接用。
         if let activityId = StravaActivityLookup.jsonActivityId(json?["activity_id"]) {
-            return StravaUploadResult(remoteId: activityId, isDuplicate: false)
+            return await Self.finishUpload(
+                StravaUploadResult(remoteId: activityId, isDuplicate: false),
+                hideFromHome: StravaSettings.hideFromHomeEnabled,
+                hideActivity: hideActivityFromHome
+            )
         }
         guard let uploadId = json?["id"].map({ "\($0)" }), !uploadId.isEmpty else {
             throw StravaUploadError.uploadFailed("Strava 未返回上传 ID")
         }
         // 上传是异步处理：在当前同步任务内等最终 activity_id / duplicate / error，
         // 避免先记成功后由后台静默改成去重或失败。
-        return try await pollUpload(id: uploadId)
+        let result = try await pollUpload(id: uploadId)
+        return await Self.finishUpload(
+            result,
+            hideFromHome: StravaSettings.hideFromHomeEnabled,
+            hideActivity: hideActivityFromHome
+        )
+    }
+
+    /// 仅隐藏本次新建的活动；隐藏失败返回警告，保留上传成功结果和远端 ID。
+    static func finishUpload(
+        _ result: StravaUploadResult,
+        hideFromHome: Bool,
+        hideActivity: (String) async throws -> Void
+    ) async -> StravaUploadResult {
+        guard hideFromHome, !result.isDuplicate, let id = result.remoteId else { return result }
+        var result = result
+        do {
+            try await hideActivity(id)
+        } catch {
+            result.warning = "活动已上传，但未能隐藏主页动态：\(error.localizedDescription)"
+        }
+        return result
+    }
+
+    private func hideActivityFromHome(id: String) async throws {
+        try await ensureValidAccessToken()
+        var request = URLRequest(url: URL(string: "https://www.strava.com/api/v3/activities/\(id)")!)
+        request.httpMethod = "PUT"
+        request.setValue("Bearer \(StravaSettings.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["hide_from_home": true])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw StravaUploadError.uploadFailed("隐藏主页动态无响应")
+        }
+        if http.statusCode == 401 { throw StravaUploadError.unauthorized }
+        if http.statusCode == 429 { throw StravaUploadError.rateLimited }
+        guard (200..<300).contains(http.statusCode) else {
+            let detail = StravaUploadError.cleanedMessage(
+                String((String(data: data, encoding: .utf8) ?? "").prefix(200))
+            )
+            throw StravaUploadError.uploadFailed("隐藏主页动态失败 HTTP \(http.statusCode): \(detail)")
+        }
     }
 
     /// 处理后强行改标题，并把说明接到已有描述末尾（上传表单常被 FIT 覆盖）。
@@ -368,8 +420,8 @@ final class StravaAPIUploader: NSObject, StravaUploading {
         )
     }
 
-    /// 批次预取本人活动列表，供上传前时间窗去重（分页，循环外复用）。
-    func fetchActivities(after: Date, before: Date) async throws -> [StravaActivityLookup.RemoteActivity] {
+    /// 批次预取本人活动列表；扫描传 requireComplete，触及分页上限时报错，避免将截断列表当成完整历史。
+    func fetchActivities(after: Date, before: Date, requireComplete: Bool = false) async throws -> [StravaActivityLookup.RemoteActivity] {
         try await ensureValidAccessToken()
         var result: [StravaActivityLookup.RemoteActivity] = []
         var page = 1
@@ -379,6 +431,7 @@ final class StravaAPIUploader: NSObject, StravaUploading {
         formatterFallback.formatOptions = [.withInternetDateTime]
 
         while page <= 20 {
+            try Task.checkCancellation()
             var comps = URLComponents(string: "https://www.strava.com/api/v3/athlete/activities")!
             comps.queryItems = [
                 URLQueryItem(name: "after", value: "\(Int(after.timeIntervalSince1970))"),
@@ -415,11 +468,15 @@ final class StravaAPIUploader: NSObject, StravaUploading {
                     id: id,
                     startDate: start,
                     endDate: start.addingTimeInterval(elapsed),
-                    distanceMeters: (distance ?? 0) > 0 ? distance : nil
+                    distanceMeters: distance,
+                    sportType: StravaSpeedAnomaly.sportType(from: item)
                 ))
             }
             if arr.count < 200 { break }
             page += 1
+        }
+        if requireComplete, page > 20 {
+            throw StravaUploadError.uploadFailed("活动列表超过扫描页数上限，请缩小日期范围后重试；本次未保存扫描结果")
         }
         return result
     }

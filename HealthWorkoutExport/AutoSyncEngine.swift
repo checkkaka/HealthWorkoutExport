@@ -128,6 +128,9 @@ final class AutoSyncEngine {
             commute: commute,
             description: descriptionNote
         )
+        if let warning = result.warning {
+            notes.append("\(originalTitle)：\(warning)")
+        }
         if !result.isDuplicate {
             await applyActivityMetadata(
                 remoteId: result.remoteId,
@@ -363,7 +366,7 @@ final class AutoSyncEngine {
                     onProgress(progress)
                     continue
                 }
-            } else if skipIfHistoryExists,
+            } else if skipIfHistoryExists, primary.id != KeepDataSource.sourceId,
                       let meters = activity.distanceMeters, meters > 0,
                       let stable = await stateStore.uploadedStableMatch(
                         startDate: activity.startDate,
@@ -418,7 +421,12 @@ final class AutoSyncEngine {
                     startDate: activity.startDate,
                     endDate: activity.endDate,
                     distanceMeters: activity.distanceMeters,
-                    in: remoteActivities
+                    in: primary.id == KeepDataSource.sourceId
+                        ? remoteActivities.filter { ["run", "virtualrun", "trailrun"].contains($0.sportType?.lowercased() ?? "") }
+                        : remoteActivities.filter {
+                            ![OnelapDataSource.sourceId, XingzheDataSource.sourceId].contains(primary.id)
+                                || !["run", "virtualrun", "trailrun"].contains($0.sportType?.lowercased() ?? "")
+                        }
                 )
                 if let existing = pendingRemoteDuplicate, existing.id.hasPrefix("local-") {
                     // 本批刚上传、尚无远端 ID：开着本地跳过则静默去重；关掉则弹窗（无法覆盖）。
@@ -533,13 +541,19 @@ final class AutoSyncEngine {
                         primaryData: primaryFit,
                         primaryName: primary.displayName,
                         supplements: selectedSupplements,
-                        gcjEnabled: StravaSettings.gcjCorrectionEnabled,
+                        // 健康及 Keep 导出的轨迹已是 WGS-84，不再纠偏。
+                        gcjEnabled: primary.id == HealthKitDataSource.sourceId || primary.id == KeepDataSource.sourceId
+                            ? false
+                            : StravaSettings.gcjCorrectionEnabled,
                         reuploadMetadata: .init(
                             fingerprint: fingerprint,
                             remoteId: pendingRemoteDuplicate?.id,
                             filename: "\(primary.id)-\(activity.id).fit"
                         ),
                         virtualPowerProcessor: { [self] data in
+                            if primary.id == KeepDataSource.sourceId {
+                                return PreparedVirtualPowerResult(data: data, filledCount: 0, activityDescription: nil)
+                            }
                             var powerNotes: [String] = []
                             let result = try await applyVirtualPowerIfNeeded(
                                 data,
@@ -614,8 +628,8 @@ final class AutoSyncEngine {
                     : nil
 
                 let filename = "\(primary.id)-\(activity.id).fit"
-                // 调用 CommuteClassifier：短距/低速短途标记为通勤（Strava API commute=1）。
-                let commute = CommuteClassifier.isCommute(
+                // Keep 跑步不使用骑行通勤判定；其余源沿用现有规则。
+                let commute = primary.id != KeepDataSource.sourceId && CommuteClassifier.isCommute(
                     distanceMeters: activity.distanceMeters,
                     durationSeconds: activity.duration
                 )

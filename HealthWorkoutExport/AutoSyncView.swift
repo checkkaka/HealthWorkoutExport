@@ -70,6 +70,7 @@ struct AutoSyncView: View {
                         set: { on in
                             if on { supplementIds.insert(source.id) }
                             else { supplementIds.remove(source.id) }
+                            Self.saveSupplementIds(supplementIds)
                         }
                     )) {
                         Text(sourceLabel)
@@ -78,9 +79,9 @@ struct AutoSyncView: View {
                 }
             }
         } header: {
-            Text("补充数据源（随主源联动）")
+            Text("补充数据源")
         } footer: {
-            Text("切换主源后，会自动勾选其余已登录源。未登录的源不可勾选。开「跳过历史」时改补源也不会重传已有记录（远端速度异常除外）。")
+            Text("默认不勾选，记住上次的选择；切换主源只会把新主源从补源里移除。未登录的源不可勾选。开「跳过历史」时改补源也不会重传已有记录（远端速度异常除外）。")
         }
     }
 
@@ -232,6 +233,7 @@ struct AutoSyncView: View {
                     }
                 }
 
+                if primarySourceId != KeepDataSource.sourceId {
                 Section {
                     Toggle("虚拟功率（估算并覆盖）", isOn: $virtualPowerEnabled)
                         .disabled(session.isRunning)
@@ -266,10 +268,21 @@ struct AutoSyncView: View {
                     Text("开启后对骑行 FIT 一律用 Gribble + Open-Meteo 估算原生 power，并覆盖已有功率计/补源功率。心率不参与计算；踏频低于 30 时按滑行记 0 W。Crr 固定 0.005，传动损失固定 2%。关闭「计入惯性」后均功率通常略低、更稳，尖峰也会明显下降。虚拟功率说明接到描述末尾；网页上传同请求无法写标题/描述。")
                 }
 
-                if primarySourceId == XingzheDataSource.sourceId
-                    || primarySourceId == HealthKitDataSource.sourceId {
+                } else {
                     Section {
-                        Text("提示：行者 / 苹果健康轨迹一般已是 WGS，通常不必打开「上传前 GCJ-02 → WGS-84」；打开开关仍会按开关转换。")
+                        Text("Keep 跑步保留跑步类型，不标记骑行通勤、不估算骑行功率；导出的轨迹已转换为 WGS-84，不会重复纠偏。")
+                    }
+                }
+
+                if primarySourceId == XingzheDataSource.sourceId {
+                    Section {
+                        Text("提示：行者轨迹一般已是 WGS，通常不必打开「上传前 GCJ-02 → WGS-84」；打开开关仍会按开关转换。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if primarySourceId == HealthKitDataSource.sourceId {
+                    Section {
+                        Text("主源为苹果健康：上传前始终不做 GCJ-02 → WGS-84 转换（HealthKit 轨迹已是 WGS，设置开关对此不生效）。")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -320,7 +333,7 @@ struct AutoSyncView: View {
             .task {
                 await refreshAuth()
                 primarySourceId = entrySourceId
-                applySupplementLinkage()
+                loadSavedSupplements()
             }
             .onChange(of: virtualPowerEnabled) { _, _ in persistVirtualPowerSettings() }
             .onChange(of: includeInertia) { _, _ in persistVirtualPowerSettings() }
@@ -351,16 +364,28 @@ struct AutoSyncView: View {
         authFlags = flags
     }
 
-    /// 主源变更后：补源 = 其余已登录源。
-    private func applySupplementLinkage() {
-        var next = Set<String>()
-        for source in sources where source.id != primarySourceId {
-            let ok = authFlags[source.id] ?? false
-            if !source.requiresLogin || ok {
-                next.insert(source.id)
-            }
+    private static let supplementSourceIdsKey = "autoSync.supplementSourceIds"
+
+    private static var savedSupplementIds: Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: supplementSourceIdsKey) ?? [])
+    }
+
+    private static func saveSupplementIds(_ ids: Set<String>) {
+        UserDefaults.standard.set(ids.sorted(), forKey: supplementSourceIdsKey)
+    }
+
+    /// 打开页面：载入上次选择的补源，并剔除当前主源和未登录源（默认为空）。
+    private func loadSavedSupplements() {
+        supplementIds = Self.savedSupplementIds.filter { id in
+            guard let source = sources.first(where: { $0.id == id }), id != primarySourceId else { return false }
+            return !source.requiresLogin || (authFlags[source.id] ?? false)
         }
-        supplementIds = next
+    }
+
+    /// 主源变更后：仅把新主源从补源里移除，其余保持上次选择。
+    private func applySupplementLinkage() {
+        guard supplementIds.remove(primarySourceId) != nil else { return }
+        Self.saveSupplementIds(supplementIds)
     }
 
     private func startSync() {
